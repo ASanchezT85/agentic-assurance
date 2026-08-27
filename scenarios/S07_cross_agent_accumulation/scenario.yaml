@@ -1,5 +1,10 @@
 scenario_id: S07
-scenario_version: 0
-status: NOT_IMPLEMENTED
-owning_phase: 12
+scenario_version: 1
+status: IMPLEMENTED
+owning_phase: 7
 spec_section: "41"
+assertions: tests/scenarios
+note: >
+  Deterministic assertions against constructed intent streams, delivered as the
+  Phase 7 exit criteria. The simulator-driven version, with agent populations and
+  market state, arrives in Phase 12.

@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 6 of seventeen (0 through 16).
+Phase 7 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -57,7 +57,12 @@ JetStream publish and consume, an append-only evidence store the database itself
 enforces, and the two read-only evidence endpoints of ADR-023. The gateway now serves
 `GET /v1/evidence` and `GET /v1/intents/{id}/evidence`, so the chain
 `agent → intent → authority → policy → broker order → result` is inspectable with
-curl and without the console. The submission path is still not wired.
+curl and without the console.
+
+Phase 7 delivers economic intent reconstruction: deterministic clustering of
+fragmented orders into a parent intent, principal-level aggregation across agents,
+and explainable confidence. Scenarios S06 (order fragmentation) and S07 (cross-agent
+accumulation) pass. The submission path is still not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

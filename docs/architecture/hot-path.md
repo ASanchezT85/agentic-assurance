@@ -79,3 +79,32 @@ submit -> timeout -> state = UNKNOWN -> reconcile with broker
 ```
 
 No blind retry, ever (§54, INV-004).
+
+## Parent intent reconstruction (step 7)
+
+Deterministic clustering, never inference (spec section 20.2). Intents are grouped by
+tenant, principal, account, instrument and side, then split wherever consecutive
+orders are further apart than the window.
+
+The grouping key deliberately **excludes the agent**. Cross-agent accumulation under
+one principal is the case spec section 21 exists for, and keying on agent would make
+it invisible by construction.
+
+Two numbers are reported rather than one. `GrossNotional` is the total committed;
+`NetNotional` carries the direction, because a cluster of buys and a cluster of sells
+that net to zero are very different situations (spec section 23).
+
+`IndeterminateChildren` counts orders whose notional cannot be established without a
+market price. They are counted rather than dropped: a fragmented intent hidden behind
+market orders is exactly the evasion this engine exists to see, and a gross total that
+silently omitted them would understate exposure. `ExposureComplete()` tells a caller
+whether it is looking at the whole picture.
+
+Confidence is the fraction of nine enumerated signals that held across the cluster.
+It is a coverage ratio with a stated denominator, not a risk score with chosen
+weights (ADR-014), and the signals themselves are reported so a reader can disagree
+with the conclusion by looking at the same facts.
+
+The window (60s) and minimum cluster size (2) are documented defaults, not calibrated
+thresholds. Their provenance is "nobody has measured yet", and spec section 60
+forbids treating that as a threshold anyone enforces on.
