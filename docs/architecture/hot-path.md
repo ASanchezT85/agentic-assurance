@@ -14,7 +14,9 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
     - attestation level resolved from evidence, not from the envelope claim
     - a claim above the established level is refused (INV-001)
  5. idempotency lookup: Redis cache, PostgreSQL truth      ADR-015
-       duplicate -> return the deterministic prior outcome, stop
+       resolved record  -> return the deterministic prior outcome, stop
+       pending record   -> a previous attempt died mid-flight: reconcile, never resubmit
+       store unreadable -> DENY; nothing is sent unrecorded
  6. authority grant evaluation                             §14.3 -> DENY
     - tenant checked first: a cross-tenant grant is INV-007, not a mismatch
     - lifecycle before limits, so a revoked grant never reports "limit exceeded"

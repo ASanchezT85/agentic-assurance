@@ -31,8 +31,13 @@ time any of them is checked.
 | INV-015 | An invalid instrument normalization result cannot proceed to executable policy. | 1 | `tests/security/INV-015_instrument_normalization_test.go` |
 
 Phase 1 delivered INV-008 and INV-015; Phase 2 added INV-001 and INV-014; Phase 3
-added INV-002 and INV-007; Phase 4 added INV-003, INV-005 and INV-010. The rest
-arrive with the code they guard.
+added INV-002 and INV-007; Phase 4 added INV-003, INV-005 and INV-010; Phase 5 added
+INV-004, INV-011 and INV-012. Only INV-006, INV-009 and INV-013 remain, and each
+arrives with the code it guards.
+
+INV-004 counts submissions that reached the venue rather than orders that exist. A
+venue that deduplicates client order ids would hide the bug while the platform kept
+committing it, and what the invariant forbids is sending the duplicate at all.
 
 Three of these are enforced structurally rather than behaviourally. INV-003 and
 INV-005 parse the enforcement packages and fail on a forbidden import, and INV-003
