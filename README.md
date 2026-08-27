@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 9 of seventeen (0 through 16).
+Phase 10 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -75,8 +75,14 @@ value, coverage and sentence of explanation, computed against robust baselines
 (median, MAD, quantiles, EWMA) conditioned on instrument, session and hour. **There is
 no composite score and there will not be one** (ADR-014). A component that could not
 be measured reports UNKNOWN rather than zero, because zero directional imbalance and
-unmeasured directional imbalance are opposite findings. The submission path is still
-not wired.
+unmeasured directional imbalance are opposite findings.
+
+Phase 10 delivers the incident engine: anomaly detection with every finding naming
+the rule that produced it, incidents carrying their severity rule and shared
+dependencies, human-action audit, and timeline reconstruction **from evidence rather
+than from memory**. What the system recommended and what a person did are separate
+lines throughout, because conflating them is how a shadow-mode suggestion becomes
+indistinguishable from an enforced control. The submission path is still not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

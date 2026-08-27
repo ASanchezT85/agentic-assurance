@@ -48,3 +48,33 @@ disabled, so no configuration change can produce a duplicate (INV-004).
 
 A pending record blocks further submissions on that idempotency key, which is the
 intended behaviour: the agent's retry is safe precisely because it does nothing.
+
+## Tenant incident investigation
+
+Written in Phase 10.
+
+**Start from the evidence, not from the incident object.** The incident in memory is
+a convenience; `evidence_events` is the record. If the two ever disagree, the evidence
+is right.
+
+```sh
+curl -H 'X-Tenant-Id: <tenant>' \
+  'http://localhost:8080/v1/evidence?correlation_id=<correlation id>'
+```
+
+`incident.Reconstruct` takes events and returns a timeline. It deliberately does not
+accept an incident: a function that did would be replaying memory.
+
+**The timeline answers seven questions** (spec section 49), and
+`Timeline.AnsweredQuestions()` reports which of them it can actually answer for a
+given chain. If any come back false, the evidence is incomplete and that is itself
+the finding.
+
+**Recommended and applied are different lines.** `control.recommended.v1` carries
+`enforced: false` and says the customer's policy authorizes. `control.applied.v1` is
+something a person or a policy did. A review that cannot tell them apart cannot
+answer the last question section 49 asks.
+
+**Never cross tenants.** Every query is tenant-scoped by row level security, and an
+investigation that needs data from another tenant is not an investigation, it is
+INV-007 being broken.
