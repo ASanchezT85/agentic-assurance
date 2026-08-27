@@ -30,9 +30,10 @@ time any of them is checked.
 | INV-014 | Model identity must never be inferred from workload identity without evidence. | 2 | `tests/security/INV-014_no_identity_inference_test.go` |
 | INV-015 | An invalid instrument normalization result cannot proceed to executable policy. | 1 | `tests/security/INV-015_instrument_normalization_test.go` |
 
-`tests/security/` exists in Phase 0 and is empty by design. Nothing here is testable
-before the code it guards exists; writing an assertion against absent behavior would
-produce a green test that proves nothing.
+Phase 1 delivered the first two: INV-008 and INV-015. The rest arrive with the code
+they guard. Writing an assertion against absent behavior produces a green test that
+proves nothing, so `tests/security/` grows one file at a time rather than being
+stubbed out up front.
 
 ## Threats and mandatory defenses
 

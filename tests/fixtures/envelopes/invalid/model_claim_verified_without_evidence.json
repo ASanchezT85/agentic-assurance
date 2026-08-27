@@ -1,0 +1,71 @@
+{
+  "schema_version": "0.1",
+  "envelope_id": "env_01J8Z3K9QW",
+  "idempotency_key": "idem_01J8Z3K9QW",
+  "correlation_id": "corr_01J8Z3K9QW",
+  "received_at": "2026-08-27T14:32:04.182Z",
+  "tenant_id": "tenant_acme",
+  "principal": {
+    "principal_id": "principal_7781",
+    "account_id": "account_4410"
+  },
+  "agent": {
+    "agent_id": "agent_momentum_03",
+    "workload_identity": {
+      "spiffe_id": "spiffe://acme.example/ns/agents/sa/momentum"
+    },
+    "attestation": {
+      "level": "A2",
+      "method": "SPIFFE_X509_SVID",
+      "evidence_ref": "att_9912"
+    }
+  },
+  "runtime_claims": {
+    "model_provider": {
+      "value": "provider-x",
+      "verification": "DECLARED"
+    },
+    "model_family": {
+      "value": "model-y",
+      "verification": "VERIFIED"
+    },
+    "model_version": {
+      "value": "2026-08",
+      "verification": "DECLARED"
+    }
+  },
+  "authority_grant_id": "grant_5521",
+  "dependencies": [
+    {
+      "type": "MARKET_DATA",
+      "id": "feed-a",
+      "verification": "VERIFIED",
+      "observed_at": "2026-08-27T14:32:03.900Z",
+      "evidence_ref": "ev_3310"
+    }
+  ],
+  "intent": {
+    "asset_class": "EQUITY",
+    "instrument_id": "instr_us_equity_00206R102",
+    "side": "BUY",
+    "order_type": "MARKET",
+    "notional": 4200,
+    "quantity": null,
+    "limit_price": null,
+    "stop_price": null,
+    "time_in_force": "DAY",
+    "extended_hours": false
+  },
+  "lineage": {
+    "parent_intent_id": null,
+    "strategy_id": "strategy_mom_v3"
+  },
+  "context": {
+    "portfolio_snapshot_id": "ps_88",
+    "market_snapshot_id": "ms_41"
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "c2ln..."
+  }
+}

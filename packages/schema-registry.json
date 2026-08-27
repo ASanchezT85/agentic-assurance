@@ -1,13 +1,13 @@
 {
   "registry_version": "0.1",
-  "note": "Phase 0 scaffolds. Business semantics arrive in the owning phase; see packages/README.md.",
+  "note": "Phase 0 scaffolds become ACTIVE in their owning phase. A SCAFFOLD was never emitted against, so filling it in place is not a rewrite; see packages/README.md item 4.",
   "schemas": [
     {
       "contract": "agent-execution-envelope",
       "package": "envelope-schema",
       "file": "envelope-schema/schemas/agent-execution-envelope.v0.1.json",
       "version": "0.1",
-      "status": "SCAFFOLD",
+      "status": "ACTIVE",
       "owning_phase": 1,
       "spec_section": "12"
     },

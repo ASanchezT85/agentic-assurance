@@ -26,11 +26,16 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 0 of seventeen (0 through 16). Phase 0 delivers the monorepo, the locked
-architecture decisions, schema locations with a compatibility harness, local
-infrastructure, and CI. **It deliberately contains no business logic.** The Go
-binaries expose health endpoints. The console renders one static page. The simulator
-imports and does nothing.
+Phase 1 of seventeen (0 through 16).
+
+Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
+with a compatibility harness, local infrastructure and CI, with no business logic.
+
+Phase 1 delivers the canonical contract: the `AgentExecutionEnvelope`
+(`internal/intent`), its published JSON Schema, deterministic validation, instrument
+normalization, and a versioned fixture library. There is still no identity
+verification, no authority evaluation, no policy, and no broker path. The Go binaries
+still expose health endpoints only.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 
@@ -121,6 +126,10 @@ Beyond unit tests, the repository tests itself:
   recommendation module, no composite risk score, no LLM dependency, and the console
   is still a scaffold (ADR-017).
 - `packages/schema_compat_test.go` — the schema versioning policy, enforced.
+- `internal/intent/schema_sync_test.go` — the published schema and the Go validator
+  cannot drift apart in either direction.
+- `tests/fixtures/envelopes/` — every invalid fixture declares the error codes it must
+  produce, so a fixture that fails for the wrong reason is not a pass.
 
 ## Specification
 

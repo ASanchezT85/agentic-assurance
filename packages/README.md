@@ -6,7 +6,7 @@ in the business semantics.
 
 | Package | Contract | First implemented |
 |---|---|---|
-| `envelope-schema` | `AgentExecutionEnvelope` (spec §12) | Phase 1 |
+| `envelope-schema` | `AgentExecutionEnvelope` (spec §12) | **Phase 1 — done** |
 | `event-schema` | Internal event catalog (spec §32) | Phase 6 |
 | `policy-schema` | Policy authoring format (spec §15) | Phase 4 |
 | `telemetry-sdk` | Client emission helpers | Phase 8 |
