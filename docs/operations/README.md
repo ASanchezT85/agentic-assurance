@@ -12,6 +12,25 @@ make down
 
 On a host without `make`, `scripts/verify.sh` runs the same gate.
 
+## Where the gate runs
+
+Three places, all running the same commands:
+
+| Where | Entry point |
+|---|---|
+| CI | `.github/workflows/ci.yml`, five jobs |
+| Local, by hand | `make verify` or `scripts/verify.sh` |
+| Local, on push | `scripts/githooks/pre-push` |
+
+The hook is opt-in per clone, because git does not version `.git/hooks`:
+
+```sh
+git config core.hooksPath scripts/githooks
+```
+
+Enable it when GitHub Actions is not available on the account hosting the repository.
+Without either, nothing enforces the gate and it becomes documentation.
+
 ## Ports
 
 | Service | Port | Notes |

@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+# Phase 0 quality gate, run before every push.
+#
+# The repository ships a GitHub Actions workflow, but Actions is not available on
+# every account or plan. Without it the gate has nowhere to run, and a gate that
+# never runs is decoration. This hook is the local substitute.
+#
+# Enable once per clone:  git config core.hooksPath scripts/githooks
+# Skip deliberately:      git push --no-verify
+set -eu
+
+echo "pre-push: running the Phase 0 quality gate (scripts/verify.sh)"
+echo "          skip with --no-verify if you know why"
+
+if ! sh "$(git rev-parse --show-toplevel)/scripts/verify.sh"; then
+  echo ""
+  echo "pre-push: BLOCKED. The quality gate failed; push aborted."
+  exit 1
+fi

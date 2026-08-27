@@ -97,6 +97,15 @@ make verify            # the Phase 0 quality gate: lint, typecheck, test, build
 
 `make verify` is what CI runs. It must pass before Phase 1 begins.
 
+If GitHub Actions is unavailable on your account, run the same gate locally on every
+push by enabling the shipped hook once per clone:
+
+```sh
+git config core.hooksPath scripts/githooks
+```
+
+A gate that never runs is decoration. `git push --no-verify` skips it deliberately.
+
 Beyond unit tests, the repository tests itself:
 
 - `tests/structure_test.go` — mandatory directories, root files, all 24 ADRs, all 12
