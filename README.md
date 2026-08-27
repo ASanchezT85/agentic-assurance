@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 5 of seventeen (0 through 16).
+Phase 6 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -48,11 +48,16 @@ Phase 4 delivered the policy runtime: YAML authoring, a compiler, Ed25519-signed
 bundles with content hashes, the staged deployment lifecycle, and a deterministic
 evaluator that records the exact bundle in every decision.
 
-Phase 5 delivers the broker lifecycle: the `BrokerAdapter` contract, a fault-injecting
+Phase 5 delivered the broker lifecycle: the `BrokerAdapter` contract, a fault-injecting
 FakeBroker, an Alpaca Paper adapter, reconciliation, and idempotency whose truth lives
-in PostgreSQL (ADR-015). An ambiguous timeout never produces a second order. The Go
-binaries still expose health endpoints only: wiring the pipeline behind an HTTP
-surface is Phase 6 and later.
+in PostgreSQL (ADR-015). An ambiguous timeout never produces a second order.
+
+Phase 6 delivers the event backbone and evidence: the section 32 event catalog, NATS
+JetStream publish and consume, an append-only evidence store the database itself
+enforces, and the two read-only evidence endpoints of ADR-023. The gateway now serves
+`GET /v1/evidence` and `GET /v1/intents/{id}/evidence`, so the chain
+`agent → intent → authority → policy → broker order → result` is inspectable with
+curl and without the console. The submission path is still not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

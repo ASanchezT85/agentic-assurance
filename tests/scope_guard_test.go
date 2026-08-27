@@ -254,6 +254,12 @@ var allowedModules = map[string]string{
 		"Reachable from `go test all`, never linked into a binary.",
 	"github.com/rogpeppe/go-internal": "Test-only transitive of yaml.v3. `go mod why` " +
 		"reports the main module does not need it; go mod tidy retains it for the test graph.",
+	"github.com/nats-io/nats.go": "NATS JetStream client (spec section 9.7). Phase 6: the " +
+		"event backbone. Asynchronous only, and forbidden on the hot path by INV-005.",
+	"github.com/nats-io/nkeys":      "nats.go transitive dependency (authentication).",
+	"github.com/nats-io/nuid":       "nats.go transitive dependency (identifier generation).",
+	"github.com/klauspost/compress": "nats.go transitive dependency.",
+	"golang.org/x/sys":              "nats.go transitive dependency.",
 }
 
 // TestDependenciesAreOnTheAllowlist fails when go.mod grows a module nobody wrote a

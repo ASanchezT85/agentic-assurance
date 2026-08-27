@@ -123,3 +123,23 @@ artifacts exactly where the structure and scope guards walk, which breaks them f
 real reason while trying to work around an unrelated one. If this becomes frequent
 enough to matter, the fix is an exclusion in the host's security policy, not a change
 in this repository.
+
+## Evidence is not logs
+
+They are different systems with different rules, and INV-013 exists because treating
+them as interchangeable is easy and quiet.
+
+| | Operational logs | Evidence |
+|---|---|---|
+| Purpose | a human debugging a process | the account of a financial decision |
+| Destination | stdout, then whatever collects it | `evidence_events` in PostgreSQL |
+| Ordering | best effort | ordered by `occurred_at`, then `sequence` |
+| Completeness | sampled and droppable under pressure | complete or the timeline is wrong |
+| Mutability | rotated and deleted freely | append-only; corrections are new rows |
+| Queryable by | whoever runs the log tool | `GET /v1/evidence`, tenant-scoped |
+| Retention | operational choice | bounded windows only, never selective edits |
+
+Rotating logs aggressively is fine. Deleting evidence is not, and the application role
+cannot: it holds `SELECT` and `INSERT` on that table and nothing else.
+
+Secrets belong in neither (spec section 35).

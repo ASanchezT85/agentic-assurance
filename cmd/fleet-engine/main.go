@@ -25,7 +25,7 @@ func newMux() *http.ServeMux {
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":    "ok",
 			"component": component,
-			"phase":     "0",
+			"phase":     "6",
 		})
 	}
 	mux.HandleFunc("/healthz", health)

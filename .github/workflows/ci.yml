@@ -99,7 +99,7 @@ jobs:
         run: sh scripts/migrate.sh
       - name: Smoke test
         run: go test -tags=integration -count=1 ./tests/integration/...
-      - name: Tenant isolation (row level security)
+      - name: Tenant isolation, append-only evidence
         run: go test -tags=integration -count=1 ./tests/security/...
       - name: Service logs on failure
         if: failure()

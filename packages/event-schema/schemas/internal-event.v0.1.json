@@ -2,8 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentic-assurance.dev/schemas/internal-event/v0.1",
   "title": "InternalEvent",
-  "description": "Phase 0 SCAFFOLD. The envelope every event in the §32 catalog carries. Per-event payload schemas arrive in Phase 6.",
-  "x-phase-0-scaffold": true,
+  "description": "The envelope every event in the section 32 catalog carries, and the row shape of the append-only evidence store. event_id is the deduplication key: delivery is at-least-once (ADR-008), so a consumer that is not idempotent will double-count everything the network hiccuped on.",
   "x-owning-phase": 6,
   "type": "object",
   "required": [
@@ -19,24 +18,98 @@
     "sequence"
   ],
   "properties": {
-    "schema_version": { "const": "0.1" },
-    "event_id": { "type": "string", "minLength": 1 },
-    "event_name": {
-      "type": "string",
-      "pattern": "^[a-z]+(\\.[a-z_]+)+\\.v[0-9]+$",
-      "description": "From the §32 catalog, e.g. agent.intent.received.v1."
+    "schema_version": {
+      "const": "0.1"
     },
-    "tenant_id": { "type": "string", "minLength": 1 },
-    "aggregate_id": { "type": "string", "minLength": 1 },
-    "correlation_id": { "type": "string", "minLength": 1 },
-    "causation_id": { "type": ["string", "null"] },
-    "occurred_at": { "type": "string", "format": "date-time" },
-    "produced_at": { "type": "string", "format": "date-time" },
-    "producer": { "type": "string", "minLength": 1 },
-    "sequence": { "type": "integer", "minimum": 0 },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Deduplication key for at-least-once delivery (ADR-008)."
+    },
+    "event_name": {
+      "enum": [
+        "agent.intent.received.v1",
+        "agent.identity.verified.v1",
+        "agent.identity.failed.v1",
+        "authority.evaluated.v1",
+        "policy.evaluated.v1",
+        "intent.parent.linked.v1",
+        "broker.order.submitted.v1",
+        "broker.order.unknown.v1",
+        "broker.order.accepted.v1",
+        "broker.order.rejected.v1",
+        "broker.order.filled.v1",
+        "broker.order.cancelled.v1",
+        "broker.order.reconciled.v1",
+        "fleet.metric.updated.v1",
+        "fleet.cohort.created.v1",
+        "fleet.anomaly.detected.v1",
+        "incident.created.v1",
+        "incident.updated.v1",
+        "incident.escalated.v1",
+        "incident.closed.v1",
+        "control.recommended.v1",
+        "control.applied.v1",
+        "control.revoked.v1",
+        "policy.bundle.created.v1",
+        "policy.bundle.activated.v1",
+        "policy.bundle.rolled_back.v1",
+        "simulation.started.v1",
+        "simulation.completed.v1",
+        "simulation.failed.v1",
+        "evidence.corrected.v1"
+      ],
+      "description": "Closed set. An event nobody wrote down cannot be emitted, because a timeline containing unnamed events cannot be replayed. evidence.corrected.v1 is not in section 32; ADR-009 requires corrections to be expressible as events rather than as updates."
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "aggregate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Without it the event cannot be placed in a timeline."
+    },
+    "causation_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The event that led to this one. Null for the first in a chain."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the thing happened."
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the producer said so."
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unattributed evidence is not evidence."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "corrects_event_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The event this one supersedes. The superseded record is left exactly as written; corrections add rows (ADR-009, INV-006)."
+    },
     "payload": {
       "type": "object",
-      "description": "Event-specific. Consumers must be idempotent (ADR-008) and tolerate unknown properties."
+      "description": "Event-specific. Secrets never appear here (spec section 35), and consumers must tolerate unknown properties."
     }
   }
 }

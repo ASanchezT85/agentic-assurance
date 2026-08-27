@@ -16,7 +16,7 @@
       "package": "event-schema",
       "file": "event-schema/schemas/internal-event.v0.1.json",
       "version": "0.1",
-      "status": "SCAFFOLD",
+      "status": "ACTIVE",
       "owning_phase": 6,
       "spec_section": "32"
     },
