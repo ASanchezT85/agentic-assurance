@@ -2,6 +2,9 @@ package tests
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -101,15 +104,70 @@ func TestNoTradingRecommendationModule(t *testing.T) {
 
 // TestNoHRIImplementation — handoff §14, ADR-014. V0 exposes a Fleet Risk Vector.
 // A composite score requires empirical calibration and its own ADR.
+//
+// The check is on declared identifiers, not on raw text. An earlier version matched
+// the substring anywhere in a file, which failed on a comment explaining why no such
+// score exists. A guard that punishes the explanation teaches authors to delete the
+// explanation, so it now looks at what the code declares and lets the prose say
+// whatever it needs to.
 func TestNoHRIImplementation(t *testing.T) {
-	banned := []string{"HRI", "hri_score", "riskScore", "risk_score", "compositeRisk", "composite_risk"}
-	walkSource(t, func(rel, body string) {
-		for _, b := range banned {
-			if strings.Contains(body, b) {
-				t.Errorf("%s contains %q: no composite risk score in V0 (ADR-014)", rel, b)
-			}
+	banned := []string{"hri", "hriscore", "riskscore", "compositerisk", "compositescore"}
+
+	fset := token.NewFileSet()
+	root := abs(t, ".")
+
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if d.IsDir() {
+			if skipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_guard_test.go") {
+			return nil
+		}
+
+		file, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return nil // unparseable files are the compiler's problem, not this guard's
+		}
+		rel, _ := filepath.Rel(root, path)
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			var name string
+			switch node := n.(type) {
+			case *ast.Ident:
+				name = node.Name
+			case *ast.Field:
+				for _, id := range node.Names {
+					checkIdentifier(t, filepath.ToSlash(rel), id.Name, banned)
+				}
+				return true
+			default:
+				return true
+			}
+			checkIdentifier(t, filepath.ToSlash(rel), name, banned)
+			return true
+		})
+		return nil
 	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+}
+
+func checkIdentifier(t *testing.T, file, name string, banned []string) {
+	t.Helper()
+	lower := strings.ToLower(name)
+	for _, b := range banned {
+		if lower == b || strings.HasSuffix(lower, b) {
+			t.Errorf("%s declares or uses identifier %q: no composite risk score in V0 (ADR-014)",
+				file, name)
+		}
+	}
 }
 
 // TestGatewayRequiresNoLLMPackage — handoff §14, ADR-004 and ADR-022. Checked at the

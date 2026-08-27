@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 8 of seventeen (0 through 16).
+Phase 9 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -68,8 +68,15 @@ Phase 8 delivers fleet telemetry: the ClickHouse schema and batched ingest, roll
 windows, cohorts explained entirely by their predicates, dependency observations that
 keep their verification level, and directional imbalance with coverage. Ingest was
 measured at roughly 228,000 intents/sec on development hardware, which says ingest is
-not the bottleneck and nothing about the end-to-end rate. The submission path is
-still not wired.
+not the bottleneck and nothing about the end-to-end rate.
+
+Phase 9 delivers the Fleet Risk Vector: eight named components, each carrying its own
+value, coverage and sentence of explanation, computed against robust baselines
+(median, MAD, quantiles, EWMA) conditioned on instrument, session and hour. **There is
+no composite score and there will not be one** (ADR-014). A component that could not
+be measured reports UNKNOWN rather than zero, because zero directional imbalance and
+unmeasured directional imbalance are opposite findings. The submission path is still
+not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

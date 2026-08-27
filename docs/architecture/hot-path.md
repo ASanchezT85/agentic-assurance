@@ -108,3 +108,43 @@ with the conclusion by looking at the same facts.
 The window (60s) and minimum cluster size (2) are documented defaults, not calibrated
 thresholds. Their provenance is "nobody has measured yet", and spec section 60
 forbids treating that as a threshold anyone enforces on.
+
+## What the fleet engine computes, and what it refuses to
+
+The Fleet Risk Vector is eight components (spec section 22), and it is deliberately
+not one number.
+
+| | Component | Measured when |
+|---|---|---|
+| D | directional imbalance | any intent has a determinable notional |
+| B | temporal burst | a baseline for the context has 30+ observations and non-zero spread |
+| Cm | model concentration | at least one model family is declared |
+| Cs | strategy concentration | at least one strategy is declared |
+| Cf | feed concentration | at least one market-data dependency is declared |
+| P | market participation | a market data source is configured and has volume (ADR-019) |
+| A | abnormal consensus | D is known and a baseline exists |
+| Q | quality | always |
+
+Each carries its own coverage and its own sentence saying how it was produced. A
+number without those cannot be argued with, and a fleet-risk figure nobody can argue
+with is one nobody should act on.
+
+**Unmeasured is not zero.** `Known: false` is a distinct state from `Value: 0`,
+because zero directional imbalance means balanced flow and unmeasured means nobody
+looked.
+
+**Agreement is not abnormality.** A shares the baseline B depends on, and without one
+it reports UNKNOWN rather than scoring unanimous buying as abnormal. Broad agreement
+during a real event is ordinary, which is the property scenario S12 exists to prove.
+
+**No composite.** ADR-014 requires empirical calibration and its own ADR before any
+single number claims to summarise these, and a weighted average with hand-picked
+weights is precisely the HRI that decision forbids.
+
+The baselines use median and MAD rather than mean and standard deviation for a
+concrete reason: one 50,000-intent burst in an hour of quiet moves a mean enough that
+the *next* burst looks normal. A median does not move.
+
+The 30-observation minimum and the coarse US-centric session labels are documented
+defaults whose provenance is convention. They must be replaced by real venue
+calendars and measured sample requirements before anyone enforces on a burst score.
