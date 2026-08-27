@@ -1,7 +1,7 @@
 # Phase 0 developer commands.
 #
 # Prerequisites (versions measured on the reference machine):
-#   Go      >= 1.24   (tested on 1.26.4)
+#   Go      >= 1.25   (tested on 1.26.4; pgx v5.10 sets the floor)
 #   Node    >= 20     (tested on 26.3.0)
 #   pnpm    >= 10     (tested on 11.8.0)
 #   Python  >= 3.11   (tested on 3.14.6)
@@ -11,7 +11,7 @@
 # Resolved by scripts/python-bin.sh: an explicit $PY, then .venv, then PATH.
 PY = $(shell sh scripts/python-bin.sh)
 
-.PHONY: help bootstrap up down test test-integration lint typecheck build verify clean
+.PHONY: help bootstrap up down migrate test test-integration lint typecheck build verify clean
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | sed -e 's/:.*## /|/' -e 's/^/  /' | column -t -s '|'
@@ -31,7 +31,10 @@ test: ## Run all unit tests
 	pnpm -r --if-present test
 	$(PY) -m pytest -q
 
-test-integration: ## Infrastructure smoke test (run `make up` first)
+migrate: ## Apply PostgreSQL migrations (run `make up` first)
+	sh scripts/migrate.sh
+
+test-integration: ## Integration tests (run `make up && make migrate` first)
 	go test -tags=integration -count=1 ./tests/integration/...
 
 lint: ## Run all linters

@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 2 of seventeen (0 through 16).
+Phase 3 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -35,11 +35,15 @@ Phase 1 delivered the canonical contract: the `AgentExecutionEnvelope`
 (`internal/intent`), its published JSON Schema, deterministic validation, instrument
 normalization, and a versioned fixture library.
 
-Phase 2 delivers identity: X509-SVID verification against a trust bundle, the
+Phase 2 delivered identity: X509-SVID verification against a trust bundle, the
 A0/A1/A2 taxonomy resolved from evidence rather than from what the envelope claims
 about itself, and a local SPIRE server that issues the SVIDs the verifier is tested
-against. There is still no authority evaluation, no policy, and no broker path. The
-Go binaries still expose health endpoints only.
+against.
+
+Phase 3 delivers authority: `AuthorityGrant` with its lifecycle and revocation, the
+full section 53 evaluation matrix, and the first persisted tenant-scoped records with
+PostgreSQL row level security behind them. There is still no policy runtime and no
+broker path. The Go binaries still expose health endpoints only.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 
@@ -68,7 +72,7 @@ Details: `docs/architecture/`.
 
 | Tool | Minimum | Tested on |
 |---|---|---|
-| Go | 1.24 | 1.26.4 |
+| Go | 1.25 | 1.26.4 |
 | Node | 20 | 26.3.0 |
 | pnpm | 10 | 11.8.0 |
 | Python | 3.11 | 3.14.6 |

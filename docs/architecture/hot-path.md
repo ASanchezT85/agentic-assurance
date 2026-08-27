@@ -16,6 +16,9 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
  5. idempotency lookup: Redis cache, PostgreSQL truth      ADR-015
        duplicate -> return the deterministic prior outcome, stop
  6. authority grant evaluation                             §14.3 -> DENY
+    - tenant checked first: a cross-tenant grant is INV-007, not a mismatch
+    - lifecycle before limits, so a revoked grant never reports "limit exceeded"
+    - a limit that cannot be read denies (spec §17)
  7. parent-intent state update (deterministic clustering)  §20
  8. hard policy evaluation against the active bundle       §15.2
  9. decision + idempotency record written to PostgreSQL    one transaction

@@ -4,11 +4,23 @@
 
 ```sh
 make bootstrap    # go modules, pnpm workspace, and the .venv for python tools
-make up           # start postgres, clickhouse, redis, nats; wait for health
-make verify       # the Phase 0 quality gate
+make up           # start postgres, clickhouse, redis, nats, spire; wait for health
+make migrate      # apply PostgreSQL migrations
+make verify       # the quality gate
 make test-integration
 make down
 ```
+
+## Database roles
+
+Migrations run as `POSTGRES_USER`, which is a superuser: they create roles and
+policies. The application connects as **`assurance_app`**, which is deliberately
+`NOSUPERUSER NOBYPASSRLS`.
+
+That distinction is load-bearing rather than tidy. PostgreSQL exempts superusers from
+row level security entirely, so an application connecting as the superuser would make
+every tenant-isolation policy inert while all the tests still passed. `POSTGRES_APP_DSN`
+in `.env.example` is the application connection.
 
 On a host without `make`: `scripts/bootstrap.sh` and `scripts/verify.sh` do the same.
 

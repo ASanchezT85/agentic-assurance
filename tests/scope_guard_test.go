@@ -126,12 +126,6 @@ func TestGatewayRequiresNoLLMPackage(t *testing.T) {
 		}
 	}
 
-	// Phase 0 binaries must be stdlib-only. A dependency arriving here should be a
-	// deliberate, reviewed act, not a drive-by.
-	if strings.Contains(gomod, "require") {
-		t.Error("go.mod has a require block; Phase 0 Go code is stdlib-only")
-	}
-
 	walkSource(t, func(rel, body string) {
 		if !strings.HasPrefix(rel, "cmd/") && !strings.HasPrefix(rel, "internal/") {
 			return
@@ -232,6 +226,63 @@ func TestTemporalStaysOutOfCompose(t *testing.T) {
 		}
 		if strings.Contains(string(body), "profile temporal") {
 			t.Errorf("%s references a temporal profile; Temporal is deferred out of V0 (ADR-018)", f)
+		}
+	}
+}
+
+// allowedModules is every third-party module the core is permitted to depend on,
+// with the reason it earned a place. Phase 0 asserted go.mod had no require block at
+// all, which was the right guard while the answer was "none" and the wrong one the
+// moment a real dependency was needed.
+//
+// An allowlist keeps what mattered about the original rule: a dependency arriving
+// here has to be a deliberate act with a stated reason, not a drive-by from
+// `go get`. Adding a line to this map is the review.
+var allowedModules = map[string]string{
+	"github.com/jackc/pgx/v5": "PostgreSQL driver. Phase 3: authority grants are the first " +
+		"persisted tenant-scoped records, and row level security needs a real connection.",
+	"github.com/jackc/pgpassfile":    "pgx transitive dependency.",
+	"github.com/jackc/pgservicefile": "pgx transitive dependency.",
+	"golang.org/x/text":              "pgx transitive dependency.",
+	"github.com/jackc/puddle/v2":     "pgx connection pool, transitive.",
+	"golang.org/x/crypto":            "pgx SCRAM authentication, transitive.",
+	"golang.org/x/sync":              "pgx transitive dependency.",
+}
+
+// TestDependenciesAreOnTheAllowlist fails when go.mod grows a module nobody wrote a
+// reason for.
+func TestDependenciesAreOnTheAllowlist(t *testing.T) {
+	raw, err := os.ReadFile(abs(t, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+
+	inRequire := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+
+		switch {
+		case strings.HasPrefix(trimmed, "require ("):
+			inRequire = true
+			continue
+		case inRequire && trimmed == ")":
+			inRequire = false
+			continue
+		case strings.HasPrefix(trimmed, "require "):
+			// single-line require
+			trimmed = strings.TrimPrefix(trimmed, "require ")
+		case !inRequire:
+			continue
+		}
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		module := strings.Fields(trimmed)[0]
+		if _, ok := allowedModules[module]; !ok {
+			t.Errorf("go.mod requires %q, which is not on the allowlist in %s.\n"+
+				"Add it there with the reason it is needed, or remove the dependency.",
+				module, "tests/scope_guard_test.go")
 		}
 	}
 }
