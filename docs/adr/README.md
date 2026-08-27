@@ -25,7 +25,7 @@ the master spec. Each states which section of the spec it completes or supersede
 | 015 | Idempotency truth lives in PostgreSQL; Redis is a cache | ACCEPTED |
 | 016 | simulation-engine is a Python deployable rooted at `simulator/` | ACCEPTED |
 | 017 | The Phase 0 console is a build target, not a UI | ACCEPTED |
-| 018 | Temporal is deferred out of V0 | ACCEPTED — deviation from §9.8 |
+| 018 | Temporal is deferred out of V0 | ACCEPTED — deviation from §9.8, approved 2026-08-27 |
 | 019 | Market data is an explicit optional dependency; `P` degrades to UNKNOWN | ACCEPTED |
 | 020 | The sizing field is determined by `order_type` | ACCEPTED |
 | 021 | Completed fail-semantics table and named bounds | ACCEPTED |
@@ -38,7 +38,9 @@ the master spec. Each states which section of the spec it completes or supersede
 Recorded here so they are never discovered by surprise:
 
 1. **ADR-018 supersedes §9.8 on Temporal.** Temporal moves from required stack to an
-   optional, unused Compose profile.
+   optional, unused Compose profile. Explicitly approved by the repository owner on
+   2026-08-27, per the §58 requirement that architectural deviations wait for approval.
+   Enforced by `tests/scope_guard_test.go`.
 2. **ADR-019 adds `adapters/marketdata/`** to the §8 repository layout. Additive only.
 3. **ADR-023 adds two read-only endpoints** to the §46 public API surface.
 4. **ADR-021 adds four rows** to the §17 fail-semantics table and names four bounds

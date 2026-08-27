@@ -2,6 +2,10 @@
 
 **Status:** ACCEPTED — **this is a deliberate deviation from MASTER_BUILD_SPEC.md §9.8**
 
+**Approved:** 2026-08-27 by Alexander J Sanchez T, repository owner. Spec §58 requires
+explicit approval before an architectural deviation. This is that approval, recorded
+here rather than left in a chat log.
+
 ## Context
 
 §9.8 lists Temporal in the required technology stack and assigns it approvals,
@@ -37,8 +41,17 @@ relied upon by accident.
 - If that state machine grows past what is comfortable to hand-maintain, that is the
   measured justification the reintroduction ADR needs.
 
+## Enforcement
+
+`tests/scope_guard_test.go` asserts mechanically that the optional profile stays
+optional: the temporal service must declare a `profiles:` key, no service may
+`depends_on` it, and no Makefile, CI workflow or script may reference
+`--profile temporal`. A deferral nobody checks becomes a dependency by accident.
+
 ## Prohibited reinterpretations
 
 - Temporal MUST NOT appear on the pre-trade hot path even if reintroduced (§9.8 is
   unambiguous on this and this ADR does not relax it).
 - The optional profile MUST NOT become a hidden dependency of any test or make target.
+- "We already have the container running locally" is not measured justification for
+  reintroducing it.
