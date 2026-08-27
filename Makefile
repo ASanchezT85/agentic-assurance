@@ -8,18 +8,16 @@
 #   Docker  >= 24     (tested on 29.7.2, with the compose plugin)
 #   make    >= 4      (Windows: scoop/choco, or run scripts/verify.sh instead)
 
-PY ?= python
+# Resolved by scripts/python-bin.sh: an explicit $PY, then .venv, then PATH.
+PY = $(shell sh scripts/python-bin.sh)
 
 .PHONY: help bootstrap up down test test-integration lint typecheck build verify clean
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | sed -e 's/:.*## /|/' -e 's/^/  /' | column -t -s '|'
 
-bootstrap: ## Install all toolchain dependencies
-	go mod download
-	pnpm install --frozen-lockfile
-	$(PY) -m pip install --quiet --upgrade pip
-	$(PY) -m pip install --quiet pytest ruff mypy
+bootstrap: ## Install all toolchain dependencies (creates .venv)
+	sh scripts/bootstrap.sh
 
 up: ## Start local infrastructure and wait for health
 	docker compose up -d --wait
@@ -50,8 +48,8 @@ build: ## Build all deployables
 	go build -o bin/ ./cmd/...
 	pnpm -C apps/console-web build
 
-verify: lint typecheck test build ## Phase 0 quality gate
-	@echo "Phase 0 quality gate passed."
+verify: ## Phase 0 quality gate
+	sh scripts/verify.sh
 
 clean: ## Remove build output
 	rm -rf bin apps/console-web/.next

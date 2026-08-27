@@ -3,14 +3,26 @@
 ## Local development
 
 ```sh
-make bootstrap    # install toolchains
+make bootstrap    # go modules, pnpm workspace, and the .venv for python tools
 make up           # start postgres, clickhouse, redis, nats; wait for health
 make verify       # the Phase 0 quality gate
 make test-integration
 make down
 ```
 
-On a host without `make`, `scripts/verify.sh` runs the same gate.
+On a host without `make`: `scripts/bootstrap.sh` and `scripts/verify.sh` do the same.
+
+## Which python
+
+`scripts/python-bin.sh` resolves it, and both the Makefile and `verify.sh` defer to it:
+an explicit `$PY`, then `.venv`, then whatever is on `PATH`.
+
+The project venv comes first on purpose. Installing the Python tools globally puts
+them in the user site-packages, and not every environment exposes that directory --
+a GUI git client running the pre-push hook is one that does not. The symptom is
+`No module named ruff` from an interpreter that clearly has ruff installed. `verify.sh`
+preflights the three modules and tells you to bootstrap instead of failing with a
+traceback.
 
 ## Where the gate runs
 

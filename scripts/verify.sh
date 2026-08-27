@@ -3,7 +3,19 @@
 # Equivalent to `make verify`. Keep the two in step.
 set -eu
 
-PY="${PY:-python}"
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+PY=$(sh "$ROOT/scripts/python-bin.sh")
+
+# Preflight. A missing tool must say what to run, not raise ImportError three
+# steps into the gate.
+for module in ruff mypy pytest; do
+  if ! "$PY" -c "import $module" >/dev/null 2>&1; then
+    echo "verify: $PY cannot import '$module'."
+    echo "verify: run 'make bootstrap' (or scripts/bootstrap.sh) to build the project venv."
+    exit 1
+  fi
+done
+echo "==> python: $PY"
 
 echo "==> gofmt"
 if [ -n "$(gofmt -l .)" ]; then

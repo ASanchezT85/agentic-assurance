@@ -71,9 +71,16 @@ Windows hosts often lack `make`. `scripts/verify.sh` runs the same quality gate.
 ## Bootstrap
 
 ```sh
-git clone <repo> && cd agentic-assurance
-make bootstrap
+git clone https://github.com/ASanchezT85/agentic-assurance.git
+cd agentic-assurance
+make bootstrap          # or: sh scripts/bootstrap.sh
 ```
+
+`bootstrap` downloads Go modules, installs the pnpm workspace, and creates a project
+virtualenv at `.venv` for the Python tools. The venv is not optional convenience: a
+global `pip install ruff` lands in the user site-packages, which some environments do
+not put on `sys.path`, and the gate then fails in a way that has nothing to do with
+your code.
 
 ## Local infrastructure
 
