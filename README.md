@@ -116,6 +116,10 @@ ADR-015 through ADR-024 resolve contradictions and omissions found by auditing i
 `docs/adr/README.md` lists every deviation from the spec explicitly, including the one
 place where an ADR supersedes it (ADR-018, Temporal).
 
+## License
+
+MIT. Copyright (c) 2026 Alexander J Sanchez T. See `LICENSE`.
+
 ## Security
 
 Fifteen security invariants, `INV-001` through `INV-015`, each bound to the phase that

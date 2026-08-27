@@ -1,6 +1,8 @@
 {
   "name": "agentic-assurance",
   "private": true,
+  "license": "MIT",
+  "author": "Alexander J Sanchez T",
   "packageManager": "pnpm@11.8.0",
   "engines": {
     "node": ">=20"

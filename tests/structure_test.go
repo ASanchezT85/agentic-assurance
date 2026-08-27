@@ -35,6 +35,7 @@ func TestMandatoryRootFilesExist(t *testing.T) {
 		".gitignore",
 		".env.example",
 		"pnpm-lock.yaml",
+		"LICENSE",
 	}
 	for _, f := range files {
 		if _, err := os.Stat(abs(t, f)); err != nil {
