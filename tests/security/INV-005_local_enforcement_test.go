@@ -120,3 +120,47 @@ func TestRollingLimitsWithoutABackendDeny(t *testing.T) {
 		t.Errorf("got %s", got.Code)
 	}
 }
+
+// The enforcement plane must not reach ClickHouse. Spec section 59 forbids it from
+// the synchronous hard-policy path outright, and the way to be sure is that no
+// enforcement package can even name it.
+//
+// This is the Phase 8 exit criterion "no hot-path dependency on ClickHouse",
+// expressed as a property of the import graph rather than as a benchmark that
+// happens not to have touched it.
+func TestEnforcementCannotReachClickHouse(t *testing.T) {
+	for _, dir := range []string{
+		"../../internal/policy", "../../internal/authority", "../../internal/identity",
+		"../../internal/intent", "../../internal/execution", "../../internal/broker",
+	} {
+		fset := token.NewFileSet()
+		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
+			return !strings.HasSuffix(fi.Name(), "_test.go")
+		}, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", dir, err)
+		}
+
+		for _, pkg := range pkgs {
+			for path, file := range pkg.Files {
+				for _, imp := range file.Imports {
+					name := strings.Trim(imp.Path.Value, `"`)
+					if name == "agentic-assurance/internal/fleet" ||
+						strings.Contains(strings.ToLower(name), "clickhouse") {
+						t.Errorf("%s imports %s; ClickHouse and fleet analytics are "+
+							"forbidden on the hot path (spec section 59, ADR-021)", path, name)
+					}
+				}
+
+				raw, readErr := os.ReadFile(path)
+				if readErr != nil {
+					continue
+				}
+				if strings.Contains(strings.ToLower(string(raw)), "clickhouse") {
+					t.Errorf("%s mentions ClickHouse; no enforcement decision may read "+
+						"analytical storage", path)
+				}
+			}
+		}
+	}
+}

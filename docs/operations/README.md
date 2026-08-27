@@ -64,6 +64,15 @@ Without either, nothing enforces the gate and it becomes documentation.
 | Redis | 6379 | persistence disabled on purpose |
 | NATS | 4222 (client), 8222 (monitoring) | JetStream enabled |
 | SPIRE server | none published | reachable inside the compose network only |
+
+## Migrations
+
+`make migrate` applies PostgreSQL and then ClickHouse.
+
+ClickHouse migrations are **one statement per file**, applied in filename order. Its
+HTTP interface takes a single statement per request, and splitting a multi-statement
+file in shell is the kind of parsing that works until a semicolon appears inside a
+comment.
 | assurance-gateway | 8080 | `/healthz`, `/readyz` |
 | fleet-engine | 8081 | `/healthz`, `/readyz` |
 

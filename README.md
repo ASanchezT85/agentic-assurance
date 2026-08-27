@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 7 of seventeen (0 through 16).
+Phase 8 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -62,7 +62,14 @@ curl and without the console.
 Phase 7 delivers economic intent reconstruction: deterministic clustering of
 fragmented orders into a parent intent, principal-level aggregation across agents,
 and explainable confidence. Scenarios S06 (order fragmentation) and S07 (cross-agent
-accumulation) pass. The submission path is still not wired.
+accumulation) pass.
+
+Phase 8 delivers fleet telemetry: the ClickHouse schema and batched ingest, rolling
+windows, cohorts explained entirely by their predicates, dependency observations that
+keep their verification level, and directional imbalance with coverage. Ingest was
+measured at roughly 228,000 intents/sec on development hardware, which says ingest is
+not the bottleneck and nothing about the end-to-end rate. The submission path is
+still not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

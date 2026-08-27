@@ -62,3 +62,26 @@ can quietly start depending on it surviving a restart.
 
 The first three are calibration knobs sized for a development host. They must be
 re-derived from measured throughput before Phase 15.
+
+## Measured, not assumed (Phase 8)
+
+Ingest into ClickHouse was measured at **~228,000 intents/sec**: 50,000 rows through
+four workers in batches of 5,000, over the HTTP interface, against local Docker.
+
+That number needs its qualifier every time it is quoted. It measures ClickHouse
+ingest of pre-built envelopes and nothing else. The 10,000/sec target in spec section
+50.3 is about the platform sustaining intents, which also costs envelope validation,
+identity verification, authority evaluation, policy evaluation and a broker call.
+**Ingest being fast means ingest is not the bottleneck. It does not mean the platform
+sustains this rate**, and the end-to-end figure needs the full path, which is not
+wired yet.
+
+The test prints this caveat alongside the number, so the two cannot be separated by
+someone reading test output.
+
+## Why measurements are stored rather than recomputed
+
+`fleet_measurements` holds computed results, not just inputs. A historical view built
+by re-running today's code over yesterday's rows shows what the current logic would
+have concluded, which is not what happened. An incident review needs the second, and
+storing the measurement is the only way to have it.
