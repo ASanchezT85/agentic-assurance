@@ -1,0 +1,9 @@
+# ISOLATE_COHORT is a fleet control, not an order-level one (INV-009, Phase 13).
+version: 1
+policy: overreach
+
+rules:
+  - id: TRY_TO_ISOLATE
+    when:
+      asset_class: EQUITY
+    action: ISOLATE_COHORT

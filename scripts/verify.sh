@@ -6,6 +6,7 @@ set -eu
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 PY=$(sh "$ROOT/scripts/python-bin.sh")
 
+
 # Preflight. A missing tool must say what to run, not raise ImportError three
 # steps into the gate.
 for module in ruff mypy pytest; do

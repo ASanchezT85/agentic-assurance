@@ -1,0 +1,14 @@
+# A shadow-friendly policy: it watches without blocking anything.
+version: 3
+policy: observe_only
+
+rules:
+  - id: WATCH_LARGE_ORDERS
+    when:
+      notional_gte: 10000
+    action: OBSERVE
+
+  - id: WATCH_EXTENDED_HOURS
+    when:
+      extended_hours: true
+    action: OBSERVE

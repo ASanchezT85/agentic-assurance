@@ -1,0 +1,17 @@
+version: 2
+policy: instrument_scoped
+
+rules:
+  - id: THROTTLE_ONE_NAME
+    when:
+      instrument_ids:
+        - instr_us_equity_00206R102
+        - instr_us_equity_88160R101
+      side: BUY
+    action: THROTTLE
+
+  - id: NO_STOPS_ON_THIN_NAMES
+    when:
+      instrument_id: instr_us_equity_88160R101
+      order_type: STOP
+    action: DENY

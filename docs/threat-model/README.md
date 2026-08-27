@@ -31,7 +31,14 @@ time any of them is checked.
 | INV-015 | An invalid instrument normalization result cannot proceed to executable policy. | 1 | `tests/security/INV-015_instrument_normalization_test.go` |
 
 Phase 1 delivered INV-008 and INV-015; Phase 2 added INV-001 and INV-014; Phase 3
-added INV-002 and INV-007. The rest arrive with the code they guard.
+added INV-002 and INV-007; Phase 4 added INV-003, INV-005 and INV-010. The rest
+arrive with the code they guard.
+
+Three of these are enforced structurally rather than behaviourally. INV-003 and
+INV-005 parse the enforcement packages and fail on a forbidden import, and INV-003
+also fails if the evaluator ever reaches the YAML parser. A test that unplugs a
+dependency proves the code copes today; a test that shows the wire does not exist
+proves it cannot stop coping.
 
 INV-007 is proven in two halves. The in-process half is an ordinary unit test; the
 database half is build-tagged `integration`, because row level security cannot be

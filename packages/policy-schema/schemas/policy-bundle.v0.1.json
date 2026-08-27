@@ -2,26 +2,213 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentic-assurance.dev/schemas/policy-bundle/v0.1",
   "title": "PolicyBundle",
-  "description": "Phase 0 SCAFFOLD. Bundle identity and activation metadata only (§15.2). The rule grammar and the compiler arrive in Phase 4. YAML authoring is never interpreted per-order (§15.2).",
-  "x-phase-0-scaffold": true,
+  "description": "A compiled, hashed and signed policy. Authoring is YAML (spec section 15.1); this is the compiled artifact. Section 15.2 forbids interpreting the YAML per order, so the evaluator reads only what is described here. content_hash covers bundle_id, tenant_id, policy, version and rules, and nothing else: promoting a bundle through the lifecycle must not change its identity.",
   "x-owning-phase": 4,
   "type": "object",
-  "required": ["schema_version", "bundle_id", "version", "content_hash", "status"],
+  "required": [
+    "schema_version",
+    "bundle_id",
+    "tenant_id",
+    "policy",
+    "version",
+    "rules",
+    "content_hash",
+    "activation"
+  ],
   "properties": {
-    "schema_version": { "const": "0.1" },
-    "bundle_id": { "type": "string", "minLength": 1 },
-    "version": { "type": "integer", "minimum": 1 },
+    "schema_version": {
+      "const": "0.1"
+    },
+    "bundle_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Authored policy name."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "There is no unversioned policy (INV-010). Every change is a new version."
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "description": "A policy with no rules enforces nothing, so an empty list is invalid.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "action"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A decision must be able to name the rule that produced it."
+          },
+          "action": {
+            "enum": [
+              "ALLOW",
+              "OBSERVE",
+              "DELAY",
+              "THROTTLE",
+              "REQUIRE_APPROVAL",
+              "DENY"
+            ],
+            "description": "Order-level control actions from section 16. ISOLATE_COHORT and READ_ONLY are fleet-level and cannot be emitted by a per-order rule (INV-009, Phase 13). Resolution across matching rules takes the most restrictive, so rule order in the source does not change the outcome."
+          },
+          "when_asset_class": {
+            "enum": [
+              "EQUITY",
+              "ETF",
+              "OPTION",
+              "CRYPTO"
+            ]
+          },
+          "when_side": {
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "when_order_type": {
+            "enum": [
+              "MARKET",
+              "LIMIT",
+              "STOP",
+              "STOP_LIMIT"
+            ]
+          },
+          "when_instruments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "when_notional_gt": {
+            "type": "number",
+            "minimum": 0
+          },
+          "when_notional_gte": {
+            "type": "number",
+            "minimum": 0
+          },
+          "when_notional_lt": {
+            "type": "number",
+            "minimum": 0
+          },
+          "when_notional_lte": {
+            "type": "number",
+            "minimum": 0
+          },
+          "when_extended_hours": {
+            "type": "boolean"
+          },
+          "require_notional_lte": {
+            "type": "number",
+            "minimum": 0
+          },
+          "require_notional_gte": {
+            "type": "number",
+            "minimum": 0
+          },
+          "needs_notional": {
+            "type": "boolean",
+            "description": "Computed at compile time. A size-dependent rule fires when order size cannot be determined, so a notional limit is not avoidable by omitting the notional."
+          }
+        }
+      }
+    },
     "content_hash": {
       "type": "string",
       "minLength": 1,
-      "description": "Recorded on every decision (§15.2)."
+      "description": "SHA-256 over the canonical encoding. Recorded on every decision."
     },
-    "signature": { "type": ["string", "null"] },
-    "status": {
+    "signature": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Ed25519 over content_hash. Required before ACTIVE (INV-010)."
+    },
+    "signed_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "compiled_at": {
       "type": "string",
-      "enum": ["DRAFT", "VALIDATE", "COMPILE", "SIGN", "SIMULATE", "SHADOW", "CANARY", "ACTIVE", "ROLLED_BACK"],
-      "description": "Lifecycle from §15.2 and §43. Production policy is never edited in place."
+      "format": "date-time"
     },
-    "activated_at": { "type": ["string", "null"], "format": "date-time" }
+    "activation": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "description": "Staged deployment metadata (spec section 43). Outside content_hash on purpose.",
+      "properties": {
+        "status": {
+          "enum": [
+            "DRAFT",
+            "VALIDATE",
+            "COMPILE",
+            "SIGN",
+            "SIMULATE",
+            "SHADOW",
+            "CANARY",
+            "ACTIVE",
+            "ROLLED_BACK"
+          ],
+          "description": "Forward-only pipeline with rollback available from SIGN onward. ROLLED_BACK is terminal: production policy is never edited in place, a new version is created instead. Only ACTIVE enforces production; SHADOW and CANARY do not."
+        },
+        "activated_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "activated_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rolled_back_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "rolled_back_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rollback_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Required on rollback; one without a reason cannot be explained later."
+        },
+        "previous_bundle_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
   }
 }

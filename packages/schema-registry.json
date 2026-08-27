@@ -25,7 +25,7 @@
       "package": "policy-schema",
       "file": "policy-schema/schemas/policy-bundle.v0.1.json",
       "version": "0.1",
-      "status": "SCAFFOLD",
+      "status": "ACTIVE",
       "owning_phase": 4,
       "spec_section": "15"
     }

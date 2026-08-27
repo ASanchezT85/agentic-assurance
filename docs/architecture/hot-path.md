@@ -21,6 +21,10 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
     - a limit that cannot be read denies (spec §17)
  7. parent-intent state update (deterministic clustering)  §20
  8. hard policy evaluation against the active bundle       §15.2
+    - compiled rules only; the evaluator never reaches a YAML parser
+    - most restrictive action wins, so rule order does not change outcomes
+    - the decision records bundle id, version and content hash
+    - no bundle loaded -> DENY
  9. decision + idempotency record written to PostgreSQL    one transaction
 10. control action returned to the caller
 11. broker submission through BrokerAdapter, if ALLOW      ADR-012

@@ -1,0 +1,10 @@
+# A typo in a policy file silently disables a financial control. KnownFields turns it
+# into a parse error instead.
+version: 1
+policy: typo
+
+rules:
+  - id: TYPO
+    when:
+      asset_clss: EQUITY
+    action: DENY

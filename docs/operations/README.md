@@ -80,3 +80,34 @@ embedded in evidence, or placed in telemetry payloads.
 
 OpenTelemetry traces, metrics and operational logs arrive with the code they
 instrument. Operational logs are not audit evidence (INV-013, §51).
+
+## Authoring and shipping a policy
+
+```text
+edit YAML  ->  Validate  ->  Compile  ->  Sign  ->  Simulate  ->  Shadow  ->  Canary  ->  Active
+```
+
+The pipeline is forward-only. Rollback is available from `SIGN` onward, is always
+audited with a reason, and is terminal: a rolled-back bundle is never resurrected,
+a new version is created instead (spec section 43).
+
+Only `ACTIVE` enforces production. `SHADOW` and `CANARY` do not, and `Bundle.Enforcing()`
+is the single place that answers the question.
+
+Policy fixtures live in `tests/fixtures/policies/`. The spec's own example from
+section 15.1 is one of them, so it is proven to compile and to behave as written.
+
+## Known local quirk: Windows Application Control
+
+On this workstation, Windows Application Control refuses to execute freshly built Go
+test binaries, failing with `An Application Control policy has blocked this file` and
+nothing to do with the code. The workaround is to build them somewhere the policy
+permits:
+
+```sh
+export GOTMPDIR=/some/permitted/path
+```
+
+`verify.sh` deliberately does not set this. The blocked path varies by machine, and a
+repository-local `.gotmp` would also drop build artifacts where the repository
+structure and scope guards walk them.

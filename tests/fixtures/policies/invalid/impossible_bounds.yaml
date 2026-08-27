@@ -1,0 +1,10 @@
+# A rule that can never match is a control someone believes they have.
+version: 1
+policy: dead_rule
+
+rules:
+  - id: NEVER_FIRES
+    when:
+      notional_gt: 5000
+      notional_lt: 1000
+    action: DENY

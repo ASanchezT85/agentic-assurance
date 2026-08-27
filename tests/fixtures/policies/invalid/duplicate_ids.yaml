@@ -1,0 +1,13 @@
+# Two rules with one id make a decision unattributable.
+version: 1
+policy: ambiguous
+
+rules:
+  - id: SAME
+    when:
+      asset_class: EQUITY
+    action: DENY
+  - id: SAME
+    when:
+      asset_class: ETF
+    action: OBSERVE

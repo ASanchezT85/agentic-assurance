@@ -1,0 +1,25 @@
+# The example from MASTER_BUILD_SPEC.md section 15.1, verbatim.
+#
+# It is a fixture rather than a doc snippet so that the spec's own example is proven
+# to compile and to behave as its author intended. A specification example that does
+# not run is a specification example that drifts.
+version: 1
+policy: retail_agent_standard
+
+rules:
+  - id: ORDER_MAX_NOTIONAL
+    when:
+      asset_class: EQUITY
+    require:
+      notional_lte: 5000
+    action: DENY
+
+  - id: OPTIONS_DISABLED
+    when:
+      asset_class: OPTION
+    action: DENY
+
+  - id: LARGE_ORDER_APPROVAL
+    when:
+      notional_gt: 2500
+    action: REQUIRE_APPROVAL

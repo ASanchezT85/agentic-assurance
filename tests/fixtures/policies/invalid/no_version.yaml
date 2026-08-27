@@ -1,0 +1,8 @@
+# INV-010: there is no unversioned policy.
+policy: unversioned
+
+rules:
+  - id: SOMETHING
+    when:
+      asset_class: EQUITY
+    action: DENY

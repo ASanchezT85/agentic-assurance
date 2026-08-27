@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 3 of seventeen (0 through 16).
+Phase 4 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -40,10 +40,14 @@ A0/A1/A2 taxonomy resolved from evidence rather than from what the envelope clai
 about itself, and a local SPIRE server that issues the SVIDs the verifier is tested
 against.
 
-Phase 3 delivers authority: `AuthorityGrant` with its lifecycle and revocation, the
+Phase 3 delivered authority: `AuthorityGrant` with its lifecycle and revocation, the
 full section 53 evaluation matrix, and the first persisted tenant-scoped records with
-PostgreSQL row level security behind them. There is still no policy runtime and no
-broker path. The Go binaries still expose health endpoints only.
+PostgreSQL row level security behind them.
+
+Phase 4 delivers the policy runtime: YAML authoring, a compiler, Ed25519-signed
+bundles with content hashes, the staged deployment lifecycle, and a deterministic
+evaluator that records the exact bundle in every decision. There is still no broker
+path. The Go binaries still expose health endpoints only.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

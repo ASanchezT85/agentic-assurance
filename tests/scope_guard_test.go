@@ -247,6 +247,13 @@ var allowedModules = map[string]string{
 	"github.com/jackc/puddle/v2":     "pgx connection pool, transitive.",
 	"golang.org/x/crypto":            "pgx SCRAM authentication, transitive.",
 	"golang.org/x/sync":              "pgx transitive dependency.",
+	"gopkg.in/yaml.v3": "Policy authoring format (spec section 15.1). Compile-time only: " +
+		"section 15.2 forbids interpreting YAML per order, and TestEvaluationNeverParsesSource " +
+		"asserts the evaluator never reaches it.",
+	"github.com/kr/text": "Test-only transitive of yaml.v3, through gopkg.in/check.v1. " +
+		"Reachable from `go test all`, never linked into a binary.",
+	"github.com/rogpeppe/go-internal": "Test-only transitive of yaml.v3. `go mod why` " +
+		"reports the main module does not need it; go mod tidy retains it for the test graph.",
 }
 
 // TestDependenciesAreOnTheAllowlist fails when go.mod grows a module nobody wrote a
