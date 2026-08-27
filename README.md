@@ -26,16 +26,20 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 1 of seventeen (0 through 16).
+Phase 2 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
 
-Phase 1 delivers the canonical contract: the `AgentExecutionEnvelope`
+Phase 1 delivered the canonical contract: the `AgentExecutionEnvelope`
 (`internal/intent`), its published JSON Schema, deterministic validation, instrument
-normalization, and a versioned fixture library. There is still no identity
-verification, no authority evaluation, no policy, and no broker path. The Go binaries
-still expose health endpoints only.
+normalization, and a versioned fixture library.
+
+Phase 2 delivers identity: X509-SVID verification against a trust bundle, the
+A0/A1/A2 taxonomy resolved from evidence rather than from what the envelope claims
+about itself, and a local SPIRE server that issues the SVIDs the verifier is tested
+against. There is still no authority evaluation, no policy, and no broker path. The
+Go binaries still expose health endpoints only.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

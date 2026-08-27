@@ -80,6 +80,28 @@ services:
       timeout: 3s
       retries: 10
 
+  # Issues real X509-SVIDs and publishes the trust bundle that internal/identity
+  # verifies against. No agent: nothing fetches an SVID through the Workload API yet.
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.11.2
+    # The image runs as uid 1000, but a fresh named volume is created root-owned,
+    # so SPIRE cannot create its SQLite datastore. Declaring the uid here makes
+    # Docker chown the volume on first mount.
+    user: "1000:1000"
+    command: ["-config", "/run/spire/config/server.conf"]
+    volumes:
+      - ./infra/docker/spire/server.conf:/run/spire/config/server.conf:ro
+      # A bind mount rather than a named volume: a fresh named volume is created
+      # root-owned and the image runs as uid 1000, so SPIRE cannot create its
+      # datastore inside it.
+      - ./infra/docker/spire/data:/opt/spire/data
+    healthcheck:
+      test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
 volumes:
   postgres-data:
   clickhouse-data:

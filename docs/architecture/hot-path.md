@@ -10,6 +10,9 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
  2. adapter normalizes into AgentExecutionEnvelope        ADR-002
  3. envelope validation                                    invalid -> DENY
  4. identity verification + workload attestation           invalid -> DENY
+    - X509-SVID chain, expiry and URI SAN checked
+    - attestation level resolved from evidence, not from the envelope claim
+    - a claim above the established level is refused (INV-001)
  5. idempotency lookup: Redis cache, PostgreSQL truth      ADR-015
        duplicate -> return the deterministic prior outcome, stop
  6. authority grant evaluation                             §14.3 -> DENY
