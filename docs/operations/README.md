@@ -99,15 +99,27 @@ section 15.1 is one of them, so it is proven to compile and to behave as written
 
 ## Known local quirk: Windows Application Control
 
-On this workstation, Windows Application Control refuses to execute freshly built Go
-test binaries, failing with `An Application Control policy has blocked this file` and
-nothing to do with the code. The workaround is to build them somewhere the policy
-permits:
+On this workstation, Windows Application Control intermittently refuses to execute a
+freshly built Go test binary:
 
-```sh
-export GOTMPDIR=/some/permitted/path
+```text
+fork/exec ...\go-build.../pkg.test.exe: An Application Control policy has blocked this file.
 ```
 
-`verify.sh` deliberately does not set this. The blocked path varies by machine, and a
-repository-local `.gotmp` would also drop build artifacts where the repository
-structure and scope guards walk them.
+It has nothing to do with the code. It is **intermittent, not deterministic**: the
+same command on the same path fails and then passes on a retry, which is consistent
+with a scanner holding a lock on a newly written executable rather than with any
+path being disallowed. Re-running the test is usually enough.
+
+`GOTMPDIR` moves where the binaries are built and sometimes helps, but it is not a
+fix:
+
+```sh
+export GOTMPDIR=/some/path
+```
+
+`verify.sh` deliberately does not set it. A repository-local `.gotmp` would drop build
+artifacts exactly where the structure and scope guards walk, which breaks them for a
+real reason while trying to work around an unrelated one. If this becomes frequent
+enough to matter, the fix is an exclusion in the host's security policy, not a change
+in this repository.
