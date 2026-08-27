@@ -54,7 +54,7 @@ entry point.
 
 - **Kafka** — NATS JetStream is the V0 event backbone (§9.7).
 - **Neo4j** — ADR-010.
-- **Temporal as a requirement** — ADR-018 moves it to an unused optional profile.
+- **Temporal** — ADR-018 defers it out of V0. It is not in the Compose file at all.
 - **A market data feed on the hot path** — ADR-019 makes it optional and off-path.
 - **Any LLM** — ADR-004 and ADR-022.
 

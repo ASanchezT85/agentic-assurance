@@ -201,49 +201,37 @@ func TestNoLLMDependencyInTheConsole(t *testing.T) {
 	}
 }
 
-// TestTemporalStaysOptional — ADR-018, approved 2026-08-27. Temporal is deferred out
-// of V0 and survives only as an unused Compose profile. The failure mode a deferral
-// invites is quiet promotion back to a dependency, so it is checked rather than
-// trusted.
-func TestTemporalStaysOptional(t *testing.T) {
+// TestTemporalStaysOutOfCompose — ADR-018, approved 2026-08-27. Temporal is deferred
+// out of V0 and was deleted from docker-compose.yml outright: an unused service
+// definition is an invitation. Reintroducing it requires a new ADR, and that ADR is
+// where this guard gets updated.
+func TestTemporalStaysOutOfCompose(t *testing.T) {
 	raw, err := os.ReadFile(abs(t, "docker-compose.yml"))
 	if err != nil {
 		t.Fatalf("read docker-compose.yml: %v", err)
 	}
 	compose := string(raw)
 
-	// The temporal service must be gated behind a profile.
-	idx := strings.Index(compose, "\n  temporal:")
-	if idx < 0 {
-		return // removing it entirely is also compliant with ADR-018
+	if strings.Contains(compose, "\n  temporal:") {
+		t.Error("docker-compose.yml defines a temporal service; Temporal is deferred out of V0 (ADR-018)")
 	}
-	block := compose[idx:]
-	if end := strings.Index(block[1:], "\n  "); end > 0 {
-		// crude block scan: stop at the next service key at the same indent
-		if next := strings.Index(block[1:], "\n\n  "); next > 0 {
-			block = block[:next]
-		}
+	if strings.Contains(compose, "temporalio/") {
+		t.Error("docker-compose.yml references a temporalio image; Temporal is deferred out of V0 (ADR-018)")
 	}
-	if !strings.Contains(block, "profiles:") {
-		t.Error("docker-compose.yml: the temporal service has no profiles: key; it must stay opt-in (ADR-018)")
-	}
-
-	// No service may depend on it.
 	for _, line := range strings.Split(compose, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- temporal") || trimmed == "temporal:" && strings.Contains(line, "      ") {
-			t.Errorf("docker-compose.yml: a service depends on temporal (%q); nothing may depend on it (ADR-018)", trimmed)
+		if strings.HasPrefix(strings.TrimSpace(line), "- temporal") {
+			t.Errorf("docker-compose.yml: a service depends on temporal (%q) (ADR-018)", strings.TrimSpace(line))
 		}
 	}
 
-	// No developer command or CI step may start it.
+	// No developer command or CI step may start it either.
 	for _, f := range []string{"Makefile", "scripts/verify.sh", ".github/workflows/ci.yml"} {
 		body, err := os.ReadFile(abs(t, f))
 		if err != nil {
 			continue
 		}
-		if strings.Contains(string(body), "--profile temporal") {
-			t.Errorf("%s starts the temporal profile; Phase 0 boot must not require it (ADR-018)", f)
+		if strings.Contains(string(body), "profile temporal") {
+			t.Errorf("%s references a temporal profile; Temporal is deferred out of V0 (ADR-018)", f)
 		}
 	}
 }

@@ -38,9 +38,9 @@ the master spec. Each states which section of the spec it completes or supersede
 Recorded here so they are never discovered by surprise:
 
 1. **ADR-018 supersedes §9.8 on Temporal.** Temporal moves from required stack to an
-   optional, unused Compose profile. Explicitly approved by the repository owner on
-   2026-08-27, per the §58 requirement that architectural deviations wait for approval.
-   Enforced by `tests/scope_guard_test.go`.
+   deferred technology, absent from `docker-compose.yml`. Explicitly approved by the
+   repository owner on 2026-08-27, per the §58 requirement that architectural
+   deviations wait for approval. Enforced by `tests/scope_guard_test.go`.
 2. **ADR-019 adds `adapters/marketdata/`** to the §8 repository layout. Additive only.
 3. **ADR-023 adds two read-only endpoints** to the §46 public API surface.
 4. **ADR-021 adds four rows** to the §17 fail-semantics table and names four bounds

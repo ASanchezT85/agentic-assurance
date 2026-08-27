@@ -20,7 +20,6 @@ On a host without `make`, `scripts/verify.sh` runs the same gate.
 | ClickHouse | 8123 (HTTP), 9000 (native) | bound to 127.0.0.1 |
 | Redis | 6379 | persistence disabled on purpose |
 | NATS | 4222 (client), 8222 (monitoring) | JetStream enabled |
-| Temporal | 7233 | optional profile, unused (ADR-018) |
 | assurance-gateway | 8080 | `/healthz`, `/readyz` |
 | fleet-engine | 8081 | `/healthz`, `/readyz` |
 

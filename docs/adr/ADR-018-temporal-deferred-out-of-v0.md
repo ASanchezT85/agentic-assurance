@@ -27,8 +27,10 @@ relied upon by accident.
 ## Decision
 
 1. Temporal is removed from the V0 required stack.
-2. It remains available as an optional `docker-compose` profile (`--profile temporal`)
-   that no service depends on and no test requires.
+2. It is removed from `docker-compose.yml` entirely. An earlier revision of this ADR
+   kept it as an opt-in Compose profile; the repository owner elected on 2026-08-27 to
+   delete it outright, on the grounds that an unused service definition is an
+   invitation. There is nothing to accidentally start.
 3. Phases 4, 5, 10 and 11 implement their orchestration without it.
 4. Reintroducing Temporal as a required dependency requires a future ADR that names
    the measured problem it solves and the phase that owns it.
@@ -43,15 +45,17 @@ relied upon by accident.
 
 ## Enforcement
 
-`tests/scope_guard_test.go` asserts mechanically that the optional profile stays
-optional: the temporal service must declare a `profiles:` key, no service may
-`depends_on` it, and no Makefile, CI workflow or script may reference
-`--profile temporal`. A deferral nobody checks becomes a dependency by accident.
+`tests/scope_guard_test.go` asserts mechanically that Temporal stays out: no
+`temporal` service and no `temporalio/*` image in `docker-compose.yml`, and no
+Makefile, CI workflow or script referencing a temporal profile. The guard is strict
+on purpose. Reintroducing Temporal already requires a new ADR, and that ADR is where
+this test gets updated. A deferral nobody checks becomes a dependency by accident.
 
 ## Prohibited reinterpretations
 
 - Temporal MUST NOT appear on the pre-trade hot path even if reintroduced (§9.8 is
   unambiguous on this and this ADR does not relax it).
-- The optional profile MUST NOT become a hidden dependency of any test or make target.
+- Re-adding the service to `docker-compose.yml` without an approved ADR is prohibited,
+  profile or no profile.
 - "We already have the container running locally" is not measured justification for
   reintroducing it.

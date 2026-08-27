@@ -4,7 +4,6 @@
 # Ports (documented per Phase 0 handoff §5):
 #   5432  PostgreSQL          8123  ClickHouse HTTP     9000  ClickHouse native
 #   6379  Redis               4222  NATS client         8222  NATS monitoring
-#   7233  Temporal gRPC (optional profile, nothing depends on it — ADR-018)
 #
 # Start:  docker compose up -d
 # Health: docker compose ps
@@ -80,23 +79,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  # Optional, unused, and nothing may depend on it (ADR-018).
-  #   docker compose --profile temporal up -d
-  temporal:
-    image: temporalio/auto-setup:1.27
-    profiles: ["temporal"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DB: postgres12
-      DB_PORT: 5432
-      POSTGRES_SEEDS: postgres
-      POSTGRES_USER: assurance
-      POSTGRES_PWD: assurance_dev_only
-    ports:
-      - "127.0.0.1:7233:7233"
 
 volumes:
   postgres-data:
