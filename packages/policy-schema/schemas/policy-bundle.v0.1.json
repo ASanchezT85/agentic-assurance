@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-assurance.dev/schemas/policy-bundle/v0.1",
+  "title": "PolicyBundle",
+  "description": "Phase 0 SCAFFOLD. Bundle identity and activation metadata only (§15.2). The rule grammar and the compiler arrive in Phase 4. YAML authoring is never interpreted per-order (§15.2).",
+  "x-phase-0-scaffold": true,
+  "x-owning-phase": 4,
+  "type": "object",
+  "required": ["schema_version", "bundle_id", "version", "content_hash", "status"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "bundle_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "content_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Recorded on every decision (§15.2)."
+    },
+    "signature": { "type": ["string", "null"] },
+    "status": {
+      "type": "string",
+      "enum": ["DRAFT", "VALIDATE", "COMPILE", "SIGN", "SIMULATE", "SHADOW", "CANARY", "ACTIVE", "ROLLED_BACK"],
+      "description": "Lifecycle from §15.2 and §43. Production policy is never edited in place."
+    },
+    "activated_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

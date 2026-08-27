@@ -1,0 +1,39 @@
+# Operations
+
+## Local development
+
+```sh
+make bootstrap    # install toolchains
+make up           # start postgres, clickhouse, redis, nats; wait for health
+make verify       # the Phase 0 quality gate
+make test-integration
+make down
+```
+
+On a host without `make`, `scripts/verify.sh` runs the same gate.
+
+## Ports
+
+| Service | Port | Notes |
+|---|---|---|
+| PostgreSQL | 5432 | bound to 127.0.0.1 |
+| ClickHouse | 8123 (HTTP), 9000 (native) | bound to 127.0.0.1 |
+| Redis | 6379 | persistence disabled on purpose |
+| NATS | 4222 (client), 8222 (monitoring) | JetStream enabled |
+| Temporal | 7233 | optional profile, unused (ADR-018) |
+| assurance-gateway | 8080 | `/healthz`, `/readyz` |
+| fleet-engine | 8081 | `/healthz`, `/readyz` |
+
+All container ports bind to loopback. Nothing in this compose file is safe to expose.
+
+## Credentials
+
+`.env.example` holds development-only, non-secret values and is the only committed env
+file. Production credentials come from a customer secret manager, KMS, or a
+Vault-compatible system (§35). Secrets are never logged, returned through an API,
+embedded in evidence, or placed in telemetry payloads.
+
+## Observability
+
+OpenTelemetry traces, metrics and operational logs arrive with the code they
+instrument. Operational logs are not audit evidence (INV-013, §51).

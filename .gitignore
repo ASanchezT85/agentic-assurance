@@ -1,0 +1,32 @@
+# build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# node
+node_modules/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# local env — never commit real secrets
+.env
+.env.local
+!.env.example
+
+# tooling
+.DS_Store
+.idea/
+.vscode/

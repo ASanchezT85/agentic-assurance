@@ -1,0 +1,57 @@
+# Phase 0 developer commands.
+#
+# Prerequisites (versions measured on the reference machine):
+#   Go      >= 1.24   (tested on 1.26.4)
+#   Node    >= 20     (tested on 26.3.0)
+#   pnpm    >= 10     (tested on 11.8.0)
+#   Python  >= 3.11   (tested on 3.14.6)
+#   Docker  >= 24     (tested on 29.7.2, with the compose plugin)
+#   make    >= 4      (Windows: scoop/choco, or run scripts/verify.sh instead)
+
+PY ?= python
+
+.PHONY: help bootstrap up down test test-integration lint typecheck build verify clean
+
+help: ## Show this help
+	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | sed -e 's/:.*## /|/' -e 's/^/  /' | column -t -s '|'
+
+bootstrap: ## Install all toolchain dependencies
+	go mod download
+	pnpm install --frozen-lockfile
+	$(PY) -m pip install --quiet --upgrade pip
+	$(PY) -m pip install --quiet pytest ruff mypy
+
+up: ## Start local infrastructure and wait for health
+	docker compose up -d --wait
+	@docker compose ps
+
+down: ## Stop local infrastructure (keeps volumes)
+	docker compose down
+
+test: ## Run all unit tests
+	go test ./...
+	pnpm -r --if-present test
+	$(PY) -m pytest -q
+
+test-integration: ## Infrastructure smoke test (run `make up` first)
+	go test -tags=integration -count=1 ./tests/integration/...
+
+lint: ## Run all linters
+	@test -z "$$(gofmt -l . )" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+	go vet ./...
+	pnpm -C apps/console-web lint
+	$(PY) -m ruff check .
+
+typecheck: ## Run all type checkers
+	pnpm -C apps/console-web typecheck
+	$(PY) -m mypy
+
+build: ## Build all deployables
+	go build -o bin/ ./cmd/...
+	pnpm -C apps/console-web build
+
+verify: lint typecheck test build ## Phase 0 quality gate
+	@echo "Phase 0 quality gate passed."
+
+clean: ## Remove build output
+	rm -rf bin apps/console-web/.next

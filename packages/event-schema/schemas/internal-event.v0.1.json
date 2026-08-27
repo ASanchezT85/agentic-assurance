@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-assurance.dev/schemas/internal-event/v0.1",
+  "title": "InternalEvent",
+  "description": "Phase 0 SCAFFOLD. The envelope every event in the §32 catalog carries. Per-event payload schemas arrive in Phase 6.",
+  "x-phase-0-scaffold": true,
+  "x-owning-phase": 6,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "event_id",
+    "event_name",
+    "tenant_id",
+    "aggregate_id",
+    "correlation_id",
+    "occurred_at",
+    "produced_at",
+    "producer",
+    "sequence"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "event_name": {
+      "type": "string",
+      "pattern": "^[a-z]+(\\.[a-z_]+)+\\.v[0-9]+$",
+      "description": "From the §32 catalog, e.g. agent.intent.received.v1."
+    },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "aggregate_id": { "type": "string", "minLength": 1 },
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "causation_id": { "type": ["string", "null"] },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "produced_at": { "type": "string", "format": "date-time" },
+    "producer": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific. Consumers must be idempotent (ADR-008) and tolerate unknown properties."
+    }
+  }
+}

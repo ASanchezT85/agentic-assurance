@@ -1,0 +1,33 @@
+{
+  "registry_version": "0.1",
+  "note": "Phase 0 scaffolds. Business semantics arrive in the owning phase; see packages/README.md.",
+  "schemas": [
+    {
+      "contract": "agent-execution-envelope",
+      "package": "envelope-schema",
+      "file": "envelope-schema/schemas/agent-execution-envelope.v0.1.json",
+      "version": "0.1",
+      "status": "SCAFFOLD",
+      "owning_phase": 1,
+      "spec_section": "12"
+    },
+    {
+      "contract": "internal-event",
+      "package": "event-schema",
+      "file": "event-schema/schemas/internal-event.v0.1.json",
+      "version": "0.1",
+      "status": "SCAFFOLD",
+      "owning_phase": 6,
+      "spec_section": "32"
+    },
+    {
+      "contract": "policy-bundle",
+      "package": "policy-schema",
+      "file": "policy-schema/schemas/policy-bundle.v0.1.json",
+      "version": "0.1",
+      "status": "SCAFFOLD",
+      "owning_phase": 4,
+      "spec_section": "15"
+    }
+  ]
+}

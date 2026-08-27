@@ -1,0 +1,9 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Build scripts allowed to run, declared explicitly so CI never needs the
+# interactive `pnpm approve-builds` prompt.
+allowBuilds:
+  sharp: true
+  unrs-resolver: true

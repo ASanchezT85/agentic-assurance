@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+      - name: gofmt
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "These files need gofmt:"; gofmt -l .; exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go vet (integration build tag)
+        run: go vet -tags=integration ./tests/integration/...
+      - name: go test
+        run: go test ./...
+      - name: go build
+        run: go build -o bin/ ./cmd/...
+
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/console-web lint
+      - run: pnpm -C apps/console-web typecheck
+      - run: pnpm -C apps/console-web build
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet pytest ruff mypy
+      - run: python -m ruff check .
+      - run: python -m mypy
+      - run: python -m pytest -q
+
+  # Structure, schema compatibility and scope guards. Separated from the `go` job so
+  # a failure here reads as "the repository drifted", not "the code broke".
+  guards:
+    name: Structure and scope guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+      - name: Repository structure
+        run: go test -count=1 ./tests/...
+      - name: Schema compatibility
+        run: go test -count=1 ./packages/...
+
+  integration:
+    name: Infrastructure smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+      - name: Start infrastructure
+        run: docker compose up -d --wait
+      - name: Smoke test
+        run: go test -tags=integration -count=1 ./tests/integration/...
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+      - name: Stop infrastructure
+        if: always()
+        run: docker compose down -v

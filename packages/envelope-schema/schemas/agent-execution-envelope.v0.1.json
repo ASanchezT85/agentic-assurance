@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-assurance.dev/schemas/agent-execution-envelope/v0.1",
+  "title": "AgentExecutionEnvelope",
+  "description": "Phase 0 SCAFFOLD. Only the identity fields that MASTER_BUILD_SPEC.md §12.3 locks as invariant are present. Phase 1 completes intent, authority, provenance and lineage. See packages/README.md.",
+  "x-phase-0-scaffold": true,
+  "x-owning-phase": 1,
+  "type": "object",
+  "required": ["schema_version", "envelope_id", "idempotency_key", "tenant_id", "received_at"],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "envelope_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable once issued (§12.3)."
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tenant-scoped. Duplicate handling is deterministic (§19, ADR-015)."
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Mandatory on every domain object (§34)."
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Normalized to UTC (§12.3)."
+    }
+  }
+}
