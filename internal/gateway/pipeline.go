@@ -181,6 +181,20 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		})
 		return p.deny(result, StageIdentity, "ATTESTATION_CLAIM_EXCEEDS_EVIDENCE", err.Error())
 	}
+	// The tenant the caller was authenticated for, against the one the envelope
+	// claims. Without this an authenticated caller could name any tenant and every
+	// lookup that follows would use it: the grant, the policy bundle, the idempotency
+	// record and the row level security setting all take env.TenantID. The database
+	// half of INV-007 was enforced the whole time and isolated correctly to a tenant
+	// nobody had established.
+	if err := identity.RequireTenant(established, env.TenantID); err != nil {
+		p.record(ctx, env, evidence.IdentityFailed, at, map[string]any{
+			"claimed_tenant": env.TenantID,
+			"reason":         err.Error(),
+		})
+		return p.deny(result, StageIdentity, "TENANT_NOT_AUTHENTICATED", err.Error())
+	}
+
 	if err := identity.RequireExecutable(established); err != nil {
 		p.record(ctx, env, evidence.IdentityFailed, at, map[string]any{
 			"established": string(established.Level),

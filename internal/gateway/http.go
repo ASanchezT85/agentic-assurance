@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/subtle"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,91 +25,20 @@ import (
 // service against the enforcement plane, and an envelope is a small document.
 const MaxEnvelopeBytes = 256 << 10
 
-// Credentials authenticates API callers.
+// presentedFrom adapts an HTTP request to what identity understands.
 //
-// This is not a credential management system and does not pretend to be. It is the
-// smallest thing that makes the submission endpoint honestly authenticated, which it
-// has to be: the read endpoints take a tenant from a header and say plainly that this
-// is not authentication, but INV-001 forbids an unauthenticated workload from ever
-// producing an executable order. Rotation, scoping and storage belong with a secret
-// manager (spec section 35).
-//
-// An authenticated API caller reaches A1: we know which registered caller this is,
-// and nothing attests the workload it runs in. A2 requires an SVID from the transport.
-type Credentials struct {
-	// byToken maps a bearer token to the API identity it authenticates.
-	byToken map[string]string
-}
-
-// ParseCredentials reads "identity=token,identity=token".
-func ParseCredentials(raw string) (*Credentials, error) {
-	c := &Credentials{byToken: map[string]string{}}
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		name, token, ok := strings.Cut(pair, "=")
-		if !ok || strings.TrimSpace(name) == "" || token == "" {
-			return nil, fmt.Errorf("malformed credential entry; expected identity=token")
-		}
-		if len(token) < 32 {
-			// A short bearer token is a guessable one, and this is the only thing
-			// standing between an unauthenticated caller and an executable order.
-			return nil, fmt.Errorf("credential for %q is shorter than 32 characters", name)
-		}
-		c.byToken[token] = strings.TrimSpace(name)
+// The adaptation lives here rather than in internal/identity because that package is
+// on the enforcement path and INV-005 forbids it from importing net/http.
+func presentedFrom(r *http.Request, creds *identity.Credentials) identity.Presented {
+	var certs []*x509.Certificate
+	if r.TLS != nil {
+		certs = r.TLS.PeerCertificates
 	}
-	if len(c.byToken) == 0 {
-		return nil, errors.New("no credentials configured")
-	}
-	return c, nil
-}
-
-// Identify returns the API identity a bearer token authenticates.
-//
-// The comparison is constant-time over every configured token rather than a map
-// lookup, because a map lookup leaks through timing which prefix was right.
-func (c *Credentials) Identify(token string) (string, bool) {
-	if c == nil || token == "" {
-		return "", false
-	}
-	var matched string
-	for candidate, name := range c.byToken {
-		if subtle.ConstantTimeCompare([]byte(candidate), []byte(token)) == 1 {
-			matched = name
-		}
-	}
-	return matched, matched != ""
-}
-
-// presentedFrom extracts whatever identity the transport actually established.
-//
-// It never reads the envelope. The envelope's claimed attestation level is checked
-// against this, and a claim that exceeds the evidence is refused (INV-001).
-func presentedFrom(r *http.Request, creds *Credentials) identity.Presented {
-	var p identity.Presented
-
-	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		p.SVID = r.TLS.PeerCertificates[0]
-		if len(r.TLS.PeerCertificates) > 1 {
-			p.Intermediates = r.TLS.PeerCertificates[1:]
-		}
-		return p
-	}
-
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok {
-		return p
-	}
-	if name, authenticated := creds.Identify(strings.TrimSpace(token)); authenticated {
-		p.APIIdentity = name
-	}
-	return p
+	return identity.FromTransport(r.Header.Get("Authorization"), certs, creds)
 }
 
 // SubmitHandler is POST /v1/intents.
-func SubmitHandler(p *Pipeline, creds *Credentials) http.HandlerFunc {
+func SubmitHandler(p *Pipeline, creds *identity.Credentials) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(io.LimitReader(r.Body, MaxEnvelopeBytes+1))
 		if err != nil {

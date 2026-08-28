@@ -1,6 +1,7 @@
 package simulation
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,13 +9,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"agentic-assurance/internal/identity"
 )
 
 // MaxRequestBytes bounds a submission body. A simulation request is a scenario name,
 // a seed and a caller; anything larger is not one.
 const MaxRequestBytes = 8 << 10
 
-// API serves the two simulation endpoints of spec section 46.
+// API serves the simulation endpoints of spec section 46.
 //
 // POST is the only mutating endpoint in the intelligence plane, and what it mutates is
 // the simulation's own record. It cannot change a policy bundle, an authority grant or
@@ -22,6 +25,17 @@ const MaxRequestBytes = 8 << 10
 type API struct {
 	Runner *Runner
 	Store  *Store
+
+	// Credentials authenticate callers and say which tenant each speaks for.
+	//
+	// The tenant used to come from a header, with a comment saying that a simulation
+	// changes nothing about production so a wrong tenant costs a CPU minute. That was
+	// wrong in a way the comment hid: a run is stored under a tenant, retrievable by
+	// that tenant, and cancellable by them. A header let anyone read another
+	// customer's simulation results and cancel their runs.
+	//
+	// Nil means the endpoints are not served. There is no unauthenticated mode.
+	Credentials *identity.Credentials
 }
 
 // Routes registers the endpoints.
@@ -125,33 +139,51 @@ func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-// tenantOf reads the tenant from the request.
+// presentedFrom adapts an HTTP request to what identity understands.
 //
-// A header, and not authentication, exactly as the rest of the intelligence surface
-// says of itself. It is defensible here for a different reason than for the reads: a
-// simulation runs against the customer's own scenarios and changes nothing about
-// production, so the blast radius of a wrong tenant is a wasted CPU minute and a run
-// recorded under the wrong name. It is still not authentication, and the endpoint that
-// creates orders authenticates properly (ADR-025).
-func tenantOf(r *http.Request) string {
-	return strings.TrimSpace(r.Header.Get("X-Tenant-Id"))
+// The adaptation lives here rather than in internal/identity because that package is
+// on the enforcement path and INV-005 forbids it from importing net/http.
+func presentedFrom(r *http.Request, creds *identity.Credentials) identity.Presented {
+	var certs []*x509.Certificate
+	if r.TLS != nil {
+		certs = r.TLS.PeerCertificates
+	}
+	return identity.FromTransport(r.Header.Get("Authorization"), certs, creds)
 }
 
+// requireTenant establishes who is calling and which tenant they speak for.
+//
+// The tenant comes from the credential, never from the request. A header would let a
+// caller name any tenant, and every simulation lookup that follows is scoped by it:
+// they would read another customer's results and cancel their runs (INV-007, ADR-025).
 func (a *API) requireTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
-	tenant := tenantOf(r)
-	if tenant == "" {
-		writeError(w, http.StatusBadRequest, "X-Tenant-Id is required")
-		return "", false
-	}
-	if !identifierShaped(tenant) {
-		writeError(w, http.StatusBadRequest, "tenant id is not identifier-shaped")
-		return "", false
-	}
 	if a.Store == nil {
 		writeError(w, http.StatusServiceUnavailable, "no simulation store is configured")
 		return "", false
 	}
-	return tenant, true
+
+	attested := (&identity.Verifier{}).Resolve(presentedFrom(r, a.Credentials))
+	if err := identity.RequireExecutable(attested); err != nil {
+		writeError(w, http.StatusUnauthorized, "the caller is not authenticated")
+		return "", false
+	}
+	if attested.TenantID == "" {
+		writeError(w, http.StatusUnauthorized,
+			"the caller is authenticated but no tenant is established for it")
+		return "", false
+	}
+
+	// A header, if sent, must agree. Silently ignoring one that disagrees would let a
+	// caller believe they were acting on a tenant they were not, and a simulation
+	// they think ran for someone else is a wrong answer they will act on.
+	if claimed := strings.TrimSpace(r.Header.Get("X-Tenant-Id")); claimed != "" &&
+		claimed != attested.TenantID {
+		writeError(w, http.StatusForbidden,
+			"the request names a tenant this caller is not authenticated for")
+		return "", false
+	}
+
+	return attested.TenantID, true
 }
 
 func (a *API) submit(w http.ResponseWriter, r *http.Request) {
@@ -267,21 +299,6 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		"count":     len(runs),
 		"runs":      runs,
 	})
-}
-
-func identifierShaped(s string) bool {
-	if s == "" || len(s) > 128 {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '_', r == '-', r == '.':
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

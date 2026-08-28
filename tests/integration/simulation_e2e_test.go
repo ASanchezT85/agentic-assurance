@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"agentic-assurance/internal/evidence"
+	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/simulation"
 )
 
@@ -87,13 +88,27 @@ func newSimRig(t *testing.T) *simRig {
 		t.Fatalf("runner: %v", err)
 	}
 
+	creds, err := identity.ParseCredentials(
+		"svc_sim@" + tenant + "=" + simToken + ",svc_other@tenant_someone_else=" + otherToken)
+	if err != nil {
+		t.Fatalf("credentials: %v", err)
+	}
+
 	mux := http.NewServeMux()
-	(&simulation.API{Runner: runner, Store: store}).Routes(mux)
+	(&simulation.API{Runner: runner, Store: store, Credentials: creds}).Routes(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
 	return &simRig{server: srv, tenant: tenant, store: store}
 }
+
+const (
+	simToken = "sim-integration-token-of-thirty-two-plus"
+
+	// A credential for a tenant that owns nothing here. Impersonation now needs one
+	// of these rather than a header, which is the whole point.
+	otherToken = "other-tenant-token-of-thirty-two-plus-ok"
+)
 
 func (r *simRig) do(t *testing.T, method, path, body string) (int, map[string]any) {
 	t.Helper()
@@ -102,7 +117,7 @@ func (r *simRig) do(t *testing.T, method, path, body string) (int, map[string]an
 		reader = strings.NewReader(body)
 	}
 	req, _ := http.NewRequest(method, r.server.URL+path, reader)
-	req.Header.Set("X-Tenant-Id", r.tenant)
+	req.Header.Set("Authorization", "Bearer "+simToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -239,8 +254,10 @@ func TestARunIsInvisibleToAnotherTenant(t *testing.T) {
 		`{"scenario":"demo","seed":1,"requested_by":"ana@example"}`)
 	runID, _ := accepted["run_id"].(string)
 
+	// A different credential, for a different tenant. A header is no longer what
+	// decides, so impersonation now needs a credential rather than a string.
 	req, _ := http.NewRequest(http.MethodGet, rig.server.URL+"/v1/simulations/"+runID, nil)
-	req.Header.Set("X-Tenant-Id", "tenant_someone_else")
+	req.Header.Set("Authorization", "Bearer "+otherToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -315,8 +332,13 @@ func TestAnEngineRefusalBecomesAFailedRun(t *testing.T) {
 		t.Fatalf("runner: %v", err)
 	}
 
+	creds, err := identity.ParseCredentials("svc_sim@" + tenant + "=" + simToken)
+	if err != nil {
+		t.Fatalf("credentials: %v", err)
+	}
+
 	mux := http.NewServeMux()
-	(&simulation.API{Runner: runner, Store: store}).Routes(mux)
+	(&simulation.API{Runner: runner, Store: store, Credentials: creds}).Routes(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -439,7 +461,7 @@ func TestCancellingWhatIsNotYours(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost,
 		rig.server.URL+"/v1/simulations/"+runID+"/cancel",
 		strings.NewReader(`{"cancelled_by":"attacker@example"}`))
-	req.Header.Set("X-Tenant-Id", "tenant_someone_else")
+	req.Header.Set("Authorization", "Bearer "+otherToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)

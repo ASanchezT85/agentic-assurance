@@ -19,6 +19,11 @@ type Presented struct {
 	// some other means. It reaches A1: we know which registered caller this is,
 	// but nothing attests the workload it runs in.
 	APIIdentity string
+
+	// TenantID is the tenant the credential was issued to. Empty when nothing
+	// established one, which is refused rather than defaulted: a caller whose tenant
+	// is unknown must not be allowed to name it (INV-007).
+	TenantID string
 }
 
 // Attested is the level the platform established, together with why it is not
@@ -28,9 +33,13 @@ type Attested struct {
 	Level       intent.AttestationLevel
 	SpiffeID    SPIFFEID
 	APIIdentity string
-	Method      string
-	VerifiedAt  time.Time
-	SerialHex   string
+
+	// TenantID is the tenant this caller is authenticated for, established by the
+	// transport and never read from the request.
+	TenantID   string
+	Method     string
+	VerifiedAt time.Time
+	SerialHex  string
 
 	// Downgrade records why a stronger level was not reached. It is nil when
 	// nothing was attempted, and non-nil when something was attempted and failed.
@@ -73,6 +82,7 @@ func (v *Verifier) Resolve(p Presented) Attested {
 				Level:       intent.AttestationA2,
 				SpiffeID:    verified.ID,
 				APIIdentity: p.APIIdentity,
+				TenantID:    p.TenantID,
 				Method:      verified.Method,
 				VerifiedAt:  verified.VerifiedAt,
 				SerialHex:   verified.SerialHex,
@@ -94,6 +104,7 @@ func degraded(p Presented, now time.Time, failure *VerificationFailure) Attested
 		return Attested{
 			Level:       intent.AttestationA1,
 			APIIdentity: p.APIIdentity,
+			TenantID:    p.TenantID,
 			Method:      "AUTHENTICATED_API_IDENTITY",
 			VerifiedAt:  now,
 			Downgrade:   failure,

@@ -200,8 +200,8 @@ func openEvidence(ctx context.Context, log *slog.Logger) evidenceReader {
 // these is load-bearing: without a venue nothing executes, without a signed policy
 // bundle nothing is constrained, without credentials nothing is authenticated, and
 // without a usage ledger every grant with a rolling limit denies.
-func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *gateway.Credentials) {
-	missing := func(what, why string) (*gateway.Pipeline, *gateway.Credentials) {
+func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *identity.Credentials) {
+	missing := func(what, why string) (*gateway.Pipeline, *identity.Credentials) {
 		log.Warn("submission path not served", "missing", what, "consequence", why)
 		return nil, nil
 	}
@@ -216,7 +216,7 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *g
 		return nil, nil
 	}
 
-	creds, err := gateway.ParseCredentials(os.Getenv("GATEWAY_API_CREDENTIALS"))
+	creds, err := identity.ParseCredentials(os.Getenv("GATEWAY_API_CREDENTIALS"))
 	if err != nil {
 		return missing("GATEWAY_API_CREDENTIALS", "an unauthenticated caller must never produce an executable order (INV-001)")
 	}

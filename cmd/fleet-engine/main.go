@@ -27,6 +27,7 @@ import (
 
 	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/fleet"
+	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/simulation"
 )
 
@@ -150,6 +151,13 @@ func openSimulation(ctx context.Context, log *slog.Logger) *simulation.API {
 		return missing("SIMULATOR_PYTHON", "there is no engine to run")
 	}
 
+	creds, err := identity.ParseCredentials(os.Getenv("SIMULATION_API_CREDENTIALS"))
+	if err != nil {
+		return missing("SIMULATION_API_CREDENTIALS",
+			"a run is stored, retrieved and cancelled by tenant, and without a "+
+				"credential the tenant would come from a header (INV-007)")
+	}
+
 	runner := &simulation.Runner{
 		Python:      python,
 		Repo:        envOr("SIMULATOR_REPO", "."),
@@ -166,7 +174,7 @@ func openSimulation(ctx context.Context, log *slog.Logger) *simulation.API {
 		return nil
 	}
 
-	return &simulation.API{Runner: runner, Store: runner.Store}
+	return &simulation.API{Runner: runner, Store: runner.Store, Credentials: creds}
 }
 
 func intOr(key string, fallback int) int {

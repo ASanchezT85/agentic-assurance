@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"agentic-assurance/internal/identity"
 )
 
 // The scenario name reaches a filesystem and then a process. Everything about that
@@ -165,31 +167,52 @@ func TestEngineOutputIsBounded(t *testing.T) {
 	}
 }
 
+const testToken = "sim-token-of-at-least-thirty-two-chars"
+
+// testCredentials issues one credential for tenant_x, so every test that needs an
+// authenticated caller uses the same one.
+func testCredentials(t *testing.T) *identity.Credentials {
+	t.Helper()
+	creds, err := identity.ParseCredentials("svc_sim@tenant_x=" + testToken)
+	if err != nil {
+		t.Fatalf("credentials: %v", err)
+	}
+	return creds
+}
+
+func authed(req *http.Request) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	return req
+}
+
 // --- the API, against a store-less runner ---
 
 func TestSubmitRefusesWhatItCannotRun(t *testing.T) {
-	api := &API{Store: &Store{}, Runner: &Runner{ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1)}}
+	api := &API{
+		Store:       &Store{},
+		Runner:      &Runner{ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1)},
+		Credentials: testCredentials(t),
+	}
 
 	cases := []struct {
 		name       string
-		tenant     string
+		credential bool
 		body       string
 		wantStatus int
 	}{
-		{"no tenant", "", `{"scenario":"demo","seed":1,"requested_by":"ana"}`, http.StatusBadRequest},
-		{"tenant not identifier-shaped", "a tenant", `{"scenario":"demo","seed":1,"requested_by":"ana"}`, http.StatusBadRequest},
-		{"no seed", "t", `{"scenario":"demo","requested_by":"ana"}`, http.StatusBadRequest},
-		{"misspelled field", "t", `{"scenario":"demo","seeed":1,"requested_by":"ana"}`, http.StatusBadRequest},
-		{"traversing scenario", "t", `{"scenario":"../x","seed":1,"requested_by":"ana"}`, http.StatusBadRequest},
-		{"unknown scenario", "t", `{"scenario":"nosuch","seed":1,"requested_by":"ana"}`, http.StatusNotFound},
-		{"not json", "t", `not json`, http.StatusBadRequest},
+		{"no credential", false, `{"scenario":"demo","seed":1,"requested_by":"ana"}`, http.StatusUnauthorized},
+		{"no seed", true, `{"scenario":"demo","requested_by":"ana"}`, http.StatusBadRequest},
+		{"misspelled field", true, `{"scenario":"demo","seeed":1,"requested_by":"ana"}`, http.StatusBadRequest},
+		{"traversing scenario", true, `{"scenario":"../x","seed":1,"requested_by":"ana"}`, http.StatusBadRequest},
+		{"unknown scenario", true, `{"scenario":"nosuch","seed":1,"requested_by":"ana"}`, http.StatusNotFound},
+		{"not json", true, `not json`, http.StatusBadRequest},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/simulations", strings.NewReader(tc.body))
-			if tc.tenant != "" {
-				req.Header.Set("X-Tenant-Id", tc.tenant)
+			if tc.credential {
+				authed(req)
 			}
 			rec := httptest.NewRecorder()
 
@@ -211,13 +234,13 @@ func TestSubmitRefusesWhatItCannotRun(t *testing.T) {
 // would otherwise get a reproducible run of a seed they did not choose, and every
 // retry would return the same wrong answer.
 func TestAMisspelledFieldIsRefusedNotDefaulted(t *testing.T) {
-	api := &API{Store: &Store{}, Runner: &Runner{ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1)}}
+	api := &API{Store: &Store{}, Runner: &Runner{ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1)},
+		Credentials: testCredentials(t)}
 	mux := http.NewServeMux()
 	api.Routes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/simulations",
-		strings.NewReader(`{"scenario":"demo","seed":7,"requested_by":"ana","hurry":true}`))
-	req.Header.Set("X-Tenant-Id", "tenant_x")
+	req := authed(httptest.NewRequest(http.MethodPost, "/v1/simulations",
+		strings.NewReader(`{"scenario":"demo","seed":7,"requested_by":"ana","hurry":true}`)))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -227,13 +250,13 @@ func TestAMisspelledFieldIsRefusedNotDefaulted(t *testing.T) {
 }
 
 func TestAnOversizedRequestIsRefused(t *testing.T) {
-	api := &API{Store: &Store{}, Runner: &Runner{ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1)}}
+	api := &API{Store: &Store{}, Runner: &Runner{ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1)},
+		Credentials: testCredentials(t)}
 	mux := http.NewServeMux()
 	api.Routes(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/simulations",
-		strings.NewReader(strings.Repeat("x", MaxRequestBytes+10)))
-	req.Header.Set("X-Tenant-Id", "tenant_x")
+	req := authed(httptest.NewRequest(http.MethodPost, "/v1/simulations",
+		strings.NewReader(strings.Repeat("x", MaxRequestBytes+10))))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -411,14 +434,13 @@ func TestCancellationNeedsAnActor(t *testing.T) {
 	api := &API{Store: &Store{}, Runner: &Runner{
 		ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1),
 		inFlight: map[string]context.CancelFunc{},
-	}}
+	}, Credentials: testCredentials(t)}
 	mux := http.NewServeMux()
 	api.Routes(mux)
 
 	for _, body := range []string{``, `{}`, `{"cancelled_by":""}`, `{"cancelled_by":"  "}`} {
-		req := httptest.NewRequest(http.MethodPost, "/v1/simulations/sim_1/cancel",
-			strings.NewReader(body))
-		req.Header.Set("X-Tenant-Id", "tenant_x")
+		req := authed(httptest.NewRequest(http.MethodPost, "/v1/simulations/sim_1/cancel",
+			strings.NewReader(body)))
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 

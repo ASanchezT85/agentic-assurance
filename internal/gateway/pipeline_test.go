@@ -193,7 +193,7 @@ func envelope(mutate func(m map[string]any)) []byte {
 }
 
 func presentedAPI() identity.Presented {
-	return identity.Presented{APIIdentity: "svc_test"}
+	return identity.Presented{APIIdentity: "svc_test", TenantID: "tenant_test"}
 }
 
 // --- the path ---
@@ -414,7 +414,7 @@ func (failingSink) Append(context.Context, evidence.Event) (bool, error) {
 
 func TestSubmitEndpointRefusesAnUnauthenticatedCaller(t *testing.T) {
 	p, _, _ := harness(t)
-	creds, err := ParseCredentials("svc_test=" + strings.Repeat("k", 40))
+	creds, err := identity.ParseCredentials("svc_test@tenant_test=" + strings.Repeat("k", 40))
 	if err != nil {
 		t.Fatalf("credentials: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestSubmitEndpointRefusesAnUnauthenticatedCaller(t *testing.T) {
 func TestSubmitEndpointAcceptsAnAuthenticatedCaller(t *testing.T) {
 	p, _, _ := harness(t)
 	token := strings.Repeat("k", 40)
-	creds, err := ParseCredentials("svc_test=" + token)
+	creds, err := identity.ParseCredentials("svc_test@tenant_test=" + token)
 	if err != nil {
 		t.Fatalf("credentials: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestADenialIsNotASuccessStatus(t *testing.T) {
 // A body larger than the cap is refused rather than read.
 func TestAnOversizedEnvelopeIsRefused(t *testing.T) {
 	p, _, _ := harness(t)
-	creds, _ := ParseCredentials("svc_test=" + strings.Repeat("k", 40))
+	creds, _ := identity.ParseCredentials("svc_test@tenant_test=" + strings.Repeat("k", 40))
 	srv := httptest.NewServer(SubmitHandler(p, creds))
 	t.Cleanup(srv.Close)
 
@@ -497,7 +497,7 @@ func TestAnOversizedEnvelopeIsRefused(t *testing.T) {
 }
 
 func TestCredentialsRefuseShortTokens(t *testing.T) {
-	if _, err := ParseCredentials("svc=short"); err == nil {
+	if _, err := identity.ParseCredentials("svc@tenant=short"); err == nil {
 		t.Error("a guessable bearer token was accepted as the only thing standing " +
 			"between an unauthenticated caller and an executable order")
 	}
@@ -607,5 +607,64 @@ func TestAReplayIsRecordedInEvidence(t *testing.T) {
 	}
 	if !contains(ev.names()[before:], string(evidence.IntentReplayed)) {
 		t.Errorf("the replay left no evidence; the chain after it is %v", ev.names()[before:])
+	}
+}
+
+// INV-007 at the transport. A caller authenticated for one tenant must not be able to
+// act on another by naming it in the envelope.
+//
+// This was exploitable. Every tenant-scoped lookup after the identity check takes
+// env.TenantID: the authority grant, the policy bundle, the idempotency record, and
+// the app.tenant_id that row level security itself keys on. The database half of
+// INV-007 was enforced the whole time and isolated correctly to a tenant nobody had
+// established. Submitting an envelope naming another tenant, with a grant id from it,
+// placed an order at the venue.
+func TestACallerCannotActOnAnotherTenant(t *testing.T) {
+	p, fake, _ := harness(t)
+
+	victim := grant()
+	victim.TenantID = "tenant_victim"
+	victim.GrantID = "grant_victim"
+	victim.PrincipalID = "prin_victim"
+	victim.AccountID = "acct_victim"
+	victim.AgentID = "agent_victim"
+	p.Grants = memGrants{"grant_victim": victim}
+
+	raw := envelope(func(m map[string]any) {
+		m["tenant_id"] = "tenant_victim"
+		m["authority_grant_id"] = "grant_victim"
+		m["principal"] = map[string]any{
+			"principal_id": "prin_victim", "account_id": "acct_victim",
+		}
+		m["agent"].(map[string]any)["agent_id"] = "agent_victim"
+	})
+
+	// presentedAPI is authenticated for tenant_test.
+	result := p.Submit(context.Background(), raw, presentedAPI())
+
+	if result.Accepted {
+		t.Fatalf("a caller authenticated for tenant_test placed an order for "+
+			"tenant_victim; the venue received %d submissions",
+			fake.Submissions("coid-idem-01J8Z3K9QW"))
+	}
+	if result.Stage != StageIdentity || result.Code != "TENANT_NOT_AUTHENTICATED" {
+		t.Errorf("stage/code = %s/%s, want IDENTITY/TENANT_NOT_AUTHENTICATED (%s)",
+			result.Stage, result.Code, result.Reason)
+	}
+	if fake.Submissions("coid-idem-01J8Z3K9QW") != 0 {
+		t.Error("the order reached the venue anyway")
+	}
+	// The refusal must not name the caller's own tenant.
+	if strings.Contains(result.Reason, "tenant_test") {
+		t.Errorf("the refusal names the caller's tenant: %q", result.Reason)
+	}
+}
+
+// And the caller's own tenant still works, so the check is not simply refusing
+// everything.
+func TestACallerCanActOnItsOwnTenant(t *testing.T) {
+	p, _, _ := harness(t)
+	if r := p.Submit(context.Background(), envelope(nil), presentedAPI()); !r.Accepted {
+		t.Fatalf("a caller was refused on its own tenant at %s: %s", r.Stage, r.Reason)
 	}
 }

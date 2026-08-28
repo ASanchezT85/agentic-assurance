@@ -138,7 +138,7 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		Now:      func() time.Time { return now },
 	}
 
-	creds, err := gateway.ParseCredentials("svc_e2e=" + e2eToken)
+	creds, err := identity.ParseCredentials("svc_e2e@" + tenant + "=" + e2eToken)
 	if err != nil {
 		t.Fatalf("credentials: %v", err)
 	}

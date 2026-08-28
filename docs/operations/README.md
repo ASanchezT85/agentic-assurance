@@ -247,7 +247,7 @@ answering anyway:
 | Variable | Without it |
 |----------|-----------|
 | `POSTGRES_APP_DSN` | Idempotency and consumed usage have nowhere authoritative to live. |
-| `GATEWAY_API_CREDENTIALS` | Nothing authenticates a caller. `identity=token,identity=token`; tokens under 32 characters are refused at startup (ADR-025). |
+| `GATEWAY_API_CREDENTIALS` | Nothing authenticates a caller. `identity@tenant=token,identity@tenant=token`; a credential without a tenant and tokens under 32 characters are refused at startup (ADR-025). |
 | `POLICY_PUBLIC_KEY` | A policy bundle cannot be verified, and an unverified bundle is not policy. Hex-encoded ed25519 public key. |
 | `POLICY_BUNDLE_DIR` | Where signed bundles live, one JSON file per tenant. Default `/etc/assurance/policy`. |
 | `INSTRUMENT_SYMBOLS` | No instrument maps to a venue symbol. Default `/etc/assurance/instruments.json`. |
@@ -321,6 +321,7 @@ the startup log names what is missing.
 | Variable | Without it |
 |----------|-----------|
 | `POSTGRES_APP_DSN` | A simulation nobody can retrieve is a log line. |
+| `SIMULATION_API_CREDENTIALS` | Nothing authenticates a caller, and a run is stored, retrieved and cancelled by tenant. Same format as the gateway's. |
 | `SIMULATOR_PYTHON` | There is no engine to run. The project interpreter is `.venv/Scripts/python.exe` or `.venv/bin/python`. |
 | `SIMULATOR_REPO` | Working directory for the engine, which is invoked as `-m simulator.engine`. Default `.` |
 | `SIMULATOR_SCENARIO_DIR` | Which scenario files a caller may name. Default `simulator/scenarios`. |
@@ -351,3 +352,16 @@ of failing closed is a running simulation destroyed by an unrelated database bli
 The response to a cancellation says which of the two happened. `engine_stopped: true`
 means the slot is free now; `engine_stopped: false` with `engine_stops_within` means it
 comes back shortly.
+
+### The tenant comes from the credential
+
+Written `identity@tenant=token`. A caller is authenticated **for a tenant**, and a
+request naming a different one is refused: `401 TENANT_NOT_AUTHENTICATED` on the
+submission endpoint, `403` on the simulation API when a header disagrees.
+
+A credential without a tenant is refused at startup rather than defaulted, because a
+credential that only proves who is calling leaves the tenant to come from the request —
+and every tenant-scoped lookup, row level security included, then uses whatever the
+request said.
+
+A caller that legitimately acts for several tenants needs several credentials.

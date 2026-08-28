@@ -34,12 +34,45 @@ lookup, because a map lookup leaks through timing which prefix was right. Creden
 shorter than 32 characters are refused at startup: this is the only thing standing
 between an unauthenticated caller and an executable order.
 
+## Amendment: a credential is issued to a tenant
+
+The decision above authenticated the *caller* and left the *tenant* to come from the
+request. That was a hole, and it was exploitable.
+
+Every tenant-scoped lookup after the identity check takes `env.TenantID`: the authority
+grant, the policy bundle, the idempotency record, and the `app.tenant_id` that row
+level security itself keys on. A caller authenticated as `svc_a` could submit an
+envelope naming `tenant_b` and, with a grant id from that tenant, have the order
+evaluated against `tenant_b`'s grant and `tenant_b`'s policy and placed at the venue.
+Demonstrated with a test that placed such an order, and against the running binary.
+
+The database half of INV-007 was enforced from the start — RLS, FORCE, a non-superuser
+role, all with a test — and it was doing its job the whole time. It isolated correctly
+to whichever tenant the platform gave it, and nothing had ever established which tenant
+that should be. A guard on one half of a boundary reads as a guard on the boundary.
+
+**A credential is now issued to a tenant**, written `identity@tenant=token`. That is
+where a caller's tenant comes from, and a request naming a different one is refused at
+the identity stage with `TENANT_NOT_AUTHENTICATED`. The refusal does not say which
+tenant the caller belongs to: an error that printed both would be a probe with feedback
+(spec section 45).
+
+An identity with no established tenant is refused rather than trusted. That is the
+workload-certificate case today: an SVID proves which workload is calling, and the
+platform has no mapping from a SPIFFE ID to a customer. Falling back to the request
+there would reintroduce exactly this hole, so the refusal names the missing mapping
+instead.
+
+The same rule now covers the simulation API, which had the same shape with a header
+instead of a body field. A run is stored, retrieved and cancelled by tenant, so a
+header let anyone read another customer's simulation results and cancel their runs.
+
 ## Consequences
 
 - A bearer-authenticated caller cannot claim A2 or A3. It gets exactly what its
   transport established, which is the taxonomy working as designed.
-- The credential registry is minimal: no rotation, no scoping beyond identity, and
-  configuration through the environment. Real credential management is a secret
+- The credential registry is minimal: no rotation, no scoping beyond identity and
+  tenant, and configuration through the environment. Real credential management is a secret
   manager (spec section 35), and this does not pretend to be one.
 - An operator who wants A2 deploys SPIRE and configures a trust bundle. Nothing in
   the gateway changes.
@@ -50,3 +83,7 @@ between an unauthenticated caller and an executable order.
   A2 means a workload was attested; a shared secret attests nothing.
 - The read endpoints' header-based tenant must never be reused here. A header is a
   claim, and this endpoint may not act on claims.
+
+- A caller that legitimately acts for several tenants needs several credentials. That
+  is the intended shape: one credential, one tenant, and no request field that can
+  change which.
