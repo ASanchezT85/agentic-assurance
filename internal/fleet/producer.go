@@ -5,7 +5,19 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"agentic-assurance/internal/intent"
 )
+
+// VectorSink is told about each measured window.
+//
+// A port rather than a direct call to the incident engine: internal/fleet must not
+// import it. The intelligence plane recommends, and wiring the detector in the other
+// direction would put incident opening inside the package that computes the numbers
+// it opens from.
+type VectorSink interface {
+	Observe(ctx context.Context, r RiskVector)
+}
 
 // The measurement producer.
 //
@@ -35,6 +47,12 @@ type Producer struct {
 	// 14:59:59.9 can land in the analytical store after 15:00:00. Measuring a window
 	// the instant it closes systematically undercounts its tail.
 	Lag time.Duration
+
+	// Detector is told about each window's risk vector, so an anomaly becomes an
+	// incident someone can be handed. Optional: without it the producer still
+	// measures, and nothing opens an incident — which is the state this platform was
+	// in for seven phases while the detection engine sat tested and unreachable.
+	Detector VectorSink
 
 	Log *slog.Logger
 	Now func() time.Time
@@ -105,9 +123,22 @@ func (p *Producer) RunOnce(ctx context.Context) ([]Measurement, error) {
 			return written, fmt.Errorf("load window for %s: %w", tenant, err)
 		}
 
+		envelopes := make([]*intent.AgentExecutionEnvelope, 0, len(observed))
+		for _, o := range observed {
+			envelopes = append(envelopes, o.Envelope)
+		}
+
 		measurements := make([]Measurement, 0, len(cohorts))
 		for _, c := range cohorts {
 			measurements = append(measurements, MeasureObserved(c, w, observed))
+
+			// The vector, and whatever notices it. ComputeVector rather than the
+			// measurement alone: an incident is opened from D, B, the concentrations
+			// and A together, and a detector handed only counts would be deciding on
+			// a fraction of what it needs.
+			if p.Detector != nil {
+				p.Detector.Observe(ctx, ComputeVector(c, w, envelopes, nil, nil))
+			}
 		}
 		if err := p.Store.InsertMeasurements(ctx, measurements); err != nil {
 			return written, fmt.Errorf("write measurements for %s: %w", tenant, err)

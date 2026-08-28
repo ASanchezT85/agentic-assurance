@@ -16,8 +16,8 @@ GET  /v1/fleet/state                    Phase 14  DONE (fleet-engine)
 GET  /v1/cohorts                        Phase 14  DONE (fleet-engine)
 GET  /v1/dependencies                   Phase 14  DONE (fleet-engine, added for section 48.3)
 
-GET  /v1/incidents                      Phase 10
-GET  /v1/incidents/{id}                 Phase 10
+GET  /v1/incidents                      DONE (internal/incident)
+GET  /v1/incidents/{id}                 DONE (internal/incident)
 
 POST /v1/controls                       Phase 13
 

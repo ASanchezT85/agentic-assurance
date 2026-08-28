@@ -33,13 +33,14 @@ import (
 	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/fleet"
 	"agentic-assurance/internal/identity"
+	"agentic-assurance/internal/incident"
 	"agentic-assurance/internal/simulation"
 )
 
 const component = "fleet-engine"
 
-func newMux(store fleet.Reader, sim *simulation.API, creds *identity.Credentials,
-	verifier *identity.Verifier) *http.ServeMux {
+func newMux(store fleet.Reader, sim *simulation.API, inc *incident.API,
+	creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -67,6 +68,12 @@ func newMux(store fleet.Reader, sim *simulation.API, creds *identity.Credentials
 	// accepting a simulation that could never run is not.
 	if sim != nil {
 		sim.Routes(mux)
+	}
+
+	// The incident surface (spec section 46). Read-only: acknowledging or closing an
+	// incident is a human action, and the surface for recording those is not built.
+	if inc != nil {
+		inc.Routes(mux)
 	}
 
 	return mux
@@ -226,6 +233,20 @@ func workloadVerifier(log *slog.Logger) *identity.Verifier {
 	}
 }
 
+// openPool connects to PostgreSQL, or reports why not.
+func openPool(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
+	dsn := os.Getenv("POSTGRES_APP_DSN")
+	if dsn == "" {
+		return nil
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		log.Error("database unavailable", "err", err)
+		return nil
+	}
+	return pool
+}
+
 func intOr(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -269,17 +290,41 @@ func main() {
 		creds = nil
 	}
 
-	store := openStore(log)
-	srv := &http.Server{
-		Addr:              addr(),
-		Handler:           newMux(store, sim, creds, workloadVerifier(log)),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	verifier := workloadVerifier(log)
+
+	// The incident engine. It has had Detect, Open and Timeline.Reconstruct since
+	// Phase 10 and nothing called them: the platform could reconstruct an incident
+	// nobody had opened. The detector is handed to the producer, which measures.
+	var incidents *incident.API
+	var detector *incident.Detector
+	if pool := openPool(ctx, log); pool != nil {
+		incidentStore := incident.NewStore(pool)
+		detector = incident.NewDetector(incidentStore, evidence.NewStore(pool), log)
+		incidents = &incident.API{
+			Store:       incidentStore,
+			Evidence:    evidence.NewStore(pool),
+			Credentials: creds,
+			Identity:    verifier,
+		}
+		log.Info("incident API served", "routes", "GET /v1/incidents, GET /v1/incidents/{id}")
+	} else {
+		log.Warn("incident API not served",
+			"missing", "POSTGRES_APP_DSN",
+			"consequence", "anomalies are measured and no incident is opened for them")
+	}
+
+	store := openStore(log)
+	srv := &http.Server{
+		Addr:              addr(),
+		Handler:           newMux(store, sim, incidents, creds, verifier),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
 	if producer := openProducer(store, log); producer != nil {
+		producer.Detector = detector
 		log.Info("measuring", "cohorts", len(producer.Cohorts),
 			"window", producer.Interval, "lag", producer.Lag)
 		go producer.Run(ctx)
