@@ -97,3 +97,31 @@ per-order notional and a denied-instrument list, and that is all. The real engin
 Go, and these two can drift: a scenario passing here proves nothing about production
 policy. What the twin is for, per ADR-013, is fleet behaviour and market risk. Closing
 the gap needs a cross-language boundary nobody has specified.
+
+## Shadow mode, and why it is a type and not a rule (Phase 13)
+
+Spec section 42 keeps fleet-level controls in shadow mode by default, and INV-009
+reserves enforcement for customer policy. The failure that prevents is undramatic: a
+fleet engine gets good enough that somebody wires its recommendations straight
+through, and a customer discovers their orders were throttled by a vendor's
+heuristic.
+
+So it is a property of the types rather than a discipline.
+
+- A `Recommendation` has no method that enforces. `Enforced()` returns false, always.
+- The only function that produces an enforceable `Control` is `Authorize`, and its
+  signature requires an `Authorization`.
+- An `Authorization` names who authorized it and under which customer policy bundle,
+  or the constructor refuses it.
+- Nothing in `internal/fleet` may construct one. A test walks the package's AST and
+  fails on either route: calling the constructor, or building a populated literal.
+  `NewAuthorization`'s own body is the single exemption.
+
+The ledger records what would have happened, and supports the retrospective analysis
+section 42 asks for. Precision is computed over reviewed entries only and never
+travels without its coverage: 1.00 over three reviews out of four hundred is not a
+finding about the detector, and reporting it bare would be the same mistake as
+reporting concentration without coverage.
+
+Unreviewed is the honest default. It is excluded from precision rather than counted
+as either kind of success.

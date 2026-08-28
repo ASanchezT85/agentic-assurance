@@ -32,8 +32,12 @@ time any of them is checked.
 
 Phase 1 delivered INV-008 and INV-015; Phase 2 added INV-001 and INV-014; Phase 3
 added INV-002 and INV-007; Phase 4 added INV-003, INV-005 and INV-010; Phase 5 added
-INV-004, INV-011 and INV-012; Phase 6 added INV-006 and INV-013. Only INV-009
-remains, and it arrives with shadow mode in Phase 13.
+INV-004, INV-011 and INV-012; Phase 6 added INV-006 and INV-013; Phase 13 added
+INV-009. **All fifteen now have tests.**
+
+Phase 15 remains the completeness and regression gate: it re-runs all fifteen under
+chaos, load and tenant separation (ADR-024). Having a test is not the same as having
+proven it holds when things are breaking.
 
 INV-006 is a database privilege before it is a test. The application role holds
 `SELECT` and `INSERT` on `evidence_events` and nothing else, and a trigger rejects

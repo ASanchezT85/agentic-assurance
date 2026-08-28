@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 12 of seventeen (0 through 16).
+Phase 13 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -91,8 +91,12 @@ spec section 40 requires to rerun an investigation.
 
 Phase 12 delivers the stress library: all twelve scenarios of spec section 41, each
 with assertions, run against the real Go engines. S12 measures the false intervention
-rate and forced a genuine change to the detection rules. The submission path is still
-not wired.
+rate and forced a genuine change to the detection rules.
+
+Phase 13 delivers shadow mode: the four fleet-level controls as recorded
+hypotheticals, a ledger with retrospective precision and false-positive analysis, and
+enforcement that the type system reserves for the customer. **All fifteen security
+invariants now have tests.** The submission path is still not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 
