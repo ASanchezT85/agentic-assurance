@@ -31,6 +31,7 @@ import (
 	"agentic-assurance/internal/broker"
 	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/execution"
+	"agentic-assurance/internal/fleet"
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
@@ -236,6 +237,24 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *g
 	}
 
 	usage := authority.NewPostgresUsage(pool)
+
+	// The analytical feed. Optional, and its absence is stated: without it the fleet
+	// engine measures a fleet it never observes, and every answer is an empty list
+	// that looks exactly like a calm fleet.
+	var telemetry *gateway.Telemetry
+	if base := os.Getenv("CLICKHOUSE_HTTP_URL"); base != "" {
+		user := os.Getenv("CLICKHOUSE_USER")
+		if user == "" {
+			user = "assurance"
+		}
+		telemetry = gateway.NewTelemetry(
+			fleet.NewSink(strings.TrimRight(base, "/"), user, os.Getenv("CLICKHOUSE_PASSWORD")), log)
+		go telemetry.Run(ctx)
+	} else {
+		log.Warn("no CLICKHOUSE_HTTP_URL; intents will not reach the analytical plane",
+			"consequence", "the fleet engine will measure an empty fleet")
+	}
+
 	return &gateway.Pipeline{
 		Identity:      identityVerifier(),
 		Grants:        gateway.StoreGrants{Store: authority.NewStore(pool)},
@@ -246,9 +265,10 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *g
 			Broker: venue,
 			Store:  execution.NewPostgresStore(pool),
 		},
-		Symbols:  symbols,
-		Evidence: evidence.NewStore(pool),
-		Parent:   gateway.NewParentTracker(intent.DefaultClusterConfig),
+		Symbols:   symbols,
+		Evidence:  evidence.NewStore(pool),
+		Telemetry: telemetry,
+		Parent:    gateway.NewParentTracker(intent.DefaultClusterConfig),
 	}, creds
 }
 

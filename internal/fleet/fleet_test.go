@@ -267,3 +267,85 @@ func withModel(e *intent.AgentExecutionEnvelope, family string) *intent.AgentExe
 	e.RuntimeClaims.ModelFamily = intent.Claim{Value: family, Verification: intent.VerificationDeclared}
 	return e
 }
+
+// A tenant-wide cohort must be nameable. Rendering no predicates as the empty string
+// produced the id "cohort_", which names nothing and collides with itself.
+func TestATenantWideCohortHasAName(t *testing.T) {
+	c := Cohort{TenantID: "tenant_x"}
+	if c.Expression() != "all" {
+		t.Errorf("expression = %q, want %q", c.Expression(), "all")
+	}
+	if c.ID() != "cohort_all" {
+		t.Errorf("id = %q, want cohort_all", c.ID())
+	}
+}
+
+// A measurement says how much of the flow the enforcement plane allowed through.
+//
+// The flow figures cover every decided intent, refused ones included, because the
+// fleet vector measures intent: forty agents wanting to sell is the same signal
+// whether or not they were allowed to. A live window made the case for the split:
+// gross notional read 800,100 and the four largest orders in it had been refused.
+func TestAMeasurementSaysHowMuchWasAuthorized(t *testing.T) {
+	w := Window{
+		Start: time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 8, 28, 14, 1, 0, 0, time.UTC),
+	}
+	at := w.Start.Add(time.Second)
+	n := func(v float64) *float64 { return &v }
+
+	env := func(id string, notional float64) *intent.AgentExecutionEnvelope {
+		return &intent.AgentExecutionEnvelope{
+			EnvelopeID: id, TenantID: "tenant_x", ReceivedAt: at,
+			Agent: intent.Agent{AgentID: "agent_" + id},
+			Intent: intent.Intent{
+				InstrumentID: "instr_1", AssetClass: intent.AssetEquity,
+				Side: intent.SideBuy, OrderType: intent.OrderMarket, Notional: n(notional),
+			},
+		}
+	}
+
+	m := MeasureObserved(Cohort{TenantID: "tenant_x"}, w, []Observed{
+		{Envelope: env("a", 1000), Authorized: true},
+		{Envelope: env("b", 1000), Authorized: true},
+		{Envelope: env("c", 100000), Authorized: false},
+	})
+
+	if m.IntentCount != 3 {
+		t.Errorf("intent count = %d, want 3", m.IntentCount)
+	}
+	if m.AuthorizedIntents != 2 || m.RefusedIntents != 1 {
+		t.Errorf("authorized/refused = %d/%d, want 2/1", m.AuthorizedIntents, m.RefusedIntents)
+	}
+	// The refused intent is still in the flow, because it is still intent. The split
+	// is what stops a reader taking 102,000 for what reached a market.
+	if m.GrossNotional != 102000 {
+		t.Errorf("gross = %.0f, want 102000; the fleet vector measures intent", m.GrossNotional)
+	}
+	if m.AuthorizedIntents+m.RefusedIntents != m.IntentCount {
+		t.Error("a decided intent was neither authorized nor refused")
+	}
+}
+
+// Measure over envelopes alone treats every intent as authorized, which is right for
+// callers that only have envelopes and must not silently report them all as refused.
+func TestMeasureOverEnvelopesAssumesAuthorized(t *testing.T) {
+	w := Window{
+		Start: time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 8, 28, 14, 1, 0, 0, time.UTC),
+	}
+	n := 1000.0
+	m := Measure(Cohort{TenantID: "tenant_x"}, w, []*intent.AgentExecutionEnvelope{{
+		EnvelopeID: "a", TenantID: "tenant_x", ReceivedAt: w.Start.Add(time.Second),
+		Agent: intent.Agent{AgentID: "agent_a"},
+		Intent: intent.Intent{
+			InstrumentID: "instr_1", AssetClass: intent.AssetEquity,
+			Side: intent.SideBuy, OrderType: intent.OrderMarket, Notional: &n,
+		},
+	}})
+
+	if m.AuthorizedIntents != 1 || m.RefusedIntents != 0 {
+		t.Errorf("authorized/refused = %d/%d, want 1/0",
+			m.AuthorizedIntents, m.RefusedIntents)
+	}
+}

@@ -284,3 +284,31 @@ is **absent rather than failing**: `POST /v1/intents` answers 404, `/healthz` st
 answers 200, and a WARN names the missing setting and its consequence. A gateway that
 accepted intents it could not evaluate would be worse than one that does not accept
 them at all.
+
+## The fleet engine
+
+The engine measures closed windows of stored intents and serves the read-only
+intelligence API. It recommends and never enforces: there is no code in it that can
+submit an order or change a customer's policy (INV-009).
+
+Two halves have to be configured, and each is silent about a fleet it cannot see.
+
+**The gateway feeds it.** With `CLICKHOUSE_HTTP_URL` set, every *decided* intent is
+written to the analytical store asynchronously, in batches, off the enforcement path.
+Denied intents are written too: a fleet view built from executions alone cannot see a
+cohort that is being refused, and "forty agents all hit the same limit in the same
+minute" is the signal the engine exists to surface. Without the variable the gateway
+warns and the engine measures an empty fleet.
+
+**The engine measures it.**
+
+| Variable | Meaning |
+|----------|---------|
+| `FLEET_COHORT_TENANTS` | Comma-separated tenants to measure. Without it nothing is measured and the API serves only what is already stored. |
+| `FLEET_WINDOW` | Window width and tick. Default `1m`. |
+| `FLEET_LAG` | How long a window stays open before it is measured, because an intent decided at 14:59:59.9 can land after 15:00:00. Default `15s`. |
+
+A measurement reports `intent_count` with `authorized_intents` and `refused_intents`
+beside it. The flow figures cover every decided intent, refused ones included, because
+the fleet vector measures *intent*. The split is what stops a reader taking a gross
+notional for what actually reached a market.

@@ -22,6 +22,7 @@ import (
 	"agentic-assurance/internal/broker"
 	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/execution"
+	"agentic-assurance/internal/fleet"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
 	"agentic-assurance/internal/policy"
@@ -54,6 +55,11 @@ type Result struct {
 
 	EnvelopeID    string
 	CorrelationID string
+
+	// envelope is the decoded envelope, kept so a refusal can still be observed by
+	// the analytical plane. Not serialised: the API returns a decision, not an echo
+	// of the request.
+	envelope *intent.AgentExecutionEnvelope
 
 	// Attested is what identity actually established, never what the envelope
 	// claimed (INV-001).
@@ -121,6 +127,11 @@ type Pipeline struct {
 	// Evidence is optional. Losing it costs the audit trail, not the decision.
 	Evidence EvidenceSink
 
+	// Telemetry feeds the analytical plane. Optional, off the hot path, and never
+	// able to fail a decision: ClickHouse is forbidden from the enforcement path
+	// (INV-005).
+	Telemetry *Telemetry
+
 	// Parent tracks recent intents so a fragmented economic intent is reconstructed
 	// (spec section 20). Optional: without it the pipeline still enforces, and the
 	// parent intent simply is not computed.
@@ -155,6 +166,7 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		EnvelopeID:    env.EnvelopeID,
 		CorrelationID: env.CorrelationID,
 		DecidedAt:     at,
+		envelope:      env,
 	}
 
 	// 4. Identity and attestation, from evidence rather than from the envelope.
@@ -313,7 +325,29 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 
 	result.Accepted = outcome.State != broker.StateRejected
 	result.Code = string(outcome.State)
-	return result
+	return p.observed(env, result)
+}
+
+// observed hands a decided intent to the analytical plane.
+//
+// Every decided intent, not only the accepted ones. A fleet view built from
+// executions alone cannot see a cohort that is being refused, and "forty agents all
+// hit the same limit in the same minute" is exactly the signal the fleet engine
+// exists to surface.
+func (p *Pipeline) observed(env *intent.AgentExecutionEnvelope, r Result) Result {
+	if p.Telemetry == nil || env == nil {
+		return r
+	}
+	d := fleet.Decision{}
+	if r.Authority != nil {
+		d.AuthorityDecision = r.Authority.Code
+	}
+	if r.Policy != nil {
+		d.PolicyAction = string(r.Policy.Action)
+		d.PolicyBundleID = r.Policy.BundleID
+	}
+	p.Telemetry.Observe(env, d)
+	return r
 }
 
 // priorOutcome looks for a resolved idempotency record.
@@ -419,7 +453,7 @@ func (p *Pipeline) deny(r Result, stage, code, reason string) Result {
 	r.Stage = stage
 	r.Code = code
 	r.Reason = reason
-	return r
+	return p.observed(r.envelope, r)
 }
 
 func (p *Pipeline) refuse(stage, code string, err error, at time.Time, details []string) Result {

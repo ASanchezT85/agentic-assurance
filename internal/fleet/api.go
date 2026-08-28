@@ -76,7 +76,8 @@ func (a *API) fleetState(w http.ResponseWriter, r *http.Request) {
 	// current logic concludes rather than what was measured.
 	rows := a.query(w, r, fmt.Sprintf(`
 		SELECT cohort_id, cohort_predicate, window_start, window_end,
-		       intent_count, agent_count, gross_notional, net_notional,
+		       intent_count, authorized_intents, refused_intents,
+		       agent_count, gross_notional, net_notional,
 		       directional_imbalance, observed_coverage, verified_coverage,
 		       declared_coverage, unknown_coverage
 		  FROM assurance.fleet_measurements

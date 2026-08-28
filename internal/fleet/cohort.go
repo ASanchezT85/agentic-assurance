@@ -88,6 +88,11 @@ func NewCohort(tenantID string, predicates ...Predicate) (Cohort, error) {
 // This is the cohort's identity and its explanation at once. Reading it tells you
 // exactly which intents are in the group, with no lookup and no model.
 func (c Cohort) Expression() string {
+	if len(c.Predicates) == 0 {
+		// Every intent of the tenant. Rendering this as the empty string produced
+		// the cohort id "cohort_", which names nothing and collides with itself.
+		return "all"
+	}
 	parts := make([]string, 0, len(c.Predicates))
 	for _, p := range c.Predicates {
 		parts = append(parts, p.Field+"="+p.Value)

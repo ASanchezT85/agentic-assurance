@@ -57,6 +57,8 @@ type intentRow struct {
 	StrategyID           string   `json:"strategy_id"`
 	AuthorityGrantID     string   `json:"authority_grant_id"`
 	AttestationLevel     string   `json:"attestation_level"`
+	ModelFamily          string   `json:"model_family"`
+	ModelID              string   `json:"model_id"`
 	AuthorityDecision    string   `json:"authority_decision"`
 	PolicyAction         string   `json:"policy_action"`
 	PolicyBundleID       string   `json:"policy_bundle_id"`
@@ -104,6 +106,8 @@ func (s *Sink) InsertIntents(ctx context.Context, envelopes []*intent.AgentExecu
 			StrategyID:       e.Lineage.StrategyID,
 			AuthorityGrantID: e.AuthorityGrantID,
 			AttestationLevel: string(e.Agent.Attestation.Level),
+			ModelFamily:      e.RuntimeClaims.ModelFamily.Value,
+			ModelID:          e.RuntimeClaims.ModelVersion.Value,
 			ReceivedAt:       e.ReceivedAt.UTC().Format("2006-01-02 15:04:05.000"),
 		}
 		if determinable {
@@ -180,6 +184,8 @@ type measurementRow struct {
 	WindowStart          string  `json:"window_start"`
 	WindowEnd            string  `json:"window_end"`
 	IntentCount          uint64  `json:"intent_count"`
+	AuthorizedIntents    uint64  `json:"authorized_intents"`
+	RefusedIntents       uint64  `json:"refused_intents"`
 	AgentCount           uint64  `json:"agent_count"`
 	GrossNotional        float64 `json:"gross_notional"`
 	NetNotional          float64 `json:"net_notional"`
@@ -211,6 +217,8 @@ func (s *Sink) InsertMeasurements(ctx context.Context, ms []Measurement) error {
 			WindowStart:          m.Window.Start.UTC().Format("2006-01-02 15:04:05.000"),
 			WindowEnd:            m.Window.End.UTC().Format("2006-01-02 15:04:05.000"),
 			IntentCount:          uint64(m.IntentCount),
+			AuthorizedIntents:    uint64(m.AuthorizedIntents),
+			RefusedIntents:       uint64(m.RefusedIntents),
 			AgentCount:           uint64(m.AgentCount),
 			GrossNotional:        m.GrossNotional,
 			NetNotional:          m.NetNotional,

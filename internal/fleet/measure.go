@@ -36,6 +36,18 @@ type Measurement struct {
 	IntentCount int
 	AgentCount  int
 
+	// AuthorizedIntents is how many of them the enforcement plane allowed to reach a
+	// venue. The flow figures below cover every decided intent, refused ones
+	// included, because the fleet vector measures agentic INTENT: "forty agents all
+	// wanted to sell" is the signal, and it is the same signal whether or not they
+	// were allowed to.
+	//
+	// But a gross notional that does not say how much of it reached a market is a
+	// number an operator would misread, and this platform's whole discipline is that
+	// a figure travels with what it was computed over (ADR-014). So both are here.
+	AuthorizedIntents int
+	RefusedIntents    int
+
 	// GrossNotional is total flow, NetNotional is directional. Spec section 23
 	// requires both to survive: a cohort that bought and sold 10,000 each is not
 	// the same as one that did nothing, though their net is identical.
@@ -60,7 +72,31 @@ type Measurement struct {
 // Deterministic and dependency-free: given the same intents it returns the same
 // numbers, with no clock, no network and no model. That is what makes a historical
 // fleet view reproducible from stored intents.
+// Observed is a stored intent together with what the enforcement plane decided.
+//
+// Separate from the envelope because an envelope is what an agent sent; whether it
+// was allowed is something the platform concluded afterwards, and putting it on the
+// envelope would let a caller believe an agent had declared it.
+type Observed struct {
+	Envelope   *intent.AgentExecutionEnvelope
+	Authorized bool
+}
+
+// Measure computes a window's measurement from envelopes alone.
+//
+// Every intent is treated as authorized, which is right for callers that only have
+// envelopes: a simulation, a scenario, a test. Anything reading from the store should
+// use MeasureObserved, so the authorized split is real rather than assumed.
 func Measure(c Cohort, w Window, envelopes []*intent.AgentExecutionEnvelope) Measurement {
+	observed := make([]Observed, 0, len(envelopes))
+	for _, e := range envelopes {
+		observed = append(observed, Observed{Envelope: e, Authorized: true})
+	}
+	return MeasureObserved(c, w, observed)
+}
+
+// MeasureObserved computes a window's measurement for one cohort.
+func MeasureObserved(c Cohort, w Window, observed []Observed) Measurement {
 	m := Measurement{TenantID: c.TenantID, Cohort: c, Window: w}
 
 	agents := map[string]bool{}
@@ -69,11 +105,17 @@ func Measure(c Cohort, w Window, envelopes []*intent.AgentExecutionEnvelope) Mea
 	feedTotal, feedVerified, feedDeclared, feedUnknown := 0, 0, 0, 0
 	modelDeclared := 0
 
-	for _, e := range envelopes {
+	for _, o := range observed {
+		e := o.Envelope
 		if e == nil || !c.Matches(e) || !w.Contains(e.ReceivedAt) {
 			continue
 		}
 		m.IntentCount++
+		if o.Authorized {
+			m.AuthorizedIntents++
+		} else {
+			m.RefusedIntents++
+		}
 		agents[e.Agent.AgentID] = true
 
 		if e.RuntimeClaims.ModelFamily.Value != "" {

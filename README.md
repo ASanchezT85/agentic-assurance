@@ -123,6 +123,15 @@ rolling or daily limit deny with `USAGE_UNAVAILABLE`, which is the correct failu
 a useless system, and nothing noticed because nothing ran the path. The ledger is
 built, and a test spends a grant down until each limit actually trips.
 
+The fleet engine is connected the same way, and had the same shape of gap: `Measure`
+was called by tests, `InsertMeasurements` by a benchmark, and the intelligence API
+read a table nothing wrote. It could answer questions about a fleet it had never
+observed, and every answer was an empty list that looks exactly like a calm fleet. The
+gateway now feeds the analytical store asynchronously, off the enforcement path, and a
+producer measures each closed window. The fleet vector is computed by one
+implementation fed from the store, never a second one in SQL, and a round-trip test
+fails the moment the stored projection stops carrying a field the measurement reads.
+
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 
 ## Architecture summary
