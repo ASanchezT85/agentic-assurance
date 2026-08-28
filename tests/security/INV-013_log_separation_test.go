@@ -127,16 +127,47 @@ func TestOperationsDocumentsTheDistinction(t *testing.T) {
 // Secrets never enter evidence. Spec section 35 forbids them in telemetry payloads,
 // and evidence is the most durable payload in the system.
 func TestEvidenceCarriesNoCredentialFields(t *testing.T) {
-	raw, err := os.ReadFile("../../internal/evidence/event.go")
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	// The schema, and everything that builds an evidence payload for it.
+	//
+	// This used to read internal/evidence/event.go alone. That file declares the
+	// event; it does not decide what goes in Payload, and a token written into a
+	// payload by any producer went straight past. Verified by putting one there: the
+	// guard stayed green. Its name promised more than one file could deliver.
+	//
+	// Scoped to the producers of evidence payloads, and deliberately not to every file
+	// that handles a secret. internal/fleet/clickhouse.go holds a ClickHouse password
+	// because a client needs one to connect; flagging it would be a guard punishing
+	// correct code, and the authors of the next correct thing learn to route around
+	// guards that do that.
+	sources := []string{
+		"../../internal/evidence/event.go",
+		"../../internal/gateway/pipeline.go",
+		"../../internal/simulation/evidence.go",
 	}
-	body := strings.ToLower(string(raw))
 
-	for _, banned := range []string{"secretkey", "apikey", "password", "credential", "bearer"} {
-		if strings.Contains(body, banned) {
-			t.Errorf("the evidence event type mentions %q; secrets must never be embedded "+
-				"in evidence (spec section 35)", banned)
+	banned := []string{"secretkey", "apikey", "password", "credential", "bearer",
+		"api_key", "secret_key", "access_token", "private_key"}
+
+	for _, path := range sources {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			trimmed := strings.TrimSpace(line)
+			// Comments are exempt. A guard that punishes the sentence explaining why
+			// a secret is absent teaches authors to delete the explanation.
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			lowered := strings.ToLower(trimmed)
+			for _, word := range banned {
+				if strings.Contains(lowered, word) {
+					t.Errorf("%s: %q mentions %q. Broker secrets are never logged, never "+
+						"returned through an API and never in evidence (spec section 35).",
+						path, trimmed, word)
+				}
+			}
 		}
 	}
 }

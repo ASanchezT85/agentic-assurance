@@ -3,6 +3,8 @@ package security
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -146,4 +148,138 @@ func TestAnUnauthenticatedCallerHasNoTenant(t *testing.T) {
 			t.Errorf("header %q produced an executable identity", header)
 		}
 	}
+}
+
+// Every route that carries tenant data authenticates.
+//
+// This class of hole has now appeared three times: the submission endpoint bound a
+// caller but not a tenant, the evidence endpoints took the tenant from a header, and
+// the intelligence API did the same. Each was found by looking rather than by a guard.
+//
+// So the guard reads the routes. Every registration outside health and readiness names
+// a handler, and that handler's body has to reach one of the authentication entry
+// points. It is a source-level check because the muxes live in three packages and one
+// of them is package main; what it costs in precision it buys in covering all of them
+// at once.
+func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
+	// Handlers that legitimately carry nothing about a tenant.
+	unauthenticated := map[string]string{
+		"health": "liveness and readiness say whether the process is up, nothing about a customer",
+	}
+
+	// The ways a handler establishes who is calling.
+	authEntryPoints := []string{"requireTenant", "requireCaller", "tenantOf(r, creds)",
+		"identity.FromTransport", "presentedFrom("}
+
+	files := []string{
+		"../../cmd/assurance-gateway/main.go",
+		"../../cmd/fleet-engine/main.go",
+		"../../internal/fleet/api.go",
+		"../../internal/simulation/api.go",
+	}
+
+	routes := regexp.MustCompile(`(?m)HandleFunc\(\s*"([^"]+)"\s*,\s*([A-Za-z0-9_.,()&{} ]+?)\)\s*$`)
+	checked := 0
+
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		source := string(raw)
+
+		for _, match := range routes.FindAllStringSubmatch(source, -1) {
+			route, handler := match[1], strings.TrimSpace(match[2])
+
+			// The handler expression is a name, a method value, or a call that returns
+			// one. Reduce it to the identifier a func declaration would carry.
+			name := handler
+			name = strings.TrimPrefix(name, "a.")
+			if i := strings.IndexAny(name, "("); i > 0 {
+				name = name[:i]
+			}
+
+			if why, ok := unauthenticated[name]; ok {
+				if strings.Contains(route, "/v1/") {
+					t.Errorf("%s serves %s and is listed as needing no authentication (%s), "+
+						"but a /v1/ route carries tenant data", path, route, why)
+				}
+				continue
+			}
+
+			// A handler built elsewhere and passed in as a value. Written down rather
+			// than followed automatically: the guard refusing to guess is what caught
+			// this one, and a guard that resolved names loosely would have passed.
+			elsewhere := map[string]string{
+				"submit": "../../internal/gateway/http.go:SubmitHandler",
+			}
+
+			body, found := funcBody(source, name)
+			if !found {
+				if where, known := elsewhere[name]; known {
+					file, fn, _ := strings.Cut(where, ":")
+					other, err := os.ReadFile(file)
+					if err != nil {
+						t.Fatalf("read %s: %v", file, err)
+					}
+					body, found = funcBody(string(other), fn)
+				}
+			}
+			if !found {
+				t.Errorf("%s registers %q with handler %q and no function by that name "+
+					"is in the file; this guard cannot see whether it authenticates",
+					path, route, name)
+				continue
+			}
+
+			authenticates := false
+			for _, entry := range authEntryPoints {
+				if strings.Contains(body, entry) {
+					authenticates = true
+					break
+				}
+			}
+			if !authenticates {
+				t.Errorf("%s serves %s and its handler %q reaches none of %v. Every route "+
+					"that carries tenant data authenticates, and the tenant comes from the "+
+					"credential rather than from the request (INV-007).",
+					path, route, name, authEntryPoints)
+			}
+			checked++
+		}
+	}
+
+	if checked < 10 {
+		t.Errorf("only %d routes were checked; the guard is not finding the registrations "+
+			"and would stay green while an unauthenticated one was added", checked)
+	}
+}
+
+// funcBody returns the source of a named function, brace-matched.
+func funcBody(source, name string) (string, bool) {
+	marker := regexp.MustCompile(`func (\([^)]*\) )?` + regexp.QuoteMeta(name) + `\(`)
+	loc := marker.FindStringIndex(source)
+	if loc == nil {
+		return "", false
+	}
+
+	open := strings.Index(source[loc[1]:], "{")
+	if open < 0 {
+		return "", false
+	}
+	start := loc[1] + open
+
+	depth := 0
+	for i := start; i < len(source); i++ {
+		switch source[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }

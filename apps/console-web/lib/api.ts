@@ -16,11 +16,19 @@
 export const GATEWAY_URL = process.env.GATEWAY_URL ?? "http://localhost:8080";
 export const FLEET_ENGINE_URL = process.env.FLEET_ENGINE_URL ?? "http://localhost:8081";
 
-/** The tenant a reader is looking at. A header, and not authentication: the
- * authenticated-tenant requirement of section 46 arrives with the API surface that
- * carries authentication, and pretending otherwise here would be worse than saying
- * so. */
-export const TENANT_ID = process.env.CONSOLE_TENANT_ID ?? "tenant_acme";
+/**
+ * The console's credential.
+ *
+ * The tenant used to be a header and this comment used to say that authentication
+ * would arrive with the surface that carried it. It arrived: every endpoint that
+ * returns tenant data authenticates, and the tenant comes from the credential rather
+ * than from anything the console sends. A header naming a tenant now gets 401.
+ *
+ * Server-side only. It is read in a server component's fetch and never reaches the
+ * browser, which is why it is CONSOLE_API_TOKEN and not NEXT_PUBLIC_ anything: a
+ * credential in a client bundle is a credential published.
+ */
+const API_TOKEN = process.env.CONSOLE_API_TOKEN ?? "";
 
 export type Unavailable = {
   readonly available: false;
@@ -39,8 +47,15 @@ export type Result<T> = Available<T> | Unavailable;
 
 async function read<T>(url: string, what: string): Promise<Result<T>> {
   try {
+    if (API_TOKEN === "") {
+      return {
+        available: false,
+        reason: `${what} needs CONSOLE_API_TOKEN: every endpoint that carries tenant data authenticates`,
+      };
+    }
+
     const response = await fetch(url, {
-      headers: { "X-Tenant-Id": TENANT_ID },
+      headers: { Authorization: `Bearer ${API_TOKEN}` },
       // Always fresh. A cached fleet view is a fleet view of the past presented as
       // the present.
       cache: "no-store",
@@ -48,6 +63,14 @@ async function read<T>(url: string, what: string): Promise<Result<T>> {
 
     if (response.status === 503) {
       return { available: false, reason: `${what} is unavailable: the store behind it is not reachable` };
+    }
+    if (response.status === 401 || response.status === 403) {
+      // Said plainly rather than as a bare status. An operator seeing "returned 401"
+      // on a fleet screen would reasonably wonder whether the fleet was the problem.
+      return {
+        available: false,
+        reason: `${what} refused the console's credential (${response.status}); check CONSOLE_API_TOKEN`,
+      };
     }
     if (!response.ok) {
       return { available: false, reason: `${what} returned ${response.status}` };

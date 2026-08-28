@@ -151,9 +151,9 @@ func openSimulation(ctx context.Context, log *slog.Logger) *simulation.API {
 		return missing("SIMULATOR_PYTHON", "there is no engine to run")
 	}
 
-	creds, err := identity.ParseCredentials(os.Getenv("SIMULATION_API_CREDENTIALS"))
+	creds, err := identity.ParseCredentials(os.Getenv("INTELLIGENCE_API_CREDENTIALS"))
 	if err != nil {
-		return missing("SIMULATION_API_CREDENTIALS",
+		return missing("INTELLIGENCE_API_CREDENTIALS",
 			"a run is stored, retrieved and cancelled by tenant, and without a "+
 				"credential the tenant would come from a header (INV-007)")
 	}
@@ -212,9 +212,9 @@ func main() {
 
 	// The intelligence API returns a customer's risk posture. It authenticates with
 	// the same registry as the simulation surface, and refuses everything without one.
-	creds, err := identity.ParseCredentials(os.Getenv("SIMULATION_API_CREDENTIALS"))
+	creds, err := identity.ParseCredentials(os.Getenv("INTELLIGENCE_API_CREDENTIALS"))
 	if err != nil {
-		log.Warn("no usable SIMULATION_API_CREDENTIALS",
+		log.Warn("no usable INTELLIGENCE_API_CREDENTIALS",
 			"err", err.Error(),
 			"consequence", "every endpoint that carries tenant data refuses")
 		creds = nil
