@@ -20,6 +20,8 @@ GET  /v1/incidents                      DONE (internal/incident)
 GET  /v1/incidents/{id}                 DONE (internal/incident)
 
 POST /v1/controls                       DONE (internal/gateway + internal/control)
+GET  /v1/controls                       DONE (internal/gateway)
+POST /v1/controls/{id}/revoke           DONE (internal/gateway)
 
 POST /v1/simulations                    DONE (internal/simulation)
 GET  /v1/simulations/{id}               DONE (internal/simulation)
@@ -166,6 +168,7 @@ agent adjusting its own leash.
 | 400 | Not authorizable as written; `details` says why. |
 | 403 | This credential may not authorize fleet controls. |
 | 404 | No such incident for this tenant, or it carries no recommendation. |
+| 503 | The incident evidence could not be read. Distinct from 404 on purpose: collapsing the two told an operator authorizing an emergency control during a database outage that the incident in front of them did not exist. |
 | 409 | A control with this id already exists. |
 
 **THROTTLE is refused rather than stored.** The other three actions deny on the hot
@@ -188,6 +191,34 @@ The refusal records `control.enforced.v1`, not `control.applied.v1`. Applying is
 customer did once; enforcing is what the platform does on every order after, and
 recording the second as the first made the incident timeline report a human action for
 each order the control stopped.
+
+## GET /v1/controls and POST /v1/controls/{id}/revoke
+
+```json
+POST /v1/controls/ctl_1/revoke
+{ "revoked_by": "ops@example", "reason": "the incident is closed" }
+```
+
+`POST /v1/controls` landed without either of these, which is the same gap
+`POST /v1/authority-grants/{id}/revoke` was built to close, reappearing one endpoint
+later. The table had `revoked_at` and `revoked_by`, the catalog had
+`control.revoked.v1`, and nothing wrote them. A tenant-wide `READ_ONLY` control refuses
+every order in the tenant, so lifting one meant a psql prompt — during exactly the
+incident where that is the worst way to work, and out of reach for an operator with no
+database access.
+
+Revoking takes the same privilege as authorizing, requires `revoked_by` and `reason`,
+and answers **200 with `already: true`** on a second attempt rather than 409, for the
+reason revoking a grant does: an operator hitting it twice under pressure should be
+told it is done. A control belonging to another tenant is `404`, identical to one that
+never existed.
+
+`GET /v1/controls` lists every control a tenant has, in force or not, and computes
+`in_force` rather than leaving a reader to compare an expiry against their own clock. A
+refusal names a `control_id`, and until this existed nothing could turn that id into
+what it was, who authorized it and when it ends. It is readable by any credential of
+the tenant: which controls constrain you is your own posture, and an agent that cannot
+see why it is being refused files a bug against the wrong system.
 
 ## POST /v1/simulations and GET /v1/simulations/{id}
 

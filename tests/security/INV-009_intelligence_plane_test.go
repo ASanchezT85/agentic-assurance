@@ -28,6 +28,7 @@ var enforcementPackages = map[string]string{
 	"internal/policy":    "a policy bundle decides what production enforces",
 	"internal/authority": "an authority grant decides what an agent may do",
 	"internal/execution": "an idempotency record is authoritative control state",
+	"internal/control":   "an authorized fleet control refuses orders on the hot path",
 	"internal/broker":    "a venue is where an order actually goes",
 	"internal/gateway":   "the composition root is the enforcement path itself",
 }

@@ -33,7 +33,7 @@ func asReader(req *http.Request) *http.Request {
 func TestHealthEndpoints(t *testing.T) {
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rec := httptest.NewRecorder()
-		newMux(nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		newMux(nil, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: got %d, want 200", path, rec.Code)
@@ -99,7 +99,7 @@ func TestEvidenceByCorrelation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
 	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(reader, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
+	newMux(reader, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -129,7 +129,7 @@ func TestEvidenceByIntent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/intents/env_1/evidence", nil)
 	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(reader, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
+	newMux(reader, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -155,7 +155,7 @@ func TestEvidenceRequiresAuthentication(t *testing.T) {
 				req.Header.Set("Authorization", "Bearer "+evidenceToken+"-wrong")
 			}
 			rec := httptest.NewRecorder()
-			newMux(reader, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
+			newMux(reader, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
 
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("status %d, want 401: %s", rec.Code, rec.Body.String())
@@ -175,7 +175,7 @@ func TestEvidenceRefusesADisagreeingHeader(t *testing.T) {
 	req := asReader(httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil))
 	req.Header.Set("X-Tenant-Id", "tenant_victim")
 	rec := httptest.NewRecorder()
-	newMux(reader, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
+	newMux(reader, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403", rec.Code)
@@ -191,7 +191,7 @@ func TestEvidenceRefusesEverythingWithoutCredentials(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
 	req.Header.Set("Authorization", "Bearer "+evidenceToken)
 	rec := httptest.NewRecorder()
-	newMux(&stubReader{}, nil, nil, nil, nil, nil, nil, nil).ServeHTTP(rec, req)
+	newMux(&stubReader{}, nil, nil, nil, nil, nil, nil, nil, nil, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status %d, want 401", rec.Code)
@@ -202,7 +202,7 @@ func TestEvidenceRequiresACorrelationID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence", nil)
 	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(&stubReader{}, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
+	newMux(&stubReader{}, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status %d", rec.Code)
@@ -215,14 +215,14 @@ func TestEvidenceUnavailableWithoutAStore(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
 	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
+	newMux(nil, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503", rec.Code)
 	}
 
 	health := httptest.NewRecorder()
-	newMux(nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	newMux(nil, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if health.Code != http.StatusOK {
 		t.Error("the gateway reported unhealthy because a database was missing")
 	}
@@ -235,7 +235,7 @@ func TestStoreErrorsAreNotLeaked(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
 	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(reader, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
+	newMux(reader, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d", rec.Code)
@@ -248,7 +248,7 @@ func TestStoreErrorsAreNotLeaked(t *testing.T) {
 // The HTTP surface is read-only. There is no route through which evidence can be
 // written, corrected or deleted (ADR-009, INV-006).
 func TestEvidenceEndpointsAreReadOnly(t *testing.T) {
-	mux := newMux(&stubReader{}, nil, nil, nil, nil, nil, evidenceCredentials(t), nil)
+	mux := newMux(&stubReader{}, nil, nil, nil, nil, nil, nil, nil, evidenceCredentials(t), nil)
 
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/v1/evidence?correlation_id=corr_1", nil)

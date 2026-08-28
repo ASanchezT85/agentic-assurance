@@ -223,11 +223,13 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 			// than followed automatically: the guard refusing to guess is what caught
 			// this one, and a guard that resolved names loosely would have passed.
 			elsewhere := map[string]string{
-				"submit":       "../../internal/gateway/http.go:SubmitHandler",
-				"status":       "../../internal/gateway/intents.go:IntentStatusHandler",
-				"revoke":       "../../internal/gateway/intents.go:RevokeGrantHandler",
-				"issue":        "../../internal/gateway/grants.go:IssueGrantHandler",
-				"applyControl": "../../internal/gateway/controls.go:IssueControlHandler",
+				"submit":        "../../internal/gateway/http.go:SubmitHandler",
+				"status":        "../../internal/gateway/intents.go:IntentStatusHandler",
+				"revoke":        "../../internal/gateway/intents.go:RevokeGrantHandler",
+				"issue":         "../../internal/gateway/grants.go:IssueGrantHandler",
+				"applyControl":  "../../internal/gateway/controls.go:IssueControlHandler",
+				"revokeControl": "../../internal/gateway/controls_lifecycle.go:RevokeControlHandler",
+				"listControls":  "../../internal/gateway/controls_lifecycle.go:ListControlsHandler",
 			}
 
 			target, fn := path, name

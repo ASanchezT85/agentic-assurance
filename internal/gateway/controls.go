@@ -30,6 +30,11 @@ import (
 // that plane produce enforceable controls would be INV-009 broken by deployment
 // topology while the type signatures still looked right.
 
+// errEvidenceUnavailable separates a database that cannot be read from an incident
+// that does not exist. They were one 404 until an audit asked what an operator sees
+// during an outage.
+var errEvidenceUnavailable = errors.New("the incident evidence could not be read")
+
 // ControlStore persists an authorized control.
 type ControlStore interface {
 	Save(ctx context.Context, c control.Control) error
@@ -172,7 +177,11 @@ func IssueControlHandler(controls ControlStore, recommendations RecommendationSo
 		// nothing ever suggested and have the record say the platform proposed it.
 		rec, err := recommendationFor(ctx, recommendations, tenant, strings.TrimSpace(req.IncidentID))
 		if err != nil {
-			writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+			status := http.StatusNotFound
+			if errors.Is(err, errEvidenceUnavailable) {
+				status = http.StatusServiceUnavailable
+			}
+			writeJSON(w, status, errorBody(err.Error()))
 			return
 		}
 
@@ -252,7 +261,13 @@ func recommendationFor(ctx context.Context, source RecommendationSource,
 	tenantID, incidentID string) (fleet.Recommendation, error) {
 
 	events, err := source.ByAggregate(ctx, tenantID, incidentID)
-	if err != nil || len(events) == 0 {
+	if err != nil {
+		// Distinct from "no such incident". Collapsing the two told an operator
+		// authorizing an emergency control during a database outage that the incident
+		// in front of them did not exist.
+		return fleet.Recommendation{}, fmt.Errorf("%w: %s", errEvidenceUnavailable, err)
+	}
+	if len(events) == 0 {
 		return fleet.Recommendation{}, fmt.Errorf(
 			"no incident %s for this tenant, so there is nothing to authorize", incidentID)
 	}
