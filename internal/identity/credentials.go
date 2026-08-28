@@ -139,10 +139,16 @@ func RequireTenant(a Attested, claimed string) error {
 		return errors.New("no tenant was claimed")
 	}
 	if a.TenantID == "" {
+		if !a.SpiffeID.IsZero() {
+			return fmt.Errorf(
+				"workload %s is not mapped to a tenant. A workload certificate proves "+
+					"which workload is calling and says nothing about which customer it "+
+					"acts for; add it to the workload registry rather than letting the "+
+					"request name one", a.SpiffeID.String())
+		}
 		return fmt.Errorf(
-			"the caller was authenticated as %q but no tenant is established for it. "+
-				"An API credential carries its tenant; a workload certificate needs a "+
-				"SPIFFE-ID-to-tenant mapping, which is not configured", a.Method)
+			"the caller was authenticated as %q and no tenant is established for it",
+			a.Method)
 	}
 	if a.TenantID != claimed {
 		// Deliberately does not say which tenant the caller belongs to. Spec section

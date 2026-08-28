@@ -23,6 +23,11 @@ type Verifier struct {
 	// Bundle holds the trust domain's CA certificates.
 	Bundle *x509.CertPool
 
+	// Workloads says which tenant a verified SPIFFE ID acts for. Without it an SVID
+	// establishes a workload and no customer, and RequireTenant refuses: correct, and
+	// it made A2 unreachable.
+	Workloads *Workloads
+
 	// Now is injectable so expiry is testable without waiting. Nil means time.Now.
 	Now func() time.Time
 }

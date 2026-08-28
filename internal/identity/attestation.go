@@ -78,11 +78,22 @@ func (v *Verifier) Resolve(p Presented) Attested {
 	if p.SVID != nil {
 		verified, err := v.Verify(p.SVID, p.Intermediates)
 		if err == nil {
+			// The tenant comes from the workload registry, never from anything the
+			// caller sent. A workload with no entry establishes no tenant, and
+			// RequireTenant then refuses: an unassigned workload is one nobody has
+			// said belongs to a customer, and guessing would assign it to one.
+			tenant := p.TenantID
+			if mapped, ok := v.Workloads.TenantFor(verified.ID); ok {
+				tenant = mapped
+			} else {
+				tenant = ""
+			}
+
 			return Attested{
 				Level:       intent.AttestationA2,
 				SpiffeID:    verified.ID,
 				APIIdentity: p.APIIdentity,
-				TenantID:    p.TenantID,
+				TenantID:    tenant,
 				Method:      verified.Method,
 				VerifiedAt:  verified.VerifiedAt,
 				SerialHex:   verified.SerialHex,

@@ -258,6 +258,7 @@ Optional, and their absence is a stated degradation rather than a failure:
 | Variable | Without it |
 |----------|-----------|
 | `SPIFFE_TRUST_BUNDLE`, `SPIFFE_TRUST_DOMAIN` | An SVID cannot be verified, so callers reach A1 at best. Reported, not silently treated as attestation. |
+| `SPIFFE_WORKLOADS` | A verified SVID establishes a workload and no customer, and the request is refused naming the missing entry. `spiffe://domain/path=tenant`; a path ending in `/` matches everything beneath it. |
 
 The gateway will not sign or activate a policy bundle. One that reaches it must
 already be ACTIVE and signed: a gateway that activated its own policy would be

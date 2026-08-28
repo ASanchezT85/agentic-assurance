@@ -109,22 +109,30 @@ func TestAClaimToAnotherTenantIsRefused(t *testing.T) {
 
 // An identity with no established tenant is refused rather than trusted.
 //
-// This is the workload-certificate case: an SVID proves which workload is calling, and
-// the platform has no mapping from a SPIFFE ID to a customer. Falling back to the
-// request would reintroduce exactly the hole this closes.
+// A workload certificate proves which workload is calling and says nothing about which
+// customer it acts for. Until the workload registry existed there was nothing to check
+// a claim against, and falling back to the request would have reintroduced the hole
+// this closes. Now there is a registry, and a workload absent from it is still refused:
+// it is one nobody has assigned to a customer, and guessing would assign it.
 func TestAnIdentityWithNoTenantCannotClaimOne(t *testing.T) {
-	attested := identity.Attested{
-		Level:  "A2",
-		Method: "x509-svid",
+	unmapped := identity.Attested{
+		Level:    "A2",
+		Method:   "x509-svid",
+		SpiffeID: identity.SPIFFEID{TrustDomain: "acme.example", Path: "/ns/agents/sa/unmapped"},
 	}
 
-	err := identity.RequireTenant(attested, "tenant_a")
+	err := identity.RequireTenant(unmapped, "tenant_a")
 	if err == nil {
-		t.Fatal("an identity with no established tenant was allowed to name one")
+		t.Fatal("an unmapped workload was allowed to name a tenant")
 	}
-	if !strings.Contains(err.Error(), "mapping") {
-		t.Errorf("error = %q; the refusal should say what is missing, or an operator "+
-			"cannot tell a misconfiguration from an attack", err)
+	if !strings.Contains(err.Error(), "/ns/agents/sa/unmapped") {
+		t.Errorf("error = %q; the refusal should name the workload, or an operator "+
+			"cannot tell which registry entry is missing", err)
+	}
+
+	// And an identity with neither a workload nor a credential.
+	if err := identity.RequireTenant(identity.Attested{Method: "NONE"}, "tenant_a"); err == nil {
+		t.Fatal("an identity with nothing established was allowed to name a tenant")
 	}
 }
 

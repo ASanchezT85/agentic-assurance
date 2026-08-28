@@ -57,11 +57,30 @@ the identity stage with `TENANT_NOT_AUTHENTICATED`. The refusal does not say whi
 tenant the caller belongs to: an error that printed both would be a probe with feedback
 (spec section 45).
 
-An identity with no established tenant is refused rather than trusted. That is the
-workload-certificate case today: an SVID proves which workload is calling, and the
-platform has no mapping from a SPIFFE ID to a customer. Falling back to the request
-there would reintroduce exactly this hole, so the refusal names the missing mapping
-instead.
+An identity with no established tenant is refused rather than trusted.
+
+For a workload certificate that tenant comes from a **workload registry**, written
+`spiffe://domain/path=tenant`. A mapping rather than a convention: the SPIFFE IDs SPIRE
+issues here look like `spiffe://acme.example/ns/agents/sa/momentum`, a namespace and a
+service account, and nothing in that names a tenant. Deriving one would mean inventing
+a convention and then assigning customers by it silently — the same mistake as reading
+the tenant off the request, with the path as the thing whoever writes it controls.
+
+Three rules make the registry safe to configure:
+
+- A prefix entry ends in `/`, and the trailing slash is required rather than implied.
+  `spiffe://td/ns/prod` as a prefix would also match `spiffe://td/ns/production`: a
+  different namespace, possibly a different customer, and a bug that looks like nothing
+  until someone registers the longer name.
+- Exact beats prefix and a longer prefix beats a shorter one. Anything ambiguous — the
+  same path twice — is refused at startup, because otherwise map iteration order would
+  decide which customer an order belonged to, at the moment it was placed.
+- A whole trust domain is refused. It is not a tenant, and a catch-all assigns every
+  workload SPIRE ever issues in that domain to one customer, including the ones added
+  later by someone who never read the configuration.
+
+A workload with no entry establishes no tenant and the request is refused naming it, so
+an operator can tell a missing registry entry from an attack.
 
 The same rule now covers the simulation API, which had the same shape with a header
 instead of a body field. A run is stored, retrieved and cancelled by tenant, so a
@@ -74,8 +93,13 @@ header let anyone read another customer's simulation results and cancel their ru
 - The credential registry is minimal: no rotation, no scoping beyond identity and
   tenant, and configuration through the environment. Real credential management is a secret
   manager (spec section 35), and this does not pretend to be one.
-- An operator who wants A2 deploys SPIRE and configures a trust bundle. Nothing in
-  the gateway changes.
+- An operator who wants A2 deploys SPIRE, configures a trust bundle, and maps its
+  workloads to tenants. Nothing in the gateway changes.
+- A2 is reachable and tested end to end: an order placed over mutual TLS by a
+  SPIRE-issued certificate, with no API credential in the configuration at all
+  (`tests/integration/mtls_submission_test.go`). Before the registry it was buildable
+  and unusable — the verifier accepted the certificate and the tenant check then
+  refused it, correctly, forever.
 
 ## Prohibited reinterpretations
 

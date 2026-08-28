@@ -367,7 +367,21 @@ func identityVerifier() *identity.Verifier {
 	if !roots.AppendCertsFromPEM(pem) {
 		return &identity.Verifier{}
 	}
-	return &identity.Verifier{Bundle: roots, TrustDomain: os.Getenv("SPIFFE_TRUST_DOMAIN")}
+
+	// The workload registry. Without it a verified SVID establishes a workload and no
+	// customer, and the submission is refused naming the missing entry: a workload
+	// certificate says which workload is calling and nothing about which tenant it
+	// acts for.
+	workloads, err := identity.ParseWorkloads(os.Getenv("SPIFFE_WORKLOADS"))
+	if err != nil {
+		workloads = nil
+	}
+
+	return &identity.Verifier{
+		Bundle:      roots,
+		TrustDomain: os.Getenv("SPIFFE_TRUST_DOMAIN"),
+		Workloads:   workloads,
+	}
 }
 
 func envOr(key, fallback string) string {
