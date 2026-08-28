@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 14 of seventeen (0 through 16).
+Phase 15 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -101,7 +101,13 @@ invariants now have tests.**
 Phase 14 delivers the console: the six surfaces of spec section 48 and no seventh.
 Fleet, Flow, Dependencies and Incidents read real data; Lab and Controls say plainly
 what is missing and why, rather than rendering placeholder rows. The console has no
-write path, and a test enforces that. The submission path is still not wired.
+write path, and a test enforces that.
+
+Phase 15 is the hardening gate: all fifteen invariants re-checked for completeness and
+under concurrency, a chaos suite that stops real containers, and the section 50.1
+targets measured. The enforcement path costs **11.6 µs at p50** against a 2 ms target;
+the idempotency round trip costs **3.34 ms** and exceeds that budget on its own, which
+ADR-015 predicted and named the remedy for. The submission path is still not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

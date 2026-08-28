@@ -187,3 +187,53 @@ is a naming convention the guard recognises, so the intent lives in the value it
 and anyone adding one has to say so in the name.
 
 Everything else belongs in the environment or a secret manager.
+
+## Benchmarks and chaos (Phase 15)
+
+```sh
+make up && make migrate
+go test -tags=integration -count=1 -v ./tests/performance/
+make test-chaos
+```
+
+The chaos suite **stops real containers**, which is why it has its own build tag
+rather than riding on `integration`. Go runs test packages in parallel, so a broad
+`-tags=integration ./tests/...` would take PostgreSQL down while the integration
+suite was using it and both would hang. That is not a flake; it is two suites
+disagreeing about who owns the infrastructure.
+
+It restores every container through `t.Cleanup`, including on failure, but it will
+interrupt anything else using the compose stack while it runs. Run it alone.
+
+### Measured on the reference machine, 2026-08-28
+
+| | p50 | p95 | p99 | Section 50.1 target |
+|---|---|---|---|---|
+| Enforcement path | 11.6 µs | 17.6 µs | 22.6 µs | 2 ms / 5 ms / 10 ms |
+| Idempotency claim | 3.34 ms | 4.23 ms | 5.25 ms | — |
+
+The enforcement path is envelope decode and validation, authority evaluation and
+policy evaluation: about **0.6% of the p50 budget**.
+
+**The idempotency claim exceeds the whole p50 budget on its own**, at 3.34 ms against
+a 2 ms target. ADR-015 predicted this would be the largest single item and named the
+remedy in advance: batching or a local write-ahead log, never moving idempotency truth
+into Redis. This is one PostgreSQL round trip per claim against a container on the
+same laptop, so the number describes this machine rather than a deployment — but the
+shape of the finding does not change with better hardware, because the ratio between
+23 µs of computation and a database round trip does not.
+
+### A measurement defect worth remembering
+
+The first version of the gateway benchmark timed one evaluation per sample and
+reported **p50 = 0s, p95 = 0s**. That was not a fast path, it was the clock: Windows
+timer granularity is coarser than a single evaluation, so most samples rounded to
+zero and the percentiles described the timer. Each sample now times a batch of 200 and
+divides.
+
+### The race detector does not run here
+
+`-race` needs cgo, and this Windows host has no gcc. CI runs it on
+`internal/...`, `tests/security/...` and `tests/scenarios/...`, which is where the
+concurrency guarantees live. Locally the concurrency tests still run and still assert
+their outcomes; they just cannot detect a data race that happens not to change one.

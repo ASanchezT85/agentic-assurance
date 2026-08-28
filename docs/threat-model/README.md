@@ -35,9 +35,25 @@ added INV-002 and INV-007; Phase 4 added INV-003, INV-005 and INV-010; Phase 5 a
 INV-004, INV-011 and INV-012; Phase 6 added INV-006 and INV-013; Phase 13 added
 INV-009. **All fifteen now have tests.**
 
-Phase 15 remains the completeness and regression gate: it re-runs all fifteen under
-chaos, load and tenant separation (ADR-024). Having a test is not the same as having
-proven it holds when things are breaking.
+Phase 15 delivered that gate.
+
+`TestEveryInvariantHasATestAndEveryTestHasAnInvariant` checks both directions: a test
+file with no entry here is an invariant nobody wrote down, and an entry with no file is
+one nobody checks. The second is the failure that hides for a year.
+
+`TestEveryInvariantFileContainsAssertions` checks that the files do something. A file
+that exists and asserts nothing would satisfy the completeness check and prove
+nothing, which is the exact shape of a gate that has stopped working.
+
+Under concurrency: enforcement stays correct across 6,400 interleaved compliant and
+oversized orders, tenant isolation holds across four tenants evaluating each other's
+grants concurrently, and policy returns the same answer in 12,800 concurrent
+evaluations as it does alone.
+
+Under chaos: `tests/chaos` stops ClickHouse, NATS, Redis, the identity issuer and
+PostgreSQL, and checks the section 55 principle in both directions each time. An
+oversized order is denied and a compliant one still passes, because an outage that
+becomes a blanket denial is an outage of its own.
 
 INV-006 is a database privilege before it is a test. The application role holds
 `SELECT` and `INSERT` on `evidence_events` and nothing else, and a trigger rejects

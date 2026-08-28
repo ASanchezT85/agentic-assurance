@@ -11,7 +11,7 @@
 # Resolved by scripts/python-bin.sh: an explicit $PY, then .venv, then PATH.
 PY = $(shell sh scripts/python-bin.sh)
 
-.PHONY: help bootstrap up down migrate test test-integration lint typecheck build verify clean
+.PHONY: help bootstrap up down migrate test test-integration test-chaos lint typecheck build verify clean
 
 help: ## Show this help
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | sed -e 's/:.*## /|/' -e 's/^/  /' | column -t -s '|'
@@ -36,6 +36,9 @@ migrate: ## Apply PostgreSQL migrations (run `make up` first)
 
 test-integration: ## Integration tests (run `make up && make migrate` first)
 	go test -tags=integration -count=1 ./tests/integration/...
+
+test-chaos: ## Chaos suite. STOPS REAL CONTAINERS; do not run alongside anything else
+	go test -tags=chaos -count=1 -timeout 15m ./tests/chaos/...
 
 lint: ## Run all linters
 	@test -z "$$(gofmt -l . )" || { echo "gofmt needed:"; gofmt -l .; exit 1; }

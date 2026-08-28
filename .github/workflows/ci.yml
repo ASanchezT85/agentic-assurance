@@ -71,6 +71,20 @@ jobs:
       - run: python -m mypy
       - run: python -m pytest -q
 
+  # The race detector, which cannot run on every developer machine: it needs cgo, and
+  # a Windows host without gcc cannot build it. Running it here means the concurrency
+  # guarantees in the Phase 15 gate are actually checked somewhere.
+  race:
+    name: Race detector
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - run: go test -race -count=1 ./internal/... ./tests/security/... ./tests/scenarios/...
+
   # Structure, schema compatibility and scope guards. Separated from the `go` job so
   # a failure here reads as "the repository drifted", not "the code broke".
   guards:
@@ -106,8 +120,11 @@ jobs:
         run: go test -tags=integration -count=1 ./tests/integration/...
       - name: Tenant isolation, append-only evidence
         run: go test -tags=integration -count=1 ./tests/security/...
-      - name: Fleet ingest benchmark (measured, not asserted)
+      - name: Benchmarks (gateway overhead asserted, ingest measured)
         run: go test -tags=integration -count=1 -v ./tests/performance/...
+      # Last, and on its own tag: it stops the containers the steps above need.
+      - name: Chaos suite (stops real services)
+        run: go test -tags=chaos -count=1 -timeout 15m -v ./tests/chaos/...
       - name: Service logs on failure
         if: failure()
         run: docker compose logs --tail=100
