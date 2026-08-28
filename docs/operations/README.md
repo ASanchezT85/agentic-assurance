@@ -223,6 +223,45 @@ same laptop, so the number describes this machine rather than a deployment — b
 shape of the finding does not change with better hardware, because the ratio between
 23 µs of computation and a database round trip does not.
 
+### A thousand agents, measured 2026-08-28
+
+Spec section 56 item 1 and section 66 step 2 ask for 1,000+ synthetic agents sending
+concurrent intents. `tests/performance/fleet_load_test.go`, behind the `load` build
+tag, launches them against a running gateway:
+
+```sh
+GATEWAY_URL=http://localhost:8073 LOAD_AGENT_TOKEN=... LOAD_ISSUER_TOKEN=...   go test -tags=load -count=1 -v ./tests/performance/ -run TestAThousandAgents
+```
+
+| | Result |
+|---|---|
+| Agents | 1,000, each with its own authority grant |
+| Submissions | 3,000, all released at once |
+| Decisions | 3,000 of 3,000; no 5xx, no unanswered request |
+| Throughput | 407 intents/s |
+| End-to-end over HTTP | p50 2.37 s, p95 2.49 s, p99 2.51 s |
+
+One grant per agent rather than one shared: a thousand agents under a single rolling
+limit would measure how fast a limit is reached, which is a different item.
+
+The latencies are queueing, not computation — the enforcement path itself is 12.5 µs.
+Three thousand requests arriving simultaneously at a laptop wait their turn, and the
+number to read here is that every one of them got a decision.
+
+**The run found a real default.** pgxpool sizes itself at four connections per CPU, and
+with a thousand concurrent agents that is where every submission queues: 232 intents/s
+on the default against 422/s with fifty connections, same hardware, same enforcement
+work. The gateway now defaults to 50 (`POSTGRES_MAX_CONNS`), and a DSN that sets
+`pool_max_conns` itself is left alone.
+
+Two things the harness had to be told, both properties of this machine rather than of
+the platform. A thousand simultaneous TCP connections overflow the Windows listen
+backlog and the kernel answers with RST, which arrives at the client as "connection
+refused" and looks exactly like a platform that stopped deciding; sockets are capped at
+256 and the agents queue on them. And `GOTMPDIR` has to point inside the repository —
+Application Control on this host blocks freshly built test binaries under
+`AppData\Local\Temp`.
+
 ### A measurement defect worth remembering
 
 The first version of the gateway benchmark timed one evaluation per sample and

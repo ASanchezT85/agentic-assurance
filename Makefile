@@ -37,6 +37,9 @@ migrate: ## Apply PostgreSQL migrations (run `make up` first)
 test-integration: ## Integration tests (run `make up && make migrate` first)
 	go test -tags=integration -count=1 ./tests/integration/...
 
+test-load: ## 1,000 synthetic agents against a running gateway (spec section 56 item 1)
+	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=load -count=1 -v -timeout 20m ./tests/performance/ -run TestAThousandAgents
+
 test-chaos: ## Chaos suite. STOPS REAL CONTAINERS; do not run alongside anything else
 	go test -tags=chaos -count=1 -timeout 15m ./tests/chaos/...
 
