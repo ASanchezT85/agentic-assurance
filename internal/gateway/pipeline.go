@@ -321,6 +321,17 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	result.Outcome = &outcome
 	result.Replayed = outcome.Replayed
 
+	if errors.Is(err, execution.ErrEnvelopeReused) {
+		// Not an ambiguous outcome: nothing was sent. The caller asked for a second
+		// order under an envelope id that already has one, and the platform cannot
+		// tell which of the two intentions it was meant to act on (spec section 12.2).
+		result.Stage = StageExecution
+		result.Code = "ENVELOPE_REUSED"
+		result.Reason = err.Error()
+		result.Accepted = false
+		return p.observed(env, result)
+	}
+
 	if err != nil {
 		// An unresolved outcome is not a failure of the order. It means the platform
 		// does not know, which is a state an operator resolves (spec section 19).

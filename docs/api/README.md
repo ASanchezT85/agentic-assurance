@@ -5,12 +5,12 @@ evidence endpoints added by ADR-023.
 
 ```text
 POST /v1/intents                        DONE (internal/gateway, ADR-025)
-GET  /v1/intents/{id}                   Phase 1-5
+GET  /v1/intents/{id}                   DONE (internal/gateway)
 GET  /v1/intents/{id}/evidence          Phase 6   DONE (ADR-023)
 GET  /v1/evidence?correlation_id={id}   Phase 6   DONE (ADR-023)
 
 POST /v1/authority-grants               Phase 3
-POST /v1/authority-grants/{id}/revoke   Phase 3
+POST /v1/authority-grants/{id}/revoke   DONE (internal/gateway)
 
 GET  /v1/fleet/state                    Phase 14  DONE (fleet-engine)
 GET  /v1/cohorts                        Phase 14  DONE (fleet-engine)
@@ -208,3 +208,41 @@ cancelling a run to free capacity for a different one needs to know whether the 
 free now or shortly. Measured against two live replicas: the slot came back **860 ms**
 after a cancellation that landed on the wrong one, on a run with twenty-seven seconds
 left to go.
+
+## GET /v1/intents/{id}
+
+The status of a submitted intent, by its envelope id. It closes the caller's loop:
+submission returned an outcome and there was no way to ask again, so a caller that lost
+the response had only the evidence chain, which answers a different question in a shape
+meant for an auditor.
+
+A run that is still `PENDING` carries no `outcome` field, and that absence is the
+answer: the platform has claimed the key and does not yet know what the venue did.
+
+Building it turned up that nothing enforced spec section 12.2's one-intent-per-envelope
+rule. Two submissions carrying the same envelope id under different idempotency keys
+produced two orders for one stated intention — found when the unique index refused to
+build over twenty-five rows a test suite had created by reusing a fixed id. The index
+enforces it now, and the refusal is `ENVELOPE_REUSED` rather than a constraint error.
+
+## POST /v1/authority-grants/{id}/revoke
+
+```json
+{ "revoked_by": "ops@example", "reason": "agent credential compromised" }
+```
+
+Both fields are required. This is the one action whose entire purpose is to be
+explained afterwards, and a revocation without an actor and a reason is an operational
+mystery six months later (spec section 36).
+
+`authority.Store` has carried `Revoke` since Phase 3 and nothing exposed it, so cutting
+an agent's authority meant an operator with a psql prompt — during exactly the incident
+where that is the worst way to work.
+
+Revoking an already-revoked grant is **200 with `already: true`**, not 409. Revocation
+is the emergency action, and an operator hitting it twice under pressure should be told
+it is done rather than handed an error to interpret.
+
+It is served whenever the database is reachable, independently of whether a venue and a
+policy bundle are configured. The lever must not depend on the submission path being
+healthy: it is what an operator reaches for when it is not.

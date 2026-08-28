@@ -7,6 +7,8 @@ import (
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -222,6 +224,8 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 			// this one, and a guard that resolved names loosely would have passed.
 			elsewhere := map[string]string{
 				"submit": "../../internal/gateway/http.go:SubmitHandler",
+				"status": "../../internal/gateway/intents.go:IntentStatusHandler",
+				"revoke": "../../internal/gateway/intents.go:RevokeGrantHandler",
 			}
 
 			target, fn := path, name
@@ -247,14 +251,19 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 		}
 	}
 
-	if checked < 10 {
+	if checked < 12 {
 		t.Errorf("only %d routes were checked; the guard is not finding the registrations "+
 			"and would stay green while an unauthenticated one was added", checked)
 	}
 }
 
 // reachesAuth reports whether a function reaches the authentication primitive,
-// following calls to functions declared in the same file.
+// following calls to functions declared anywhere in the same package.
+//
+// The package rather than the file, because Go resolves names that way and this one
+// does not: the gateway's handlers live in intents.go and the helper they authenticate
+// through lives in http.go. A file-scoped version reported both as unauthenticated,
+// which is a guard failing on a file split rather than on a hole.
 //
 // The parser rather than a regular expression. The regex version resolved every call
 // correctly when driven by hand and returned false from inside itself, and an hour of
@@ -267,14 +276,16 @@ func reachesAuth(t *testing.T, path, fn, entry string, depth int) bool {
 		return false
 	}
 
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, readSource(t, path), 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
+	files := packageFiles(t, path)
 
-	decl := findFunc(file, fn)
-	if decl == nil || decl.Body == nil {
+	var decl *ast.FuncDecl
+	for _, f := range files {
+		if d := findFunc(f, fn); d != nil && d.Body != nil {
+			decl = d
+			break
+		}
+	}
+	if decl == nil {
 		return false
 	}
 
@@ -317,6 +328,33 @@ func reachesAuth(t *testing.T, path, fn, entry string, depth int) bool {
 }
 
 // findFunc returns a function or method declaration by name.
+// packageFiles parses every non-test Go file beside the given one.
+func packageFiles(t *testing.T, path string) []*ast.File {
+	t.Helper()
+
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+
+	fset := token.NewFileSet()
+	var out []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		parsed, err := parser.ParseFile(fset, full, readSource(t, full), 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", full, err)
+		}
+		out = append(out, parsed)
+	}
+	return out
+}
+
 func findFunc(file *ast.File, name string) *ast.FuncDecl {
 	for _, d := range file.Decls {
 		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == name {
@@ -336,6 +374,8 @@ func funcExists(t *testing.T, path, name string) bool {
 	}
 	return findFunc(file, name) != nil
 }
+
+var _ = token.NewFileSet
 
 // A client certificate must not suppress a bearer credential.
 //

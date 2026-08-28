@@ -14,6 +14,16 @@ import (
 	"agentic-assurance/internal/broker"
 )
 
+// ErrEnvelopeReused means a second intent arrived carrying an envelope id that has
+// already been submitted under a different idempotency key.
+//
+// Spec section 12.2 makes an envelope id identify one intent. Two idempotency keys
+// under one envelope id is a caller that generated a fresh key for a request it also
+// called a repeat of an earlier one, and honouring both produces two orders for one
+// stated intention. Refused rather than reconciled: the platform cannot tell which of
+// the two the caller meant.
+var ErrEnvelopeReused = errors.New("this envelope id was already submitted under a different idempotency key")
+
 // RecordState is the lifecycle of an idempotency record.
 type RecordState string
 

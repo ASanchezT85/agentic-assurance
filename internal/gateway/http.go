@@ -37,6 +37,34 @@ func presentedFrom(r *http.Request, creds *identity.Credentials) identity.Presen
 	return identity.FromTransport(r.Header.Get("Authorization"), certs, creds)
 }
 
+// callerTenant establishes which tenant a caller speaks for, or the status and message
+// to answer with.
+//
+// Shared by every gateway handler that carries tenant data, so a new endpoint cannot
+// quietly get a different answer to the same question.
+func callerTenant(r *http.Request, creds *identity.Credentials,
+	verifier *identity.Verifier) (tenant string, status int, message string) {
+
+	if verifier == nil {
+		verifier = &identity.Verifier{}
+	}
+	attested := verifier.Resolve(presentedFrom(r, creds))
+
+	if err := identity.RequireExecutable(attested); err != nil {
+		return "", http.StatusUnauthorized, "the caller is not authenticated"
+	}
+	if attested.TenantID == "" {
+		return "", http.StatusUnauthorized,
+			"the caller is authenticated but no tenant is established for it"
+	}
+	if claimed := strings.TrimSpace(r.Header.Get("X-Tenant-Id")); claimed != "" &&
+		claimed != attested.TenantID {
+		return "", http.StatusForbidden,
+			"the request names a tenant this caller is not authenticated for"
+	}
+	return attested.TenantID, 0, ""
+}
+
 // SubmitHandler is POST /v1/intents.
 func SubmitHandler(p *Pipeline, creds *identity.Credentials) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -23,6 +23,11 @@ const (
 	IdentityVerified   EventName = "agent.identity.verified.v1"
 	IdentityFailed     EventName = "agent.identity.failed.v1"
 	AuthorityEvaluated EventName = "authority.evaluated.v1"
+
+	// AuthorityRevoked is not in the section 32 catalog. It is added because cutting
+	// an agent's authority is the emergency action of spec section 14, and one that
+	// left no record would be the hardest thing to explain afterwards.
+	AuthorityRevoked   EventName = "authority.grant.revoked.v1"
 	PolicyEvaluated    EventName = "policy.evaluated.v1"
 	IntentParentLinked EventName = "intent.parent.linked.v1"
 
@@ -76,7 +81,8 @@ const (
 
 var catalog = map[EventName]bool{
 	IntentReceived: true, IdentityVerified: true, IdentityFailed: true,
-	AuthorityEvaluated: true, PolicyEvaluated: true, IntentParentLinked: true,
+	AuthorityEvaluated: true, AuthorityRevoked: true,
+	PolicyEvaluated: true, IntentParentLinked: true,
 	OrderSubmitted: true, OrderUnknown: true, OrderAccepted: true, OrderRejected: true,
 	OrderFilled: true, OrderCancelled: true, OrderReconciled: true,
 	FleetMetricUpdated: true, FleetCohortCreated: true, FleetAnomalyDetected: true,

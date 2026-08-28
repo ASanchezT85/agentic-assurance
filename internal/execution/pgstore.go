@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"agentic-assurance/internal/broker"
@@ -53,6 +54,19 @@ func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func
 // insert either succeed or conflict, so two concurrent requests for one key cannot
 // both believe they claimed it. Doing this with a read followed by a write would
 // leave exactly the window INV-004 forbids.
+// isEnvelopeReuse reports whether an insert failed on the one-envelope-one-submission
+// index rather than on the idempotency key.
+//
+// Distinguished by the constraint name, because the two mean opposite things: a
+// duplicate idempotency key is the normal replay this table exists to absorb, and a
+// duplicate envelope id is a caller asking for a second order under one intent.
+func isEnvelopeReuse(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "idempotency_envelope_idx"
+}
+
 func (s *PostgresStore) Claim(ctx context.Context, rec Record) (*Record, bool, error) {
 	var (
 		existing *Record
@@ -66,6 +80,12 @@ func (s *PostgresStore) Claim(ctx context.Context, rec Record) (*Record, bool, e
 			VALUES ($1, $2, $3, $4, 'PENDING', $5, $5)
 			ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`,
 			rec.TenantID, rec.IdempotencyKey, rec.EnvelopeID, rec.ClientOrderID, rec.CreatedAt.UTC())
+		if isEnvelopeReuse(err) {
+			// Named rather than surfaced as a constraint violation. An operator
+			// reading "duplicate key" would look for a duplicate submission; the
+			// actual fault is a caller that reused an envelope id under a new key.
+			return ErrEnvelopeReused
+		}
 		if err != nil {
 			return err
 		}
@@ -118,6 +138,29 @@ func (s *PostgresStore) Resolve(ctx context.Context, tenantID, idempotencyKey st
 		}
 		return nil
 	})
+}
+
+// LoadByEnvelope returns the record a submitted intent produced.
+//
+// Separate from Load because a caller knows the envelope it sent, not the idempotency
+// key the platform derived a client order id from. Both reach the same row.
+func (s *PostgresStore) LoadByEnvelope(ctx context.Context, tenantID, envelopeID string) (*Record, error) {
+	var rec *Record
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		var key string
+		err := tx.QueryRow(ctx,
+			`SELECT idempotency_key FROM idempotency_records
+			 WHERE tenant_id = $1 AND envelope_id = $2`, tenantID, envelopeID).Scan(&key)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		rec, err = loadInTx(ctx, tx, tenantID, key)
+		return err
+	})
+	return rec, err
 }
 
 func (s *PostgresStore) Load(ctx context.Context, tenantID, idempotencyKey string) (*Record, error) {

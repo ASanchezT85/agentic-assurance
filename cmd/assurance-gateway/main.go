@@ -47,7 +47,8 @@ type evidenceReader interface {
 	ByAggregate(ctx context.Context, tenantID, aggregateID string) ([]evidence.Event, error)
 }
 
-func newMux(reader evidenceReader, submit http.HandlerFunc, creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
+func newMux(reader evidenceReader, submit, status, revoke http.HandlerFunc,
+	creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	health := func(w http.ResponseWriter, _ *http.Request) {
@@ -71,6 +72,12 @@ func newMux(reader evidenceReader, submit http.HandlerFunc, creds *identity.Cred
 	// could not evaluate would be worse than no handler.
 	if submit != nil {
 		mux.HandleFunc("POST /v1/intents", submit)
+	}
+	if status != nil {
+		mux.HandleFunc("GET /v1/intents/{id}", status)
+	}
+	if revoke != nil {
+		mux.HandleFunc("POST /v1/authority-grants/{id}/revoke", revoke)
 	}
 
 	return mux
@@ -231,6 +238,24 @@ func openEvidence(ctx context.Context, log *slog.Logger) evidenceReader {
 // useful without a venue or a policy bundle. Tying their authentication to the write
 // path's configuration would make an operator who only wants to read evidence
 // configure a broker to do it.
+// openPool connects to PostgreSQL, or reports why not.
+//
+// Separate from buildPipeline because the endpoints that only read and revoke need a
+// database and nothing else. Tying them to the submission path's configuration would
+// mean an operator who cannot submit orders also cannot revoke the authority to.
+func openPool(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
+	dsn := os.Getenv("POSTGRES_APP_DSN")
+	if dsn == "" {
+		return nil
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		log.Error("database unavailable", "err", err)
+		return nil
+	}
+	return pool
+}
+
 func openCredentials(log *slog.Logger) *identity.Credentials {
 	creds, err := identity.ParseCredentials(os.Getenv("GATEWAY_API_CREDENTIALS"))
 	if err != nil {
@@ -402,6 +427,20 @@ func main() {
 
 	creds := openCredentials(log)
 	pipeline, _ := buildPipeline(ctx, log)
+	verifier := identityVerifier()
+
+	// The two section 46 endpoints that need only the database, so they are served
+	// whether or not a venue and a policy bundle are configured. Revocation in
+	// particular must not depend on the submission path being healthy: it is the lever
+	// an operator reaches for when it is not.
+	var status, revoke http.HandlerFunc
+	if pool := openPool(ctx, log); pool != nil {
+		status = gateway.IntentStatusHandler(execution.NewPostgresStore(pool), creds, verifier)
+		revoke = gateway.RevokeGrantHandler(authority.NewStore(pool), evidence.NewStore(pool),
+			creds, verifier, nil)
+		log.Info("intent status and grant revocation served",
+			"routes", "GET /v1/intents/{id}, POST /v1/authority-grants/{id}/revoke")
+	}
 	var submit http.HandlerFunc
 	if pipeline != nil {
 		submit = gateway.SubmitHandler(pipeline, creds)
@@ -410,7 +449,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(openEvidence(ctx, log), submit, creds, identityVerifier()),
+		Handler:           newMux(openEvidence(ctx, log), submit, status, revoke, creds, verifier),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

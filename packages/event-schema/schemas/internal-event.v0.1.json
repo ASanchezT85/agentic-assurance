@@ -59,7 +59,8 @@
         "simulation.failed.v1",
         "evidence.corrected.v1",
         "agent.intent.replayed.v1",
-        "simulation.cancelled.v1"
+        "simulation.cancelled.v1",
+        "authority.grant.revoked.v1"
       ],
       "description": "Closed set. An event nobody wrote down cannot be emitted, because a timeline containing unnamed events cannot be replayed. evidence.corrected.v1 is not in section 32; ADR-009 requires corrections to be expressible as events rather than as updates."
     },
