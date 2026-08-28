@@ -29,10 +29,17 @@ const (
 	StatusRunning   Status = "RUNNING"
 	StatusCompleted Status = "COMPLETED"
 	StatusFailed    Status = "FAILED"
+
+	// StatusCancelled is a run an operator stopped. Terminal, and deliberately not
+	// FAILED: nothing went wrong, and a failure count that included cancellations
+	// would make the engine look unreliable every time someone changed their mind.
+	StatusCancelled Status = "CANCELLED"
 )
 
 // Terminal reports whether a status will not change again.
-func (s Status) Terminal() bool { return s == StatusCompleted || s == StatusFailed }
+func (s Status) Terminal() bool {
+	return s == StatusCompleted || s == StatusFailed || s == StatusCancelled
+}
 
 // Request is what a caller asks for.
 type Request struct {
@@ -144,7 +151,16 @@ type Run struct {
 
 	// Error is why a failed run failed, in the engine's own words.
 	Error string `json:"error,omitempty"`
+
+	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
+	CancelledBy string     `json:"cancelled_by,omitempty"`
 }
+
+// ErrNotCancellable is returned for a run that has already finished.
+var ErrNotCancellable = errors.New("the run has already finished")
+
+// ErrNoSuchRun is returned for a run this tenant does not have.
+var ErrNoSuchRun = errors.New("no such simulation run")
 
 // Duration is how long the engine ran, or zero while it has not finished.
 func (r Run) Duration() time.Duration {

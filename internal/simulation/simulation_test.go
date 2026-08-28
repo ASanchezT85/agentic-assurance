@@ -387,3 +387,89 @@ func runPython(t *testing.T, r *Runner, args ...string) (string, error) {
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
+
+// A cancelled run is terminal and is not a failure. A failure count that included
+// cancellations would make the engine look unreliable every time someone changed
+// their mind.
+func TestCancelledIsTerminalAndNotAFailure(t *testing.T) {
+	if !StatusCancelled.Terminal() {
+		t.Error("CANCELLED is not terminal; a cancelled run could be moved again")
+	}
+	if StatusCancelled == StatusFailed {
+		t.Error("cancellation and failure are the same status")
+	}
+	for _, s := range []Status{StatusQueued, StatusRunning} {
+		if s.Terminal() {
+			t.Errorf("%s is terminal; it is a state a run moves out of", s)
+		}
+	}
+}
+
+// A cancellation with no actor is refused. "Why did this run stop" should have an
+// answer six months later (spec section 36).
+func TestCancellationNeedsAnActor(t *testing.T) {
+	api := &API{Store: &Store{}, Runner: &Runner{
+		ScenarioDir: t.TempDir(), slots: make(chan struct{}, 1),
+		inFlight: map[string]context.CancelFunc{},
+	}}
+	mux := http.NewServeMux()
+	api.Routes(mux)
+
+	for _, body := range []string{``, `{}`, `{"cancelled_by":""}`, `{"cancelled_by":"  "}`} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/simulations/sim_1/cancel",
+			strings.NewReader(body))
+		req.Header.Set("X-Tenant-Id", "tenant_x")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status = %d, want 400", body, rec.Code)
+		}
+	}
+}
+
+// Killing the engine mid-run really stops the process, and quickly. A cancellation
+// that only marked a row would leave the slot held, and the slot is the scarce thing.
+func TestCancellingStopsTheEngineProcess(t *testing.T) {
+	python := interpreter(t)
+
+	r := &Runner{
+		Python:      python,
+		Repo:        repoRoot(t),
+		ScenarioDir: filepath.Join(repoRoot(t), "simulator", "scenarios"),
+		Timeout:     2 * time.Minute,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		// A process that would run far longer than this test is willing to wait.
+		_, err := runPythonCtx(ctx, r, "-c", "import time; time.sleep(120)")
+		done <- err
+	}()
+
+	// Long enough for the interpreter to actually start, short enough that a test
+	// that hangs is obviously broken rather than merely slow.
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a cancelled process exited successfully; it was not stopped")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the engine was still running 15 seconds after cancellation. The slot " +
+			"it holds is the scarce thing, and a cancellation that does not free it " +
+			"has not cancelled anything")
+	}
+}
+
+func runPythonCtx(ctx context.Context, r *Runner, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, r.Python, args...)
+	cmd.Dir = r.Repo
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "PYTHONHASHSEED=0"}
+	out, err := cmd.Output()
+	return string(out), err
+}

@@ -55,6 +55,11 @@ const (
 	SimulationCompleted EventName = "simulation.completed.v1"
 	SimulationFailed    EventName = "simulation.failed.v1"
 
+	// SimulationCancelled is not in the section 32 catalog. It is added because a run
+	// an operator stopped is not a run that failed, and recording it as one would make
+	// the engine look unreliable every time someone changed their mind.
+	SimulationCancelled EventName = "simulation.cancelled.v1"
+
 	// EvidenceCorrected is not in the section 32 catalog. It is added here because
 	// ADR-009 requires corrections to reference prior evidence rather than rewrite
 	// it, and a correction that cannot be expressed as an event would have to be
@@ -79,7 +84,8 @@ var catalog = map[EventName]bool{
 	ControlRecommended: true, ControlApplied: true, ControlRevoked: true,
 	PolicyBundleCreated: true, PolicyBundleActivated: true, PolicyBundleRolledBack: true,
 	SimulationStarted: true, SimulationCompleted: true, SimulationFailed: true,
-	EvidenceCorrected: true, IntentReplayed: true,
+	SimulationCancelled: true,
+	EvidenceCorrected:   true, IntentReplayed: true,
 }
 
 // Known reports whether a name is in the catalog.

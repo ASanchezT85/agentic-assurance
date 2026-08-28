@@ -46,6 +46,15 @@ func (e *Events) Completed(ctx context.Context, run Run) {
 	})
 }
 
+func (e *Events) Cancelled(ctx context.Context, run Run) {
+	e.append(ctx, run, evidence.SimulationCancelled, map[string]any{
+		"scenario":     run.Scenario,
+		"seed":         run.Seed,
+		"requested_by": run.RequestedBy,
+		"cancelled_by": run.CancelledBy,
+	})
+}
+
 func (e *Events) Failed(ctx context.Context, run Run) {
 	e.append(ctx, run, evidence.SimulationFailed, map[string]any{
 		"scenario": run.Scenario,

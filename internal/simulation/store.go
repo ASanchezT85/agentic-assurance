@@ -44,7 +44,39 @@ func (s *Store) withTenant(ctx context.Context, tenantID string, fn func(pgx.Tx)
 const runColumns = `
 	tenant_id, run_id, scenario, seed, requested_by, status,
 	requested_at, started_at, completed_at,
-	experiment_id, result_fingerprint, scenario_source_hash, record, error`
+	experiment_id, result_fingerprint, scenario_source_hash, record, error,
+	cancelled_at, cancelled_by`
+
+// Cancel marks a run cancelled, if it has not already finished.
+//
+// It reports whether it changed anything. A caller needs to tell "stopped" from
+// "already over", because those are different answers to the operator who asked, and
+// reporting a completed run as cancelled would erase a result they still have.
+//
+// The guard is in the WHERE clause rather than in a read followed by a write: the
+// engine finishing and the operator cancelling race by nature, and one statement is
+// how the database settles it rather than whichever goroutine got there first.
+func (s *Store) Cancel(ctx context.Context, tenantID, runID string, at time.Time, by string) (bool, error) {
+	if by == "" {
+		return false, errors.New("a cancellation without an actor cannot be explained later")
+	}
+
+	var changed bool
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE simulation_runs
+			SET status = 'CANCELLED', cancelled_at = $3, cancelled_by = $4,
+			    completed_at = COALESCE(completed_at, $3)
+			WHERE tenant_id = $1 AND run_id = $2 AND status IN ('QUEUED', 'RUNNING')`,
+			tenantID, runID, at.UTC(), by)
+		if err != nil {
+			return err
+		}
+		changed = tag.RowsAffected() == 1
+		return nil
+	})
+	return changed, err
+}
 
 func (s *Store) Create(ctx context.Context, run Run) error {
 	return s.withTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
@@ -81,7 +113,8 @@ func (s *Store) Complete(ctx context.Context, run Run, at time.Time) error {
 			UPDATE simulation_runs
 			SET status = 'COMPLETED', completed_at = $3, experiment_id = $4,
 			    result_fingerprint = $5, scenario_source_hash = $6, record = $7
-			WHERE tenant_id = $1 AND run_id = $2 AND status <> 'COMPLETED'`,
+			WHERE tenant_id = $1 AND run_id = $2
+			  AND status NOT IN ('COMPLETED', 'CANCELLED')`,
 			run.TenantID, run.RunID, at.UTC(), nullIfEmpty(run.ExperimentID),
 			nullIfEmpty(run.ResultFingerprint), nullIfEmpty(run.ScenarioSourceHash),
 			encoded)
@@ -96,7 +129,8 @@ func (s *Store) Fail(ctx context.Context, tenantID, runID string, at time.Time, 
 	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			UPDATE simulation_runs SET status = 'FAILED', completed_at = $3, error = $4
-			WHERE tenant_id = $1 AND run_id = $2 AND status <> 'COMPLETED'`,
+			WHERE tenant_id = $1 AND run_id = $2
+			  AND status NOT IN ('COMPLETED', 'CANCELLED')`,
 			tenantID, runID, at.UTC(), reason)
 		return err
 	})
@@ -174,21 +208,32 @@ func scanRun(rows pgx.Rows) (Run, error) {
 		sourceHash   *string
 		record       []byte
 		failure      *string
+		cancelledAt  *time.Time
+		cancelledBy  *string
 	)
 
 	if err := rows.Scan(&run.TenantID, &run.RunID, &run.Scenario, &run.Seed,
 		&run.RequestedBy, &status, &run.RequestedAt, &startedAt, &completedAt,
-		&experimentID, &fingerprint, &sourceHash, &record, &failure); err != nil {
+		&experimentID, &fingerprint, &sourceHash, &record, &failure,
+		&cancelledAt, &cancelledBy); err != nil {
 		return Run{}, err
 	}
 
+	// Normalised to UTC on the way out. Everything is written with at.UTC(), and
+	// pgx returns a timestamptz in the connection's timezone: without this a run
+	// carries requested_at in Z (built in Go) beside cancelled_at at -04:00 (read
+	// back from the database). The same instant, and a reader comparing the two as
+	// text is misled.
 	run.Status = Status(status)
-	run.StartedAt = startedAt
-	run.CompletedAt = completedAt
+	run.RequestedAt = run.RequestedAt.UTC()
+	run.StartedAt = utcOrNil(startedAt)
+	run.CompletedAt = utcOrNil(completedAt)
 	run.ExperimentID = deref(experimentID)
 	run.ResultFingerprint = deref(fingerprint)
 	run.ScenarioSourceHash = deref(sourceHash)
 	run.Error = deref(failure)
+	run.CancelledAt = utcOrNil(cancelledAt)
+	run.CancelledBy = deref(cancelledBy)
 
 	if len(record) > 0 {
 		if err := json.Unmarshal(record, &run.Record); err != nil {
@@ -196,6 +241,14 @@ func scanRun(rows pgx.Rows) (Run, error) {
 		}
 	}
 	return run, nil
+}
+
+func utcOrNil(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
 
 func deref(s *string) string {

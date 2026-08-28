@@ -29,6 +29,93 @@ func (a *API) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/simulations", a.submit)
 	mux.HandleFunc("GET /v1/simulations", a.list)
 	mux.HandleFunc("GET /v1/simulations/{id}", a.get)
+	mux.HandleFunc("POST /v1/simulations/{id}/cancel", a.cancel)
+}
+
+// cancelRequest names who is stopping the run.
+//
+// Required, for the same reason the submission records who asked: humans are audited
+// too (spec section 36), and "why did this run stop" is a question that should have an
+// answer six months later.
+type cancelRequest struct {
+	CancelledBy string `json:"cancelled_by"`
+}
+
+func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := a.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	if a.Runner == nil {
+		writeError(w, http.StatusServiceUnavailable, "no simulation engine is configured")
+		return
+	}
+
+	runID := strings.TrimSpace(r.PathValue("id"))
+	if runID == "" {
+		writeError(w, http.StatusBadRequest, "a run id is required")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxRequestBytes+1))
+	if err != nil || len(body) > MaxRequestBytes {
+		writeError(w, http.StatusBadRequest, "the request body could not be read")
+		return
+	}
+
+	var req cancelRequest
+	if len(body) > 0 {
+		decoder := json.NewDecoder(strings.NewReader(string(body)))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "the request is not a cancellation: "+err.Error())
+			return
+		}
+	}
+	if strings.TrimSpace(req.CancelledBy) == "" {
+		writeError(w, http.StatusBadRequest, "cancelled_by is required")
+		return
+	}
+
+	ctx, cancel := contextWithTimeout(r, 15*time.Second)
+	defer cancel()
+
+	owned, err := a.Runner.Cancel(ctx, tenant, runID, strings.TrimSpace(req.CancelledBy))
+	switch {
+	case errors.Is(err, ErrNoSuchRun):
+		// The same answer as a run belonging to someone else. Distinguishing them is
+		// the cross-tenant disclosure of spec section 45.
+		writeError(w, http.StatusNotFound, "no such simulation run")
+		return
+	case errors.Is(err, ErrNotCancellable):
+		// 409, not 404 and not 200. The run exists and the request could not be
+		// honoured, and a caller told "cancelled" about a run that had already
+		// completed would think a result they still have was thrown away.
+		writeError(w, http.StatusConflict, "the run has already finished")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "the run could not be cancelled")
+		return
+	}
+
+	run, err := a.Store.Load(ctx, tenant, runID)
+	if err != nil || run == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"run_id": runID, "status": StatusCancelled})
+		return
+	}
+
+	// engine_stopped says whether the process was actually killed. With one fleet
+	// engine it always was; with several, a cancellation that landed on another
+	// replica marks the run and leaves that engine burning CPU until its own timeout.
+	// The row is authoritative, the kill is best effort, and an operator watching
+	// capacity needs to know which they got.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"run_id":         run.RunID,
+		"status":         run.Status,
+		"cancelled_at":   run.CancelledAt,
+		"cancelled_by":   run.CancelledBy,
+		"engine_stopped": owned,
+	})
 }
 
 // tenantOf reads the tenant from the request.

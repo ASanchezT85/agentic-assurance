@@ -129,7 +129,7 @@ func (r *simRig) awaitTerminal(t *testing.T, runID string) map[string]any {
 			t.Fatalf("GET returned %d: %v", status, body)
 		}
 		switch body["status"] {
-		case "COMPLETED", "FAILED":
+		case "COMPLETED", "FAILED", "CANCELLED":
 			return body
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -337,5 +337,184 @@ func TestAnEngineRefusalBecomesAFailedRun(t *testing.T) {
 	if !strings.Contains(reason, "panic_probabilty") {
 		t.Errorf("error = %q; the failure must carry the engine's own reason, or an "+
 			"operator has to reproduce it by hand to find out what was wrong", reason)
+	}
+}
+
+// Cancelling a run in flight.
+//
+// The scenario is chosen to take long enough that the cancellation lands while the
+// engine is genuinely running, rather than testing the "already finished" path by
+// accident.
+func TestCancellingARunInFlight(t *testing.T) {
+	rig := newSimRig(t)
+
+	_, accepted := rig.do(t, http.MethodPost, "/v1/simulations",
+		`{"scenario":"correlated_panic","seed":11,"requested_by":"ana@example"}`)
+	runID, _ := accepted["run_id"].(string)
+	if runID == "" {
+		t.Fatalf("no run id: %v", accepted)
+	}
+
+	status, cancelled := rig.do(t, http.MethodPost, "/v1/simulations/"+runID+"/cancel",
+		`{"cancelled_by":"ops@example"}`)
+
+	if status == http.StatusConflict {
+		t.Skip("the engine finished before the cancellation landed; that path is " +
+			"TestCancellingAFinishedRunIsARefusal")
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %v", status, cancelled)
+	}
+	if cancelled["status"] != "CANCELLED" {
+		t.Errorf("status = %v, want CANCELLED", cancelled["status"])
+	}
+	if cancelled["cancelled_by"] != "ops@example" {
+		t.Errorf("cancelled_by = %v", cancelled["cancelled_by"])
+	}
+	if cancelled["engine_stopped"] != true {
+		t.Error("engine_stopped is false on the replica that owns the run; the slot " +
+			"was not freed")
+	}
+
+	// And it stays cancelled. An engine finishing a moment later must not resurrect
+	// it: the operator was told it was stopped, and a result appearing afterwards
+	// would make that a lie.
+	time.Sleep(2 * time.Second)
+	_, final := rig.do(t, http.MethodGet, "/v1/simulations/"+runID, "")
+	if final["status"] != "CANCELLED" {
+		t.Errorf("the run became %v after being cancelled", final["status"])
+	}
+	if final["record"] != nil {
+		t.Error("a cancelled run carries a record; the engine's late result was stored anyway")
+	}
+	if final["result_fingerprint"] != nil && final["result_fingerprint"] != "" {
+		t.Errorf("a cancelled run carries a fingerprint: %v", final["result_fingerprint"])
+	}
+}
+
+// Cancelling a run that has already finished is a refusal, not a silent success.
+// Telling a caller "cancelled" about a completed run would make them think a result
+// they still have was thrown away.
+func TestCancellingAFinishedRunIsARefusal(t *testing.T) {
+	rig := newSimRig(t)
+
+	_, accepted := rig.do(t, http.MethodPost, "/v1/simulations",
+		`{"scenario":"demo","seed":5,"requested_by":"ana@example"}`)
+	runID, _ := accepted["run_id"].(string)
+	final := rig.awaitTerminal(t, runID)
+	if final["status"] != "COMPLETED" {
+		t.Fatalf("precondition: run is %v", final["status"])
+	}
+
+	status, body := rig.do(t, http.MethodPost, "/v1/simulations/"+runID+"/cancel",
+		`{"cancelled_by":"ops@example"}`)
+	if status != http.StatusConflict {
+		t.Errorf("status = %d, want 409: %v", status, body)
+	}
+
+	// And the result is still there.
+	_, after := rig.do(t, http.MethodGet, "/v1/simulations/"+runID, "")
+	if after["status"] != "COMPLETED" {
+		t.Errorf("a completed run became %v after a refused cancellation", after["status"])
+	}
+	if after["result_fingerprint"] == "" {
+		t.Error("the result was erased by a cancellation that was supposed to be refused")
+	}
+}
+
+// Cancelling a run that does not exist, or belongs to someone else, is a 404 either
+// way. Distinguishing them is the cross-tenant disclosure of spec section 45.
+func TestCancellingWhatIsNotYours(t *testing.T) {
+	rig := newSimRig(t)
+
+	if status, _ := rig.do(t, http.MethodPost, "/v1/simulations/sim_nope/cancel",
+		`{"cancelled_by":"ops@example"}`); status != http.StatusNotFound {
+		t.Errorf("cancelling a nonexistent run returned %d, want 404", status)
+	}
+
+	_, accepted := rig.do(t, http.MethodPost, "/v1/simulations",
+		`{"scenario":"demo","seed":6,"requested_by":"ana@example"}`)
+	runID, _ := accepted["run_id"].(string)
+
+	req, _ := http.NewRequest(http.MethodPost,
+		rig.server.URL+"/v1/simulations/"+runID+"/cancel",
+		strings.NewReader(`{"cancelled_by":"attacker@example"}`))
+	req.Header.Set("X-Tenant-Id", "tenant_someone_else")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("another tenant cancelled the run: %d", resp.StatusCode)
+	}
+
+	// It really was not cancelled.
+	final := rig.awaitTerminal(t, runID)
+	if final["status"] == "CANCELLED" {
+		t.Error("a run was cancelled by a tenant that does not own it")
+	}
+}
+
+// The cancellation is in the evidence chain, as a cancellation and not as a failure.
+func TestACancellationIsRecordedAsSuch(t *testing.T) {
+	rig := newSimRig(t)
+
+	_, accepted := rig.do(t, http.MethodPost, "/v1/simulations",
+		`{"scenario":"correlated_panic","seed":13,"requested_by":"ana@example"}`)
+	runID, _ := accepted["run_id"].(string)
+
+	if status, _ := rig.do(t, http.MethodPost, "/v1/simulations/"+runID+"/cancel",
+		`{"cancelled_by":"ops@example"}`); status == http.StatusConflict {
+		t.Skip("the engine finished before the cancellation landed")
+	}
+
+	chain, err := evidence.NewStore(usagePool(t)).Chain(context.Background(), rig.tenant, runID)
+	if err != nil {
+		t.Fatalf("evidence: %v", err)
+	}
+	seen := map[evidence.EventName]bool{}
+	for _, e := range chain {
+		seen[e.EventName] = true
+	}
+	if !seen[evidence.SimulationCancelled] {
+		t.Errorf("no %s in the chain; got %d events", evidence.SimulationCancelled, len(chain))
+	}
+	if seen[evidence.SimulationFailed] {
+		t.Error("the cancellation was recorded as a failure. A failure count that " +
+			"included cancellations would make the engine look unreliable every time " +
+			"someone changed their mind")
+	}
+}
+
+// Every timestamp on a run comes back in UTC.
+//
+// Found by reading a live response: requested_at was built in Go and printed as Z,
+// cancelled_at came back from the database in the connection's timezone and printed
+// as -04:00. The same instant, two representations in one object, and a reader
+// comparing them as text is misled.
+func TestRunTimestampsAreUTC(t *testing.T) {
+	rig := newSimRig(t)
+
+	_, accepted := rig.do(t, http.MethodPost, "/v1/simulations",
+		`{"scenario":"correlated_panic","seed":17,"requested_by":"ana@example"}`)
+	runID, _ := accepted["run_id"].(string)
+
+	if status, _ := rig.do(t, http.MethodPost, "/v1/simulations/"+runID+"/cancel",
+		`{"cancelled_by":"ops@example"}`); status == http.StatusConflict {
+		t.Skip("the engine finished before the cancellation landed")
+	}
+
+	_, run := rig.do(t, http.MethodGet, "/v1/simulations/"+runID, "")
+	for _, field := range []string{"requested_at", "cancelled_at", "completed_at"} {
+		value, ok := run[field].(string)
+		if !ok || value == "" {
+			continue
+		}
+		if !strings.HasSuffix(value, "Z") {
+			t.Errorf("%s = %q; every timestamp on a run is UTC, and one that is not "+
+				"sits beside ones that are", field, value)
+		}
 	}
 }

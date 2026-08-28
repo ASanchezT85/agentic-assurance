@@ -141,7 +141,7 @@ of the platform's credentials (spec section 35).
 | 404 | No scenario by that name — and, on GET, no such run *for this tenant*. |
 | 413 | The request body exceeds the accepted size. |
 
-A run moves QUEUED → RUNNING → COMPLETED or FAILED. A completed run carries the
+A run moves QUEUED → RUNNING → COMPLETED, FAILED or CANCELLED. A completed run carries the
 engine's record whole, with `result_fingerprint` and `scenario_source_hash`: the second
 is a sha256 of the scenario file's exact bytes, so a record says *which file* was run
 rather than only what it was called. A failed one carries the engine's own reason.
@@ -152,3 +152,39 @@ fifty of them is megabytes of detail nobody asked for.
 A run that belongs to another tenant returns 404, identical to one that never existed.
 Spec section 45 lists cross-tenant leakage as a threat, and an error that tells the two
 apart is itself the disclosure.
+
+## POST /v1/simulations/{id}/cancel
+
+```json
+{ "cancelled_by": "ops@example" }
+```
+
+`cancelled_by` is required, for the same reason the submission records who asked:
+humans are audited too (spec section 36), and "why did this run stop" should have an
+answer six months later.
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Stopped. The body carries `cancelled_at`, `cancelled_by` and `engine_stopped`. |
+| 400 | No `cancelled_by`. |
+| 404 | No such run — and identically, a run belonging to another tenant. |
+| 409 | The run had already finished. |
+
+**409 rather than a silent 200**, because a caller told "cancelled" about a run that
+had already completed would think a result they still have was thrown away.
+
+A run can be cancelled while it is still QUEUED, not only while RUNNING. On a busy
+engine that is where a run spends most of its life, and a cancellation that did nothing
+in that window would appear to work and then let the run start a moment later.
+
+CANCELLED is terminal and is deliberately **not** FAILED: nothing went wrong, and a
+failure count that included cancellations would make the engine look unreliable every
+time someone changed their mind. An engine that finishes just after the cancellation
+lands has its result discarded — the operator was told it was stopped, and a record
+appearing afterwards would make that a lie.
+
+`engine_stopped` says whether the process was actually killed. With one fleet engine it
+always is. With several, a cancellation that lands on another replica still marks the
+run CANCELLED and its result is discarded when it arrives, but that engine keeps
+burning CPU until its own timeout: **the row is authoritative, the kill is best
+effort**, and an operator watching capacity needs to know which they got.

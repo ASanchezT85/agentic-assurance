@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -50,6 +51,11 @@ type Runner struct {
 	Now func() time.Time
 
 	slots chan struct{}
+
+	// inFlight holds a cancel function per run this process owns. Keyed by tenant
+	// and run id, because a run id is only unique within a tenant.
+	mu       sync.Mutex
+	inFlight map[string]context.CancelFunc
 }
 
 // EvidenceSink records simulation lifecycle events.
@@ -57,6 +63,7 @@ type EvidenceSink interface {
 	Started(ctx context.Context, run Run)
 	Completed(ctx context.Context, run Run)
 	Failed(ctx context.Context, run Run)
+	Cancelled(ctx context.Context, run Run)
 }
 
 func (r *Runner) now() time.Time {
@@ -85,6 +92,7 @@ func (r *Runner) Prepare() error {
 		r.Concurrency = 2
 	}
 	r.slots = make(chan struct{}, r.Concurrency)
+	r.inFlight = map[string]context.CancelFunc{}
 
 	if r.Python == "" {
 		return errors.New("no python interpreter configured")
@@ -161,9 +169,89 @@ func (r *Runner) Submit(ctx context.Context, req Request) (Run, error) {
 
 	// Detached from the request's context. A caller hanging up must not kill a
 	// simulation the platform has already promised to run and told them the id of.
-	go r.execute(context.WithoutCancel(ctx), run)
+	// Cancellation is explicit, through Cancel, and never a side effect of a socket
+	// closing.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	// Registered before the goroutine starts, so a run cancelled while it is still
+	// queued is stopped rather than starting a moment later. Without this the window
+	// between "accepted" and "running" is one where cancellation silently does
+	// nothing, and it is exactly the window a busy engine spends most of its time in.
+	r.register(run, cancel)
+
+	go func() {
+		defer r.unregister(run)
+		r.execute(runCtx, run)
+	}()
 
 	return run, nil
+}
+
+func inFlightKey(tenantID, runID string) string { return tenantID + "/" + runID }
+
+func (r *Runner) register(run Run, cancel context.CancelFunc) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.inFlight[inFlightKey(run.TenantID, run.RunID)] = cancel
+}
+
+func (r *Runner) unregister(run Run) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.inFlight, inFlightKey(run.TenantID, run.RunID))
+}
+
+// Cancel stops a run.
+//
+// The store settles it first, in one statement, because the engine finishing and the
+// operator cancelling race by nature and the database is what decides rather than
+// whichever goroutine got there first. Only then is the process killed.
+//
+// Owned reports whether this replica held the run. With one fleet engine it always
+// does. With several, a cancellation that lands elsewhere still marks the run
+// CANCELLED and its result is discarded when it arrives, but the engine keeps burning
+// CPU until its own timeout: the row is authoritative, the kill is best effort, and
+// saying which is which is better than implying the CPU was freed.
+func (r *Runner) Cancel(ctx context.Context, tenantID, runID, by string) (owned bool, err error) {
+	if r.Store == nil {
+		return false, errors.New("no run store configured")
+	}
+
+	existing, err := r.Store.Load(ctx, tenantID, runID)
+	if err != nil {
+		return false, err
+	}
+	if existing == nil {
+		return false, ErrNoSuchRun
+	}
+
+	changed, err := r.Store.Cancel(ctx, tenantID, runID, r.now(), by)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		// It finished between the read and the write, or it was already terminal.
+		// Reporting it as cancelled would erase a result the operator still has.
+		return false, ErrNotCancellable
+	}
+
+	r.mu.Lock()
+	cancel, held := r.inFlight[inFlightKey(tenantID, runID)]
+	r.mu.Unlock()
+	if held {
+		cancel()
+	}
+
+	if r.Evidence != nil {
+		at := r.now()
+		existing.Status = StatusCancelled
+		existing.CancelledAt = &at
+		existing.CancelledBy = by
+		r.Evidence.Cancelled(ctx, *existing)
+	}
+
+	r.log().Info("simulation cancelled", "run_id", runID, "by", by, "owned", held)
+	return held, nil
 }
 
 func (r *Runner) execute(ctx context.Context, run Run) {
@@ -171,6 +259,12 @@ func (r *Runner) execute(ctx context.Context, run Run) {
 	case r.slots <- struct{}{}:
 		defer func() { <-r.slots }()
 	case <-ctx.Done():
+		// Cancelled while queued. The store already says CANCELLED; nothing started,
+		// so there is nothing to stop and nothing to record.
+		return
+	}
+
+	if ctx.Err() != nil {
 		return
 	}
 
@@ -189,6 +283,14 @@ func (r *Runner) execute(ctx context.Context, run Run) {
 	run.CompletedAt = &completed
 
 	if err != nil {
+		if ctx.Err() != nil {
+			// Stopped on purpose. Fail would be refused by the store anyway, since
+			// CANCELLED is terminal, but writing nothing is clearer than writing
+			// something the database is expected to reject.
+			r.log().Info("simulation stopped", "run_id", run.RunID)
+			return
+		}
+
 		run.Status = StatusFailed
 		run.Error = err.Error()
 		if storeErr := r.Store.Fail(ctx, run.TenantID, run.RunID, completed, err.Error()); storeErr != nil {
