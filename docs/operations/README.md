@@ -312,3 +312,25 @@ A measurement reports `intent_count` with `authorized_intents` and `refused_inte
 beside it. The flow figures cover every decided intent, refused ones included, because
 the fleet vector measures *intent*. The split is what stops a reader taking a gross
 notional for what actually reached a market.
+
+## The simulation API
+
+Served by the fleet engine. Absent rather than failing when it cannot run anything, and
+the startup log names what is missing.
+
+| Variable | Without it |
+|----------|-----------|
+| `POSTGRES_APP_DSN` | A simulation nobody can retrieve is a log line. |
+| `SIMULATOR_PYTHON` | There is no engine to run. The project interpreter is `.venv/Scripts/python.exe` or `.venv/bin/python`. |
+| `SIMULATOR_REPO` | Working directory for the engine, which is invoked as `-m simulator.engine`. Default `.` |
+| `SIMULATOR_SCENARIO_DIR` | Which scenario files a caller may name. Default `simulator/scenarios`. |
+| `SIMULATION_TIMEOUT` | Bounds one run. Default `5m`. |
+| `SIMULATION_CONCURRENCY` | How many engines run at once. Default `2`. |
+
+**The concurrency cap matters more than it looks.** A simulation is CPU-bound and this
+process also serves the intelligence API. Without a cap, a burst of simulation requests
+starves the reads operators depend on during an incident, which is exactly when they
+are looking at them.
+
+Scenario files live in `SIMULATOR_SCENARIO_DIR` and are named without the `.json`
+suffix. A caller names a scenario; a caller never gives a path.

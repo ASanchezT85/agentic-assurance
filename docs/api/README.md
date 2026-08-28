@@ -21,8 +21,8 @@ GET  /v1/incidents/{id}                 Phase 10
 
 POST /v1/controls                       Phase 13
 
-POST /v1/simulations                    Phase 11
-GET  /v1/simulations/{id}               Phase 11
+POST /v1/simulations                    DONE (internal/simulation)
+GET  /v1/simulations/{id}               DONE (internal/simulation)
 ```
 
 Every mutation endpoint requires an authenticated tenant, an authorized actor, a
@@ -108,3 +108,47 @@ the handler makes no check it does not perform.
 The tenant is validated as identifier-shaped rather than escaped. ClickHouse's HTTP
 interface has no parameter binding in the form this client uses, and an identifier
 that is not identifier-shaped is a request to refuse rather than to sanitise.
+
+## POST /v1/simulations and GET /v1/simulations/{id}
+
+Served by the **fleet engine**, not by a fifth deployable: a simulation is
+intelligence and not enforcement, and ADR-011 counts four. POST is the only mutating
+endpoint in that process, and what it mutates is the simulation's own record. Nothing
+in `internal/simulation` writes a policy bundle, an authority grant or an order, which
+is INV-009 expressed as an absence rather than as a check.
+
+```json
+POST /v1/simulations
+{ "scenario": "correlated_panic", "seed": 7, "requested_by": "ana@example" }
+```
+
+`seed` is required and has no default: an unseeded run is not reproducible, and a seed
+the platform chose silently is one the caller cannot quote back. Unknown fields are
+refused — a caller who wrote `seeed` would otherwise get a reproducible run of a seed
+they did not choose, and every retry would return the same wrong answer.
+
+`scenario` is a **name, never a path**. Letters, digits, underscore and dash, plus the
+built-in `demo`. The name reaches a filesystem and then a process argument vector, so
+anything else is refused rather than sanitised: stripping the bad characters would
+honour a request the caller did not make. The engine is executed with an argument
+vector and never through a shell, in a deliberately small environment that carries none
+of the platform's credentials (spec section 35).
+
+| Status | Meaning |
+|--------|---------|
+| 202 | Accepted and durable. It has not run yet; `Location` carries the run's URL. |
+| 400 | Not a runnable request: no seed, no requester, an unknown field, or a scenario name that is not a name. |
+| 404 | No scenario by that name — and, on GET, no such run *for this tenant*. |
+| 413 | The request body exceeds the accepted size. |
+
+A run moves QUEUED → RUNNING → COMPLETED or FAILED. A completed run carries the
+engine's record whole, with `result_fingerprint` and `scenario_source_hash`: the second
+is a sha256 of the scenario file's exact bytes, so a record says *which file* was run
+rather than only what it was called. A failed one carries the engine's own reason.
+
+`GET /v1/simulations` lists a tenant's runs newest-first and **omits the records** —
+fifty of them is megabytes of detail nobody asked for.
+
+A run that belongs to another tenant returns 404, identical to one that never existed.
+Spec section 45 lists cross-tenant leakage as a threat, and an error that tells the two
+apart is itself the disclosure.

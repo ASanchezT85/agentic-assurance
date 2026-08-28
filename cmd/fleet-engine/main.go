@@ -18,16 +18,21 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/fleet"
+	"agentic-assurance/internal/simulation"
 )
 
 const component = "fleet-engine"
 
-func newMux(store fleet.Reader) *http.ServeMux {
+func newMux(store fleet.Reader, sim *simulation.API) *http.ServeMux {
 	mux := http.NewServeMux()
 	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -44,6 +49,18 @@ func newMux(store fleet.Reader) *http.ServeMux {
 	// submit orders or modify customer policy (section 29), and there is no handler
 	// here that writes anything.
 	(&fleet.API{Store: store}).Routes(mux)
+
+	// The simulation surface (spec section 46). Mounted here rather than as a fifth
+	// deployable: a simulation is intelligence, not enforcement, and ADR-011 counts
+	// four. It is the only mutating endpoint in this process, and what it mutates is
+	// the simulation's own record; nothing here can change a policy bundle, an
+	// authority grant or an order (INV-009).
+	//
+	// Absent rather than failing when the engine is not configured. A 404 is honest;
+	// accepting a simulation that could never run is not.
+	if sim != nil {
+		sim.Routes(mux)
+	}
 
 	return mux
 }
@@ -107,6 +124,66 @@ func durationOr(key string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
+// openSimulation builds the simulation surface, if it can run something.
+//
+// Every piece is required and each absence is stated. Without PostgreSQL a run cannot
+// be retrieved, which makes GET /v1/simulations/{id} pointless; without an interpreter
+// or a scenario directory there is nothing to run.
+func openSimulation(ctx context.Context, log *slog.Logger) *simulation.API {
+	missing := func(what, why string) *simulation.API {
+		log.Warn("simulation API not served", "missing", what, "consequence", why)
+		return nil
+	}
+
+	dsn := os.Getenv("POSTGRES_APP_DSN")
+	if dsn == "" {
+		return missing("POSTGRES_APP_DSN", "a simulation nobody can retrieve is a log line")
+	}
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		log.Error("simulation store unavailable", "err", err)
+		return nil
+	}
+
+	python := os.Getenv("SIMULATOR_PYTHON")
+	if python == "" {
+		return missing("SIMULATOR_PYTHON", "there is no engine to run")
+	}
+
+	runner := &simulation.Runner{
+		Python:      python,
+		Repo:        envOr("SIMULATOR_REPO", "."),
+		ScenarioDir: envOr("SIMULATOR_SCENARIO_DIR", "simulator/scenarios"),
+		Store:       simulation.NewStore(pool),
+		Evidence:    simulation.NewEvents(evidence.NewStore(pool), log),
+		Timeout:     durationOr("SIMULATION_TIMEOUT", 5*time.Minute),
+		Concurrency: intOr("SIMULATION_CONCURRENCY", 2),
+		Log:         log,
+	}
+	if err := runner.Prepare(); err != nil {
+		log.Warn("simulation API not served", "reason", err.Error())
+		return nil
+	}
+
+	return &simulation.API{Runner: runner, Store: runner.Store}
+}
+
+func intOr(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func addr() string {
 	if a := os.Getenv("FLEET_ENGINE_ADDR"); a != "" {
 		return a
@@ -117,10 +194,17 @@ func addr() string {
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", component)
 
+	ctxBoot, cancelBoot := context.WithTimeout(context.Background(), 10*time.Second)
+	sim := openSimulation(ctxBoot, log)
+	cancelBoot()
+	if sim != nil {
+		log.Info("simulation API served", "routes", "POST /v1/simulations, GET /v1/simulations/{id}")
+	}
+
 	store := openStore(log)
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(store),
+		Handler:           newMux(store, sim),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
