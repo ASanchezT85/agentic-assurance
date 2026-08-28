@@ -78,6 +78,25 @@ func (s *Store) Cancel(ctx context.Context, tenantID, runID string, at time.Time
 	return changed, err
 }
 
+// Status reads only the status column.
+//
+// Separate from Load because the watchdog calls it every couple of seconds for the
+// whole length of a run, and Load pulls the record jsonb with it. A completed
+// scenario's record is tens of kilobytes; polling that would move megabytes to answer
+// a question about one word.
+func (s *Store) Status(ctx context.Context, tenantID, runID string) (Status, error) {
+	var status string
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT status FROM simulation_runs WHERE tenant_id = $1 AND run_id = $2`,
+			tenantID, runID).Scan(&status)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNoSuchRun
+	}
+	return Status(status), err
+}
+
 func (s *Store) Create(ctx context.Context, run Run) error {
 	return s.withTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `

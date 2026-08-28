@@ -183,8 +183,13 @@ time someone changed their mind. An engine that finishes just after the cancella
 lands has its result discarded — the operator was told it was stopped, and a record
 appearing afterwards would make that a lie.
 
-`engine_stopped` says whether the process was actually killed. With one fleet engine it
-always is. With several, a cancellation that lands on another replica still marks the
-run CANCELLED and its result is discarded when it arrives, but that engine keeps
-burning CPU until its own timeout: **the row is authoritative, the kill is best
-effort**, and an operator watching capacity needs to know which they got.
+`engine_stopped` says whether the process was killed on the spot, which happens when
+the cancellation reaches the replica holding it. When it does not, the replica that
+does is watching the row and stops it within one watchdog interval;
+`engine_stops_within` says how long that is.
+
+Both are reported rather than collapsed into "cancelled", because an operator
+cancelling a run to free capacity for a different one needs to know whether the slot is
+free now or shortly. Measured against two live replicas: the slot came back **860 ms**
+after a cancellation that landed on the wrong one, on a run with twenty-seven seconds
+left to go.

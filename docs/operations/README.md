@@ -326,6 +326,7 @@ the startup log names what is missing.
 | `SIMULATOR_SCENARIO_DIR` | Which scenario files a caller may name. Default `simulator/scenarios`. |
 | `SIMULATION_TIMEOUT` | Bounds one run. Default `5m`. |
 | `SIMULATION_CONCURRENCY` | How many engines run at once. Default `2`. |
+| `SIMULATION_WATCHDOG` | How often a running engine checks whether its run was cancelled on another replica. Default `2s`, and the upper bound on how long a cross-replica cancellation takes to free the slot. |
 
 **The concurrency cap matters more than it looks.** A simulation is CPU-bound and this
 process also serves the intelligence API. Without a cap, a burst of simulation requests
@@ -334,3 +335,19 @@ are looking at them.
 
 Scenario files live in `SIMULATOR_SCENARIO_DIR` and are named without the `.json`
 suffix. A caller names a scenario; a caller never gives a path.
+
+### Cancelling across replicas
+
+Cancellation kills a process, and a process lives in one replica. A cancellation that
+lands on a fleet engine that does not hold the run marks the row — the row is the
+authority — and the replica that does hold it notices within one `SIMULATION_WATCHDOG`
+interval and stops the engine.
+
+Polling rather than LISTEN/NOTIFY or a message on the bus: the truth is already in the
+row, so asking the row needs no second system to be up. The watchdog **fails open** —
+a read error is ignored — because the cost of failing open is a late kill and the cost
+of failing closed is a running simulation destroyed by an unrelated database blip.
+
+The response to a cancellation says which of the two happened. `engine_stopped: true`
+means the slot is free now; `engine_stopped: false` with `engine_stops_within` means it
+comes back shortly.

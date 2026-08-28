@@ -518,3 +518,201 @@ func TestRunTimestampsAreUTC(t *testing.T) {
 		}
 	}
 }
+
+// The cross-replica kill.
+//
+// Cancellation is in-process: the replica holding the engine kills it. With more than
+// one fleet engine a cancellation can land on a replica that does not hold the run,
+// and until the watchdog existed the row said CANCELLED while an engine nobody could
+// reach kept a slot until its own timeout.
+//
+// Two runners over one store is what two replicas are. Runner A starts the engine;
+// runner B, which has never heard of that run, cancels it; A has to notice and stop it.
+//
+// The assertion is that A's SLOT COMES BACK, not merely that the row says CANCELLED.
+// The row says that either way: a run that finished normally after being cancelled has
+// its result discarded by the store's guard, leaving exactly the same row. An earlier
+// version of this test checked the row and passed with the watchdog entirely disabled.
+func TestARunIsKilledByTheReplicaThatHoldsIt(t *testing.T) {
+	python := simInterpreter(t)
+	pool := usagePool(t)
+	root := simRepoRoot(t)
+
+	tenant := fmt.Sprintf("tenant_simx_%d", time.Now().UnixNano())
+	t.Cleanup(func() { purge(t, pool, tenant, "simulation_runs", "evidence_events") })
+
+	// A scenario that takes far longer than this test is willing to wait, so a slot
+	// that comes back can only mean the process was killed. Written to a temp
+	// directory rather than shipped: nobody should run this one on purpose.
+	dir := t.TempDir()
+	writeLongScenario(t, root, dir)
+
+	store := simulation.NewStore(pool)
+	newReplica := func() *simulation.Runner {
+		r := &simulation.Runner{
+			Python: python, Repo: root, ScenarioDir: dir, Store: store,
+			Timeout: 3 * time.Minute,
+			// One slot, so "is the slot free" is a question with a visible answer.
+			Concurrency: 1,
+			Watchdog:    300 * time.Millisecond,
+		}
+		if err := r.Prepare(); err != nil {
+			t.Fatalf("runner: %v", err)
+		}
+		return r
+	}
+
+	replicaA := newReplica()
+	replicaB := newReplica()
+
+	submit := func(r *simulation.Runner, scenario string, seed int64) simulation.Run {
+		t.Helper()
+		run, err := r.Submit(context.Background(), simulation.Request{
+			TenantID: tenant, Scenario: scenario, Seed: &seed, RequestedBy: "ana@example",
+		})
+		if err != nil {
+			t.Fatalf("submit %s: %v", scenario, err)
+		}
+		return run
+	}
+
+	long := submit(replicaA, "long", 31)
+	waitForStatus(t, store, tenant, long.RunID, simulation.StatusRunning)
+
+	owned, err := replicaB.Cancel(context.Background(), tenant, long.RunID, "ops@example")
+	if err != nil {
+		t.Fatalf("cancel from the other replica: %v", err)
+	}
+	if owned {
+		t.Fatal("replica B reported it held a run it never started; the test is not " +
+			"exercising the cross-replica path")
+	}
+
+	// The proof. Replica A has one slot and it is held by an engine that would run
+	// for another half a minute. If the watchdog stopped it, this second run starts;
+	// if it did not, it sits in QUEUED.
+	short := submit(replicaA, "long", 32)
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := store.Status(context.Background(), tenant, short.RunID)
+		if err != nil {
+			t.Fatalf("status: %v", err)
+		}
+		if status != simulation.StatusQueued {
+			// The slot came back, so the engine really was killed.
+			_, _ = replicaA.Cancel(context.Background(), tenant, short.RunID, "test-cleanup")
+
+			cancelled, err := store.Load(context.Background(), tenant, long.RunID)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if cancelled.Status != simulation.StatusCancelled {
+				t.Errorf("the cancelled run is %s", cancelled.Status)
+			}
+			if cancelled.Record != nil {
+				t.Error("a cancelled run carries a record")
+			}
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	t.Fatal("replica A's slot was still held 20 seconds after another replica cancelled " +
+		"the run occupying it. The row says CANCELLED and the engine is still burning " +
+		"CPU, which is the state the watchdog exists to prevent")
+}
+
+// writeLongScenario copies the shipped scenario with a step count that makes it run
+// for roughly half a minute.
+func writeLongScenario(t *testing.T, root, dir string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "simulator", "scenarios", "correlated_panic.json"))
+	if err != nil {
+		t.Fatalf("read scenario: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode scenario: %v", err)
+	}
+	doc["scenario_id"] = "long"
+	doc["steps"] = 120000
+
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("encode scenario: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "long.json"), encoded, 0o600); err != nil {
+		t.Fatalf("write scenario: %v", err)
+	}
+}
+
+func waitForStatus(t *testing.T, store *simulation.Store, tenant, runID string,
+	want simulation.Status) {
+
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := store.Status(context.Background(), tenant, runID)
+		if err == nil && status == want {
+			return
+		}
+		if err == nil && status.Terminal() {
+			t.Fatalf("the run reached %s before it reached %s", status, want)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("the run never reached %s", want)
+}
+
+// The watchdog must not kill a run because the database blinked. Its failure mode is a
+// late kill; a watchdog that failed closed would destroy a running simulation over an
+// unrelated outage.
+func TestTheWatchdogDoesNotKillOnAReadError(t *testing.T) {
+	python := simInterpreter(t)
+	pool := usagePool(t)
+	root := simRepoRoot(t)
+
+	tenant := fmt.Sprintf("tenant_simw_%d", time.Now().UnixNano())
+	t.Cleanup(func() { purge(t, pool, tenant, "simulation_runs", "evidence_events") })
+
+	store := simulation.NewStore(pool)
+	runner := &simulation.Runner{
+		Python: python, Repo: root,
+		ScenarioDir: filepath.Join(root, "simulator", "scenarios"),
+		Store:       store,
+		Timeout:     2 * time.Minute,
+		Concurrency: 1,
+		// Fast enough to poll many times over the life of the run.
+		Watchdog: 50 * time.Millisecond,
+	}
+	if err := runner.Prepare(); err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+
+	seed := int64(37)
+	run, err := runner.Submit(context.Background(), simulation.Request{
+		TenantID: tenant, Scenario: "correlated_panic", Seed: &seed,
+		RequestedBy: "ana@example",
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Minute)
+	for time.Now().Before(deadline) {
+		final, err := store.Load(context.Background(), tenant, run.RunID)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		if final.Status.Terminal() {
+			if final.Status != simulation.StatusCompleted {
+				t.Fatalf("a run nobody cancelled ended as %s (%s); the watchdog killed "+
+					"it", final.Status, final.Error)
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("the run never finished")
+}

@@ -104,18 +104,25 @@ func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// engine_stopped says whether the process was actually killed. With one fleet
-	// engine it always was; with several, a cancellation that landed on another
-	// replica marks the run and leaves that engine burning CPU until its own timeout.
-	// The row is authoritative, the kill is best effort, and an operator watching
-	// capacity needs to know which they got.
-	writeJSON(w, http.StatusOK, map[string]any{
+	// engine_stopped says whether the process was killed on the spot, which happens
+	// when the cancellation reaches the replica holding it. When it does not, the
+	// replica that does is watching the row and stops it within one watchdog
+	// interval; engine_stops_within says how long that is.
+	//
+	// Both are reported rather than collapsed into "cancelled", because an operator
+	// cancelling a run to free capacity for a different one needs to know whether the
+	// slot is free now or shortly.
+	response := map[string]any{
 		"run_id":         run.RunID,
 		"status":         run.Status,
 		"cancelled_at":   run.CancelledAt,
 		"cancelled_by":   run.CancelledBy,
 		"engine_stopped": owned,
-	})
+	}
+	if !owned {
+		response["engine_stops_within"] = a.Runner.Watchdog.String()
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // tenantOf reads the tenant from the request.

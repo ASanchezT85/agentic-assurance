@@ -41,6 +41,21 @@ type Runner struct {
 	// hold a slot forever, and the slot is the scarce thing.
 	Timeout time.Duration
 
+	// Watchdog is how often a running engine checks whether its own run has been
+	// cancelled somewhere else.
+	//
+	// Cancellation is in-process: the replica holding the engine kills it. With more
+	// than one fleet engine a cancellation can land on a replica that does not hold
+	// the run, and without this the row would say CANCELLED while an engine nobody
+	// could reach kept a slot until its timeout. The row is the authority; this is
+	// how the owner finds out.
+	//
+	// Polling rather than LISTEN/NOTIFY or a message on the bus. The truth is already
+	// in the row, so asking the row needs no second system to be up, and a kill that
+	// is late by one interval on a run measured in minutes is not worth a dependency
+	// on the notification path being healthy.
+	Watchdog time.Duration
+
 	// Concurrency caps how many engines run at once. A simulation is CPU-bound and
 	// this process also serves the intelligence API; without a cap a burst of
 	// requests would starve the reads that operators depend on during an incident,
@@ -90,6 +105,9 @@ func (r *Runner) Prepare() error {
 	}
 	if r.Concurrency <= 0 {
 		r.Concurrency = 2
+	}
+	if r.Watchdog <= 0 {
+		r.Watchdog = 2 * time.Second
 	}
 	r.slots = make(chan struct{}, r.Concurrency)
 	r.inFlight = map[string]context.CancelFunc{}
@@ -181,7 +199,7 @@ func (r *Runner) Submit(ctx context.Context, req Request) (Run, error) {
 
 	go func() {
 		defer r.unregister(run)
-		r.execute(runCtx, run)
+		r.execute(runCtx, run, cancel)
 	}()
 
 	return run, nil
@@ -207,11 +225,10 @@ func (r *Runner) unregister(run Run) {
 // operator cancelling race by nature and the database is what decides rather than
 // whichever goroutine got there first. Only then is the process killed.
 //
-// Owned reports whether this replica held the run. With one fleet engine it always
-// does. With several, a cancellation that lands elsewhere still marks the run
-// CANCELLED and its result is discarded when it arrives, but the engine keeps burning
-// CPU until its own timeout: the row is authoritative, the kill is best effort, and
-// saying which is which is better than implying the CPU was freed.
+// Owned reports whether this replica held the run and therefore stopped the engine on
+// the spot. When it did not, the replica that does holds a watchdog on the row and
+// stops it within one Watchdog interval, so the CPU comes back either way and the
+// caller is told which of the two they got rather than being left to assume.
 func (r *Runner) Cancel(ctx context.Context, tenantID, runID, by string) (owned bool, err error) {
 	if r.Store == nil {
 		return false, errors.New("no run store configured")
@@ -254,7 +271,55 @@ func (r *Runner) Cancel(ctx context.Context, tenantID, runID, by string) (owned 
 	return held, nil
 }
 
-func (r *Runner) execute(ctx context.Context, run Run) {
+// watch kills the engine when the run's row says it was cancelled elsewhere.
+//
+// It returns a function that stops it. A watchdog that outlived its run would keep
+// querying for a row whose answer cannot change, once per interval, forever.
+func (r *Runner) watch(ctx context.Context, run Run, kill context.CancelFunc) func() {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(r.Watchdog)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+
+			// Its own timeout, and its own errors are swallowed. A database blip
+			// must not kill a running simulation: the failure mode of a watchdog
+			// that fails open is a late kill, and of one that fails closed is a run
+			// destroyed by an unrelated outage.
+			pollCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			status, err := r.Store.Status(pollCtx, run.TenantID, run.RunID)
+			cancel()
+
+			if err != nil {
+				continue
+			}
+			if status == StatusCancelled {
+				r.log().Info("simulation cancelled elsewhere; stopping the engine",
+					"run_id", run.RunID)
+				kill()
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		<-stopped
+	}
+}
+
+func (r *Runner) execute(ctx context.Context, run Run, cancelThis context.CancelFunc) {
 	select {
 	case r.slots <- struct{}{}:
 		defer func() { <-r.slots }()
@@ -278,7 +343,10 @@ func (r *Runner) execute(ctx context.Context, run Run) {
 		r.Evidence.Started(ctx, run)
 	}
 
+	// The watchdog runs for exactly as long as the engine does.
+	stopWatch := r.watch(ctx, run, cancelThis)
 	record, err := r.invoke(ctx, run)
+	stopWatch()
 	completed := r.now()
 	run.CompletedAt = &completed
 

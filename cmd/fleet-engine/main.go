@@ -158,6 +158,7 @@ func openSimulation(ctx context.Context, log *slog.Logger) *simulation.API {
 		Evidence:    simulation.NewEvents(evidence.NewStore(pool), log),
 		Timeout:     durationOr("SIMULATION_TIMEOUT", 5*time.Minute),
 		Concurrency: intOr("SIMULATION_CONCURRENCY", 2),
+		Watchdog:    durationOr("SIMULATION_WATCHDOG", 2*time.Second),
 		Log:         log,
 	}
 	if err := runner.Prepare(); err != nil {
