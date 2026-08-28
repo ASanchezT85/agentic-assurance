@@ -251,7 +251,7 @@ answering anyway:
 | `POLICY_PUBLIC_KEY` | A policy bundle cannot be verified, and an unverified bundle is not policy. Hex-encoded ed25519 public key. |
 | `POLICY_BUNDLE_DIR` | Where signed bundles live, one JSON file per tenant. Default `/etc/assurance/policy`. |
 | `INSTRUMENT_SYMBOLS` | No instrument maps to a venue symbol. Default `/etc/assurance/instruments.json`. |
-| `BROKER` | No venue. `alpaca` or `tradier`; both refuse a non-paper endpoint themselves. |
+| `BROKER` | No venue. `alpaca` or `tradier`; both refuse a non-paper endpoint themselves. `fake` is a deterministic venue for development and additionally requires `ASSURANCE_ENV=development`, because a production gateway pointed at a fake venue accepts every order and sends none: it would look healthy while nothing it authorized ever reached a market. |
 
 Optional, and their absence is a stated degradation rather than a failure:
 
@@ -266,3 +266,21 @@ deciding what constrains it, which is the shape INV-009 exists to forbid.
 **The usage ledger is per grant and lives in PostgreSQL.** `MemoryUsage` exists for
 tests and single-process runs and is wrong for several replicas: two gateways each
 enforcing half a rolling limit enforce no rolling limit at all.
+
+### Running the submission path locally
+
+```
+make up && make migrate
+export POSTGRES_APP_DSN=postgres://assurance_app:assurance_app_dev_only@localhost:5432/assurance?sslmode=disable
+export GATEWAY_API_CREDENTIALS='svc_local=<a token of at least 32 characters>'
+export POLICY_PUBLIC_KEY=<hex ed25519 public key>
+export POLICY_BUNDLE_DIR=./local/policy INSTRUMENT_SYMBOLS=./local/instruments.json
+export BROKER=fake ASSURANCE_ENV=development
+go run ./cmd/assurance-gateway
+```
+
+The startup log says which route is served. If anything above is missing the endpoint
+is **absent rather than failing**: `POST /v1/intents` answers 404, `/healthz` still
+answers 200, and a WARN names the missing setting and its consequence. A gateway that
+accepted intents it could not evaluate would be worse than one that does not accept
+them at all.

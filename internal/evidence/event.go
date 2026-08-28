@@ -60,6 +60,13 @@ const (
 	// it, and a correction that cannot be expressed as an event would have to be
 	// expressed as an UPDATE.
 	EvidenceCorrected EventName = "evidence.corrected.v1"
+
+	// IntentReplayed is not in the section 32 catalog either. It is added because a
+	// duplicate leaves the enforcement plane without one: the intent is received and
+	// the identity verified, and then nothing, because the prior outcome is returned
+	// rather than produced. An operator reading that chain sees an intent enter and
+	// no decision follow, which is indistinguishable from a request that vanished.
+	IntentReplayed EventName = "agent.intent.replayed.v1"
 )
 
 var catalog = map[EventName]bool{
@@ -72,7 +79,7 @@ var catalog = map[EventName]bool{
 	ControlRecommended: true, ControlApplied: true, ControlRevoked: true,
 	PolicyBundleCreated: true, PolicyBundleActivated: true, PolicyBundleRolledBack: true,
 	SimulationStarted: true, SimulationCompleted: true, SimulationFailed: true,
-	EvidenceCorrected: true,
+	EvidenceCorrected: true, IntentReplayed: true,
 }
 
 // Known reports whether a name is in the catalog.

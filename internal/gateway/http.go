@@ -258,7 +258,11 @@ func (f *FileBundles) Active(_ context.Context, tenantID string) (*policy.Bundle
 	}
 
 	// The tenant id is a path element here, so it is checked rather than trusted.
-	if tenantID == "" || strings.ContainsAny(tenantID, `/\.`) {
+	// Traversal and separators are refused; an ordinary dot is not, because a tenant
+	// id shaped like a domain is plausible and would otherwise become a silent
+	// POLICY_UNAVAILABLE denial that no operator could explain.
+	if tenantID == "" || tenantID == "." || tenantID == ".." ||
+		strings.ContainsAny(tenantID, `/\`) || strings.Contains(tenantID, "..") {
 		return nil, fmt.Errorf("invalid tenant id")
 	}
 

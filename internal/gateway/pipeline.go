@@ -191,6 +191,15 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	// 5. Idempotency, before anything is evaluated. A duplicate must return the
 	// answer the first caller was given, not a fresh evaluation that could differ.
 	if prior, found := p.priorOutcome(ctx, env); found {
+		// Recorded, because otherwise the chain shows an intent arriving and no
+		// decision following it: the outcome was returned, not produced.
+		p.record(ctx, env, evidence.IntentReplayed, at, map[string]any{
+			"idempotency_key": env.IdempotencyKey,
+			"client_order_id": prior.ClientOrderID,
+			"broker_order_id": prior.BrokerOrderID,
+			"state":           string(prior.State),
+		})
+
 		result.Accepted = prior.State != broker.StateRejected
 		result.Replayed = true
 		result.Outcome = &prior

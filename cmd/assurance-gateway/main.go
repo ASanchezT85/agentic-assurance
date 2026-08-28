@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"agentic-assurance/adapters/alpaca"
+	"agentic-assurance/adapters/fakebroker"
 	"agentic-assurance/adapters/tradier"
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/broker"
@@ -271,6 +272,19 @@ func openBroker() (broker.Adapter, error) {
 			AccountID: os.Getenv("TRADIER_ACCOUNT_ID"),
 			SymbolFor: symbolPassthrough,
 		})
+	case "fake":
+		// A deterministic venue for development and end-to-end runs. It is gated on
+		// an explicit environment rather than merely on BROKER, because a production
+		// gateway pointed at a fake venue accepts every order and sends none: the
+		// enforcement plane would look healthy while nothing it authorized ever
+		// reached a market.
+		if os.Getenv("ASSURANCE_ENV") != "development" {
+			return nil, errors.New(
+				"BROKER=fake requires ASSURANCE_ENV=development; a fake venue accepts " +
+					"every order and sends none")
+		}
+		return fakebroker.New(), nil
+
 	default:
 		return nil, errors.New("BROKER must name a configured venue adapter")
 	}

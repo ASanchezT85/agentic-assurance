@@ -591,3 +591,21 @@ func TestAReplayedSubmissionDoesNotSpendTheGrantTwice(t *testing.T) {
 			snapshot.Rolling1hNotional)
 	}
 }
+
+// A duplicate must leave a trace. Without one the chain shows an intent arriving and
+// no decision following it, which reads exactly like a request that vanished.
+func TestAReplayIsRecordedInEvidence(t *testing.T) {
+	p, _, ev := harness(t)
+
+	if r := p.Submit(context.Background(), envelope(nil), presentedAPI()); !r.Accepted {
+		t.Fatalf("first submission refused: %s", r.Reason)
+	}
+	before := len(ev.names())
+
+	if r := p.Submit(context.Background(), envelope(nil), presentedAPI()); !r.Replayed {
+		t.Fatal("the duplicate was not replayed")
+	}
+	if !contains(ev.names()[before:], string(evidence.IntentReplayed)) {
+		t.Errorf("the replay left no evidence; the chain after it is %v", ev.names()[before:])
+	}
+}

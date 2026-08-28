@@ -22,7 +22,7 @@ END
 $$;
 
 CREATE TABLE IF NOT EXISTS authority_grants (
-    grant_id              text PRIMARY KEY,
+    grant_id              text        NOT NULL,
     tenant_id             text        NOT NULL,
     principal_id          text        NOT NULL,
     account_id            text        NOT NULL,
@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS authority_grants (
     status                text        NOT NULL,
     revoked_at            timestamptz,
     revocation_reason     text,
+
+    -- Per tenant, like every other table here. A global grant_id would make ids a
+    -- shared namespace and let a collision reveal that an id exists in another
+    -- tenant (INV-007). See migration 0005.
+    PRIMARY KEY (tenant_id, grant_id),
 
     CONSTRAINT authority_grants_status_valid CHECK (status IN ('ACTIVE', 'REVOKED')),
     -- A revoked grant without a revocation time cannot be explained later.
