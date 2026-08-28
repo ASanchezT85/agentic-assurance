@@ -396,3 +396,33 @@ someone to paste a live one into the working tree. They belong in a secret manag
 V0 implements no real-money path. Both adapters check this themselves rather than
 trusting configuration, because a venue URL is a string and a mistake in it is the one
 mistake nobody gets to take back.
+
+## What the quality gate does not run
+
+`make verify` runs vet, the linters, the type checkers, the unit and security and
+scenario and contract suites, and the console build. It says so when it finishes,
+because a gate that reports "passed" without naming what it skipped is read as covering
+everything.
+
+| Not in the gate | Why, and what it is where |
+|-----------------|---------------------------|
+| `make test-integration` | Needs real PostgreSQL, ClickHouse, NATS, Redis and SPIRE. Row level security, the append-only trigger, mutual TLS and the cross-replica kill are only real against real services. |
+| `make test-chaos` | Stops those containers, so it cannot run alongside anything else. |
+| `make test-race` | `-race` needs cgo, and this development environment has no C compiler. It runs in a `golang:1.25` container instead. |
+
+### The race detector
+
+It had never run on this repository. Not a decision — an absence nobody had priced:
+CI is disabled at the repository level and the development machine has no compiler. The
+project already requires Docker, so the detector runs where a compiler exists.
+
+The first clean report was worth very little. The detector only reports races on code
+that actually runs concurrently while it watches, and seven of the nine structures with
+a mutex or an atomic had no test that ran them from more than one goroutine. A clean
+race report over sequential tests says the tests are sequential.
+`tests/security/concurrency_test.go` exercises them, and removing a single lock from
+the usage ledger produces four data races, which is how that suite was checked.
+
+The simulation tests are excluded from the container run: they execute the project's
+Python interpreter, which is a Windows binary the container cannot run. The failure is
+the mount, not the code, and a suite that always fails is one people learn to ignore.

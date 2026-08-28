@@ -40,6 +40,9 @@ test-integration: ## Integration tests (run `make up && make migrate` first)
 test-chaos: ## Chaos suite. STOPS REAL CONTAINERS; do not run alongside anything else
 	go test -tags=chaos -count=1 -timeout 15m ./tests/chaos/...
 
+test-race: ## Race detector, in a container (-race needs cgo; this machine has no C compiler)
+	sh scripts/test-race.sh
+
 lint: ## Run all linters
 	@test -z "$$(gofmt -l . )" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 	go vet ./...

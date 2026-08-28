@@ -50,4 +50,13 @@ go build -o bin/ ./cmd/...
 echo "==> next build"
 pnpm -C apps/console-web build
 
-echo "Phase 0 quality gate passed."
+echo "Quality gate passed."
+echo ""
+echo "NOT run by this gate, and each needs something it cannot assume:"
+echo "  make test-integration   real PostgreSQL, ClickHouse, NATS, Redis and SPIRE"
+echo "  make test-chaos         stops those containers, so it runs alone"
+echo "  make test-race          a C compiler, so it runs in a container"
+echo ""
+echo "A gate that says \"passed\" without saying what it skipped is read as covering"
+echo "everything. These are where the tenant isolation, the ambiguous-outcome handling"
+echo "and every shared mutex are actually checked."
