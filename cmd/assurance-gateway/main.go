@@ -29,6 +29,7 @@ import (
 	"agentic-assurance/adapters/tradier"
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/broker"
+	"agentic-assurance/internal/control"
 	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/execution"
 	"agentic-assurance/internal/fleet"
@@ -47,7 +48,7 @@ type evidenceReader interface {
 	ByAggregate(ctx context.Context, tenantID, aggregateID string) ([]evidence.Event, error)
 }
 
-func newMux(reader evidenceReader, submit, status, revoke, issue http.HandlerFunc,
+func newMux(reader evidenceReader, submit, status, revoke, issue, applyControl http.HandlerFunc,
 	creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -81,6 +82,9 @@ func newMux(reader evidenceReader, submit, status, revoke, issue http.HandlerFun
 	}
 	if issue != nil {
 		mux.HandleFunc("POST /v1/authority-grants", issue)
+	}
+	if applyControl != nil {
+		mux.HandleFunc("POST /v1/controls", applyControl)
 	}
 
 	return mux
@@ -335,6 +339,7 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 			Broker: venue,
 			Store:  execution.NewPostgresStore(pool),
 		},
+		Controls:  control.NewStore(pool),
 		Symbols:   symbols,
 		Evidence:  evidence.NewStore(pool),
 		Telemetry: telemetry,
@@ -442,16 +447,18 @@ func main() {
 	// whether or not a venue and a policy bundle are configured. Revocation in
 	// particular must not depend on the submission path being healthy: it is the lever
 	// an operator reaches for when it is not.
-	var status, revoke, issue http.HandlerFunc
+	var status, revoke, issue, applyControl http.HandlerFunc
 	if pool := openPool(ctx, log); pool != nil {
 		status = gateway.IntentStatusHandler(execution.NewPostgresStore(pool), creds, verifier)
 		revoke = gateway.RevokeGrantHandler(authority.NewStore(pool), evidence.NewStore(pool),
 			creds, verifier, nil)
 		issue = gateway.IssueGrantHandler(authority.NewStore(pool), evidence.NewStore(pool),
 			creds, verifier, nil)
+		applyControl = gateway.IssueControlHandler(control.NewStore(pool), evidence.NewStore(pool),
+			evidence.NewStore(pool), creds, verifier, nil)
 		log.Info("intent status and grant lifecycle served",
 			"routes", "GET /v1/intents/{id}, POST /v1/authority-grants, "+
-				"POST /v1/authority-grants/{id}/revoke")
+				"POST /v1/authority-grants/{id}/revoke, POST /v1/controls")
 	}
 	var submit http.HandlerFunc
 	if pipeline != nil {
@@ -461,7 +468,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(openEvidence(ctx, log), submit, status, revoke, issue, creds, verifier),
+		Handler:           newMux(openEvidence(ctx, log), submit, status, revoke, issue, applyControl, creds, verifier),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

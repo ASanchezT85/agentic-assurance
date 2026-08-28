@@ -55,7 +55,14 @@ const (
 
 	ControlRecommended EventName = "control.recommended.v1"
 	ControlApplied     EventName = "control.applied.v1"
-	ControlRevoked     EventName = "control.revoked.v1"
+
+	// ControlEnforced is not in the section 32 catalog. It is added because applying
+	// a control and a control refusing an order are different acts by different
+	// parties: the first is a customer authorizing, the second is the platform acting
+	// on that authorization. Recording the refusal as control.applied.v1 made the
+	// incident timeline report an operator action for every order the control stopped.
+	ControlEnforced EventName = "control.enforced.v1"
+	ControlRevoked  EventName = "control.revoked.v1"
 
 	PolicyBundleCreated    EventName = "policy.bundle.created.v1"
 	PolicyBundleActivated  EventName = "policy.bundle.activated.v1"
@@ -93,6 +100,7 @@ var catalog = map[EventName]bool{
 	FleetMetricUpdated: true, FleetCohortCreated: true, FleetAnomalyDetected: true,
 	IncidentCreated: true, IncidentUpdated: true, IncidentEscalated: true, IncidentClosed: true,
 	ControlRecommended: true, ControlApplied: true, ControlRevoked: true,
+	ControlEnforced:     true,
 	PolicyBundleCreated: true, PolicyBundleActivated: true, PolicyBundleRolledBack: true,
 	SimulationStarted: true, SimulationCompleted: true, SimulationFailed: true,
 	SimulationCancelled: true,

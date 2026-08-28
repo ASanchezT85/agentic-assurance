@@ -79,6 +79,15 @@ func Reconstruct(events []evidence.Event) (Timeline, error) {
 			entry.Enforced = false
 			t.Recommended = append(t.Recommended, rec)
 
+		case evidence.ControlEnforced:
+			// The platform acting on a control, not a person applying one. It carries
+			// no actor on purpose: an order refused by a standing control is not a
+			// human decision, and counting it as one would answer "what the customer
+			// did" with a list of automated refusals.
+			code, _ := e.Payload["control"].(string)
+			entry.Description = "enforced: " + code
+			entry.Enforced = true
+
 		case evidence.ControlApplied:
 			control, _ := e.Payload["control"].(string)
 			actor, _ := e.Payload["actor"].(string)

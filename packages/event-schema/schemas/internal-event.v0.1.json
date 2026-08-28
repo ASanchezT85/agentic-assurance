@@ -50,6 +50,7 @@
         "incident.closed.v1",
         "control.recommended.v1",
         "control.applied.v1",
+        "control.enforced.v1",
         "control.revoked.v1",
         "policy.bundle.created.v1",
         "policy.bundle.activated.v1",

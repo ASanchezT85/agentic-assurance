@@ -20,6 +20,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/broker"
+	"agentic-assurance/internal/control"
 	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/execution"
 	"agentic-assurance/internal/fleet"
@@ -36,6 +37,7 @@ const (
 	StageIdentity    = "IDENTITY"
 	StageIdempotency = "IDEMPOTENCY"
 	StageAuthority   = "AUTHORITY"
+	StageControl     = "CONTROL"
 	StagePolicy      = "POLICY"
 	StageExecution   = "EXECUTION"
 )
@@ -99,6 +101,15 @@ type SymbolResolver interface {
 	SymbolFor(instrumentID string) (string, bool)
 }
 
+// ControlSource supplies the fleet controls in force for a tenant.
+//
+// Read-only, and an interface for that reason: the enforcement plane applies controls
+// and never creates them. Creating one requires a customer authorization the
+// intelligence plane cannot construct (INV-009).
+type ControlSource interface {
+	InForce(ctx context.Context, tenantID string, at time.Time) ([]control.Control, error)
+}
+
 // EvidenceSink records what happened. It is deliberately fire-and-forget from the
 // pipeline's point of view: spec section 17 requires production to continue when
 // telemetry is unavailable, so a failure to record must never fail a decision.
@@ -123,6 +134,12 @@ type Pipeline struct {
 	UsageRecorder authority.Recorder
 	Execution     *execution.Service
 	Symbols       SymbolResolver
+
+	// Controls are the fleet controls a customer authorized. Optional: without a
+	// store the pipeline enforces everything else, and no fleet control binds —
+	// which is exactly shadow mode, the state the platform was in until POST
+	// /v1/controls existed.
+	Controls ControlSource
 
 	// Evidence is optional. Losing it costs the audit trail, not the decision.
 	Evidence EvidenceSink
@@ -263,6 +280,36 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	})
 	if !authDecision.Allowed {
 		return p.deny(result, StageAuthority, authDecision.Code, authDecision.Reason)
+	}
+
+	// 6b. Fleet controls the customer authorized.
+	//
+	// After authority and before policy: a control is a customer decision about a
+	// cohort or an account, which is broader than one order's ceiling and narrower
+	// than the standing rulebook. An order the grant already refused never needs to
+	// consult one.
+	if p.Controls != nil {
+		inForce, err := p.Controls.InForce(ctx, env.TenantID, at)
+		if err != nil {
+			// An unreadable control store denies, for the same reason an unreadable
+			// grant store does: a control is in force until someone revokes it, and
+			// treating "cannot read" as "none apply" would unenforce every one of
+			// them exactly when the database is unhealthy.
+			return p.deny(result, StageControl, "CONTROL_UNAVAILABLE",
+				"fleet controls could not be read: "+err.Error())
+		}
+		if d := control.Evaluate(inForce, env, at); !d.Allowed {
+			// control.enforced, not control.applied: applying is what the customer
+			// did once, enforcing is what the platform does on every order after.
+			// Recording this as an application made the incident timeline report a
+			// human action for each order the control stopped.
+			p.record(ctx, env, evidence.ControlEnforced, at, map[string]any{
+				"control":    d.Code,
+				"control_id": d.ControlID,
+				"reason":     d.Reason,
+			})
+			return p.deny(result, StageControl, d.Code, d.Reason)
+		}
 	}
 
 	// 7. Parent intent. It informs; it does not decide. Spec section 20 is explicit

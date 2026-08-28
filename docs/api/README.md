@@ -19,7 +19,7 @@ GET  /v1/dependencies                   Phase 14  DONE (fleet-engine, added for 
 GET  /v1/incidents                      DONE (internal/incident)
 GET  /v1/incidents/{id}                 DONE (internal/incident)
 
-POST /v1/controls                       Phase 13
+POST /v1/controls                       DONE (internal/gateway + internal/control)
 
 POST /v1/simulations                    DONE (internal/simulation)
 GET  /v1/simulations/{id}               DONE (internal/simulation)
@@ -123,6 +123,71 @@ naming a tenant in a header was enough to read all of it until an audit went loo
 The tenant is validated as identifier-shaped rather than escaped. ClickHouse's HTTP
 interface has no parameter binding in the form this client uses, and an identifier
 that is not identifier-shaped is a request to refuse rather than to sanitise.
+
+## POST /v1/controls
+
+```json
+{ "control_id": "ctl_1", "incident_id": "inc_1", "action": "READ_ONLY",
+  "scope": "agent", "agent_id": "agent_1",
+  "authorized_by": "riesgo@example", "policy_bundle_id": "bundle_v1",
+  "reason": "correlated liquidation across the cohort",
+  "expires_at": "2026-09-04T00:00:00Z" }
+```
+
+Where a fleet recommendation becomes something that binds. INV-009 is the rule — fleet
+intelligence recommends, customer policy authorizes — and `internal/fleet` made it a
+property of the types: `fleet.Authorize` is the only function that produces an
+enforceable control and it needs an `Authorization` the intelligence plane cannot
+construct. Nothing outside a test ever called it, so every recommendation the platform
+made stopped at shadow mode for want of a surface rather than by decision.
+
+**It is served by the gateway, not the fleet engine.** A control is enforcement. An
+endpoint that let the intelligence plane produce one would break INV-009 by deployment
+topology while every type signature still looked right.
+
+The recommendation is read from the incident's evidence, never taken from the request.
+A customer authorizes what the platform recommended; a body that could describe its own
+recommendation would let an operator apply a control nothing suggested and leave a
+record saying the platform proposed it. An incident with no `control.recommended.v1`
+is `404`.
+
+`scope` is stated: `tenant`, `agent` or `account`. An omitted scope would read as the
+whole tenant, which is the widest control there is and never something to arrive at by
+leaving two fields blank. `expires_at` is required — a control nobody has to renew is
+one that throttles an agent forever because of an incident last spring.
+
+Authorizing requires the same privilege as issuing authority (`GATEWAY_GRANT_ISSUERS`).
+A credential that could both submit orders and authorize the controls over them is an
+agent adjusting its own leash.
+
+| Status | Meaning |
+|--------|---------|
+| 201 | Authorized and in force. |
+| 400 | Not authorizable as written; `details` says why. |
+| 403 | This credential may not authorize fleet controls. |
+| 404 | No such incident for this tenant, or it carries no recommendation. |
+| 409 | A control with this id already exists. |
+
+**THROTTLE is refused rather than stored.** The other three actions deny on the hot
+path; throttling needs a counter this build does not have, and a control the platform
+records without applying is exactly the shadow-mode confusion this endpoint exists to
+end — an operator would read the list, see the throttle, and believe it was throttling.
+
+Enforcement is a stage of the submission pipeline, between authority and policy, and it
+reads PostgreSQL rather than the fleet engine: cohort membership is computed by the
+intelligence plane from a rolling window, and an enforcement check that had to ask for
+it would fail closed every time the analytical plane blinked (INV-005). The cohort is
+resolved to concrete agents and accounts at authorization time.
+
+A refused order is `403` with stage `CONTROL` and a code naming the action:
+`CONTROL_READ_ONLY`, `CONTROL_COHORT_ISOLATED` or `CONTROL_APPROVAL_REQUIRED`. The last
+denies rather than parking the order — V0 has no approval queue, and an order held for
+an approval nobody can give is one that silently never happened.
+
+The refusal records `control.enforced.v1`, not `control.applied.v1`. Applying is what a
+customer did once; enforcing is what the platform does on every order after, and
+recording the second as the first made the incident timeline report a human action for
+each order the control stopped.
 
 ## POST /v1/simulations and GET /v1/simulations/{id}
 

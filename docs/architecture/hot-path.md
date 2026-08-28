@@ -21,6 +21,12 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
     - tenant checked first: a cross-tenant grant is INV-007, not a mismatch
     - lifecycle before limits, so a revoked grant never reports "limit exceeded"
     - a limit that cannot be read denies (spec §17)
+ 6b. fleet controls the customer authorized                §16, INV-009
+    - read from PostgreSQL, never from the fleet engine: an enforcement check that
+      had to ask the intelligence plane who is in a cohort would fail closed every
+      time the analytical plane blinked (INV-005)
+    - scope is resolved to concrete agents and accounts when the control is authorized
+    - expired or revoked controls do not bind; an unreadable store denies
  7. parent-intent state update (deterministic clustering)  §20
  8. hard policy evaluation against the active bundle       §15.2
     - compiled rules only; the evaluator never reaches a YAML parser
