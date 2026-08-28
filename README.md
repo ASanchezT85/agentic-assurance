@@ -112,8 +112,16 @@ ADR-015 predicted and named the remedy for.
 Phase 16 closes the build: a behavioural contract suite that all three broker adapters
 pass identically, and a second venue adapter whose shapes differ from Alpaca's in ways
 that press on the abstraction. Adding it required **zero changes to `internal/`**,
-which is the exit criterion. The submission path is still not wired: every component
-exists and is tested, and nothing chains them behind an HTTP surface.
+which is the exit criterion.
+
+The submission path is wired. `POST /v1/intents` runs an envelope through every check
+in `docs/architecture/hot-path.md`, in that order, and an order reaches a venue only
+if all of them allow it. Wiring it produced one finding worth more than the wiring:
+`internal/authority` had named a PostgreSQL-backed `UsageSource` as the hot path's
+implementation since Phase 3 and there was none. Passing nil makes every grant with a
+rolling or daily limit deny with `USAGE_UNAVAILABLE`, which is the correct failure and
+a useless system, and nothing noticed because nothing ran the path. The ledger is
+built, and a test spends a grant down until each limit actually trips.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

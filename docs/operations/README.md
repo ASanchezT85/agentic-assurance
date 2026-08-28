@@ -237,3 +237,32 @@ divides.
 `internal/...`, `tests/security/...` and `tests/scenarios/...`, which is where the
 concurrency guarantees live. Locally the concurrency tests still run and still assert
 their outcomes; they just cannot detect a data race that happens not to change one.
+
+## Serving the submission path
+
+`POST /v1/intents` is served only when the enforcement plane is fully configured. Each
+of these is load-bearing, and the gateway logs which one is missing rather than
+answering anyway:
+
+| Variable | Without it |
+|----------|-----------|
+| `POSTGRES_APP_DSN` | Idempotency and consumed usage have nowhere authoritative to live. |
+| `GATEWAY_API_CREDENTIALS` | Nothing authenticates a caller. `identity=token,identity=token`; tokens under 32 characters are refused at startup (ADR-025). |
+| `POLICY_PUBLIC_KEY` | A policy bundle cannot be verified, and an unverified bundle is not policy. Hex-encoded ed25519 public key. |
+| `POLICY_BUNDLE_DIR` | Where signed bundles live, one JSON file per tenant. Default `/etc/assurance/policy`. |
+| `INSTRUMENT_SYMBOLS` | No instrument maps to a venue symbol. Default `/etc/assurance/instruments.json`. |
+| `BROKER` | No venue. `alpaca` or `tradier`; both refuse a non-paper endpoint themselves. |
+
+Optional, and their absence is a stated degradation rather than a failure:
+
+| Variable | Without it |
+|----------|-----------|
+| `SPIFFE_TRUST_BUNDLE`, `SPIFFE_TRUST_DOMAIN` | An SVID cannot be verified, so callers reach A1 at best. Reported, not silently treated as attestation. |
+
+The gateway will not sign or activate a policy bundle. One that reaches it must
+already be ACTIVE and signed: a gateway that activated its own policy would be
+deciding what constrains it, which is the shape INV-009 exists to forbid.
+
+**The usage ledger is per grant and lives in PostgreSQL.** `MemoryUsage` exists for
+tests and single-process runs and is wrong for several replicas: two gateways each
+enforcing half a rolling limit enforce no rolling limit at all.
