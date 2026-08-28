@@ -24,6 +24,9 @@ type Presented struct {
 	// established one, which is refused rather than defaulted: a caller whose tenant
 	// is unknown must not be allowed to name it (INV-007).
 	TenantID string
+
+	// MayIssueAuthority carries the issuer privilege from the credential registry.
+	MayIssueAuthority bool
 }
 
 // Attested is the level the platform established, together with why it is not
@@ -36,7 +39,15 @@ type Attested struct {
 
 	// TenantID is the tenant this caller is authenticated for, established by the
 	// transport and never read from the request.
-	TenantID   string
+	TenantID string
+
+	// MayIssueAuthority is whether this caller may create authority grants. Off for
+	// everything not named as an issuer: a credential that could both submit intents
+	// and issue the authority to submit them would let an agent raise its own ceiling,
+	// and the ceiling INV-002 enforces would be one the party under it can move
+	// (P-002, customer-owned authority).
+	MayIssueAuthority bool
+
 	Method     string
 	VerifiedAt time.Time
 	SerialHex  string
@@ -89,13 +100,14 @@ func (v *Verifier) Resolve(p Presented) Attested {
 			tenant, _ := v.Workloads.TenantFor(verified.ID)
 
 			return Attested{
-				Level:       intent.AttestationA2,
-				SpiffeID:    verified.ID,
-				APIIdentity: p.APIIdentity,
-				TenantID:    tenant,
-				Method:      verified.Method,
-				VerifiedAt:  verified.VerifiedAt,
-				SerialHex:   verified.SerialHex,
+				Level:             intent.AttestationA2,
+				SpiffeID:          verified.ID,
+				APIIdentity:       p.APIIdentity,
+				TenantID:          tenant,
+				MayIssueAuthority: false,
+				Method:            verified.Method,
+				VerifiedAt:        verified.VerifiedAt,
+				SerialHex:         verified.SerialHex,
 			}
 		}
 
@@ -112,12 +124,13 @@ func (v *Verifier) Resolve(p Presented) Attested {
 func degraded(p Presented, now time.Time, failure *VerificationFailure) Attested {
 	if p.APIIdentity != "" {
 		return Attested{
-			Level:       intent.AttestationA1,
-			APIIdentity: p.APIIdentity,
-			TenantID:    p.TenantID,
-			Method:      "AUTHENTICATED_API_IDENTITY",
-			VerifiedAt:  now,
-			Downgrade:   failure,
+			Level:             intent.AttestationA1,
+			APIIdentity:       p.APIIdentity,
+			TenantID:          p.TenantID,
+			MayIssueAuthority: p.MayIssueAuthority,
+			Method:            "AUTHENTICATED_API_IDENTITY",
+			VerifiedAt:        now,
+			Downgrade:         failure,
 		}
 	}
 	return Attested{

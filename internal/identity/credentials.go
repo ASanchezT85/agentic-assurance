@@ -33,6 +33,39 @@ type Credentials struct {
 type Caller struct {
 	Identity string
 	TenantID string
+
+	// MayIssueAuthority separates submitting an intent from issuing the authority to
+	// submit one. P-002 says the customer retains final authority, and a credential
+	// that could do both would let an agent widen its own grant: the ceiling INV-002
+	// enforces would be one the party under it can raise.
+	//
+	// Off by default. An issuer is named explicitly in GATEWAY_GRANT_ISSUERS, so the
+	// privilege is something an operator granted rather than something every
+	// credential happened to have.
+	MayIssueAuthority bool
+}
+
+// AllowIssuers marks the named identities as able to issue authority grants.
+//
+// A separate list rather than a field in the credential string, because the
+// credential format is what an operator copies between environments and adding a
+// privilege flag to it makes the dangerous case the easy typo.
+func (c *Credentials) AllowIssuers(raw string) {
+	if c == nil {
+		return
+	}
+	allowed := map[string]bool{}
+	for _, name := range strings.Split(raw, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			allowed[name] = true
+		}
+	}
+	for token, caller := range c.byToken {
+		if allowed[caller.Identity] {
+			caller.MayIssueAuthority = true
+			c.byToken[token] = caller
+		}
+	}
 }
 
 // ParseCredentials reads "identity@tenant=token,identity@tenant=token".
@@ -126,6 +159,7 @@ func FromTransport(authorization string, peerCertificates []*x509.Certificate, c
 		if caller, authenticated := creds.Identify(strings.TrimSpace(token)); authenticated {
 			p.APIIdentity = caller.Identity
 			p.TenantID = caller.TenantID
+			p.MayIssueAuthority = caller.MayIssueAuthority
 		}
 	}
 	return p

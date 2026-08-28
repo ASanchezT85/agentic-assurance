@@ -225,7 +225,7 @@ func TestIdempotencyRecordsAreTenantScoped(t *testing.T) {
 	existing, claimed, err := store.Claim(ctx, execution.Record{
 		TenantID:       "tenant_someone_else",
 		IdempotencyKey: key,
-		EnvelopeID:     "env_other",
+		EnvelopeID:     "env_other_" + key,
 		ClientOrderID:  "coid_other_" + key,
 		CreatedAt:      time.Now().UTC(),
 	})

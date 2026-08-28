@@ -27,7 +27,12 @@ const (
 	// AuthorityRevoked is not in the section 32 catalog. It is added because cutting
 	// an agent's authority is the emergency action of spec section 14, and one that
 	// left no record would be the hardest thing to explain afterwards.
-	AuthorityRevoked   EventName = "authority.grant.revoked.v1"
+	AuthorityRevoked EventName = "authority.grant.revoked.v1"
+
+	// AuthorityIssued is not in the catalog either. Issuing authority is the act that
+	// makes every later decision possible, and one that left no record would be the
+	// hardest thing to reconstruct after an incident.
+	AuthorityIssued    EventName = "authority.grant.issued.v1"
 	PolicyEvaluated    EventName = "policy.evaluated.v1"
 	IntentParentLinked EventName = "intent.parent.linked.v1"
 
@@ -81,7 +86,7 @@ const (
 
 var catalog = map[EventName]bool{
 	IntentReceived: true, IdentityVerified: true, IdentityFailed: true,
-	AuthorityEvaluated: true, AuthorityRevoked: true,
+	AuthorityEvaluated: true, AuthorityRevoked: true, AuthorityIssued: true,
 	PolicyEvaluated: true, IntentParentLinked: true,
 	OrderSubmitted: true, OrderUnknown: true, OrderAccepted: true, OrderRejected: true,
 	OrderFilled: true, OrderCancelled: true, OrderReconciled: true,

@@ -9,7 +9,7 @@ GET  /v1/intents/{id}                   DONE (internal/gateway)
 GET  /v1/intents/{id}/evidence          Phase 6   DONE (ADR-023)
 GET  /v1/evidence?correlation_id={id}   Phase 6   DONE (ADR-023)
 
-POST /v1/authority-grants               Phase 3
+POST /v1/authority-grants               DONE (internal/gateway)
 POST /v1/authority-grants/{id}/revoke   DONE (internal/gateway)
 
 GET  /v1/fleet/state                    Phase 14  DONE (fleet-engine)
@@ -224,6 +224,51 @@ rule. Two submissions carrying the same envelope id under different idempotency 
 produced two orders for one stated intention — found when the unique index refused to
 build over twenty-five rows a test suite had created by reusing a fixed id. The index
 enforces it now, and the refusal is `ENVELOPE_REUSED` rather than a constraint error.
+
+## POST /v1/authority-grants
+
+```json
+{ "grant_id": "grant_1", "principal_id": "prin_1", "account_id": "acct_1",
+  "agent_id": "agent_1", "issued_by": "tesoreria@example",
+  "valid_until": "2027-01-01T00:00:00Z",
+  "allowed_operations": ["BUY","SELL"], "allowed_asset_classes": ["EQUITY"],
+  "per_order_notional": 25000, "rolling_1h_notional": 100000,
+  "daily_notional": 500000, "max_open_orders": 20 }
+```
+
+Grants were created with SQL by hand: the store has carried `Save` since Phase 3 and
+nothing served it, so issuing authority meant a psql prompt and a hope that the columns
+were right.
+
+**Issuing is a separate privilege from submitting**, named in `GATEWAY_GRANT_ISSUERS`
+and off for everything else. P-002 says the customer retains final authority, and a
+credential that could both submit orders and issue the authority to submit them would
+let an agent raise its own ceiling: INV-002 would still be enforced, against a limit the
+party under it can move. A workload credential (A2) never carries the privilege, even
+when a named issuer's bearer token rides the same connection.
+
+The tenant is absent from the body on purpose — it comes from the credential. A grant
+decides what an agent may do, and letting the request name whose authority it is would
+be the cross-tenant hole in its most direct form.
+
+`per_order_notional`, `valid_until`, `allowed_operations` and `allowed_asset_classes`
+are required. A grant with no ceiling is not a generous grant, it is an absent one:
+evaluation would allow every size and the limit would exist only in the mind of whoever
+wrote the request. Unknown fields are refused, because a misspelled limit would
+otherwise be dropped in silence and the grant issued without it.
+
+| Status | Meaning |
+|--------|---------|
+| 201 | Issued. |
+| 400 | The grant would not constrain anything; `details` says which limits are missing. |
+| 401 | Nothing authenticated the caller. |
+| 403 | This credential may not issue authority. |
+| 409 | A grant with this id already exists. |
+
+**409 rather than an upsert.** `Save` updates on conflict, and a PUT-shaped POST would
+let an issuer widen an existing grant by reissuing it under the same id — the same
+escalation by a slower route. Authority is not edited in place: revoke and issue anew,
+so the change is two auditable acts.
 
 ## POST /v1/authority-grants/{id}/revoke
 

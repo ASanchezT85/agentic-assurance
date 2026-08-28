@@ -226,6 +226,7 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 				"submit": "../../internal/gateway/http.go:SubmitHandler",
 				"status": "../../internal/gateway/intents.go:IntentStatusHandler",
 				"revoke": "../../internal/gateway/intents.go:RevokeGrantHandler",
+				"issue":  "../../internal/gateway/grants.go:IssueGrantHandler",
 			}
 
 			target, fn := path, name
@@ -251,7 +252,7 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 		}
 	}
 
-	if checked < 12 {
+	if checked < 15 {
 		t.Errorf("only %d routes were checked; the guard is not finding the registrations "+
 			"and would stay green while an unauthenticated one was added", checked)
 	}

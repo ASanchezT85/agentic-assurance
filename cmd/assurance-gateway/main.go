@@ -47,7 +47,7 @@ type evidenceReader interface {
 	ByAggregate(ctx context.Context, tenantID, aggregateID string) ([]evidence.Event, error)
 }
 
-func newMux(reader evidenceReader, submit, status, revoke http.HandlerFunc,
+func newMux(reader evidenceReader, submit, status, revoke, issue http.HandlerFunc,
 	creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -78,6 +78,9 @@ func newMux(reader evidenceReader, submit, status, revoke http.HandlerFunc,
 	}
 	if revoke != nil {
 		mux.HandleFunc("POST /v1/authority-grants/{id}/revoke", revoke)
+	}
+	if issue != nil {
+		mux.HandleFunc("POST /v1/authority-grants", issue)
 	}
 
 	return mux
@@ -426,6 +429,12 @@ func main() {
 	defer stop()
 
 	creds := openCredentials(log)
+	if creds != nil {
+		// Which identities may issue authority. Named separately from the credential
+		// itself so the privilege is something an operator granted rather than
+		// something every credential happened to have (P-002).
+		creds.AllowIssuers(os.Getenv("GATEWAY_GRANT_ISSUERS"))
+	}
 	pipeline, _ := buildPipeline(ctx, log)
 	verifier := identityVerifier()
 
@@ -433,13 +442,16 @@ func main() {
 	// whether or not a venue and a policy bundle are configured. Revocation in
 	// particular must not depend on the submission path being healthy: it is the lever
 	// an operator reaches for when it is not.
-	var status, revoke http.HandlerFunc
+	var status, revoke, issue http.HandlerFunc
 	if pool := openPool(ctx, log); pool != nil {
 		status = gateway.IntentStatusHandler(execution.NewPostgresStore(pool), creds, verifier)
 		revoke = gateway.RevokeGrantHandler(authority.NewStore(pool), evidence.NewStore(pool),
 			creds, verifier, nil)
-		log.Info("intent status and grant revocation served",
-			"routes", "GET /v1/intents/{id}, POST /v1/authority-grants/{id}/revoke")
+		issue = gateway.IssueGrantHandler(authority.NewStore(pool), evidence.NewStore(pool),
+			creds, verifier, nil)
+		log.Info("intent status and grant lifecycle served",
+			"routes", "GET /v1/intents/{id}, POST /v1/authority-grants, "+
+				"POST /v1/authority-grants/{id}/revoke")
 	}
 	var submit http.HandlerFunc
 	if pipeline != nil {
@@ -449,7 +461,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(openEvidence(ctx, log), submit, status, revoke, creds, verifier),
+		Handler:           newMux(openEvidence(ctx, log), submit, status, revoke, issue, creds, verifier),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
