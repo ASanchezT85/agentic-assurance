@@ -365,3 +365,22 @@ and every tenant-scoped lookup, row level security included, then uses whatever 
 request said.
 
 A caller that legitimately acts for several tenants needs several credentials.
+
+### Broker credentials
+
+Deliberately absent from `.env.example`, and `tests/scope_guard_test.go` refuses to let
+them appear there: a committed example file with a slot for a venue secret invites
+someone to paste a live one into the working tree. They belong in a secret manager
+(spec section 35), and they are named here instead.
+
+| Variable | Meaning |
+|----------|---------|
+| `ALPACA_BASE_URL` | The Alpaca endpoint. The adapter refuses anything that is not a paper endpoint, so a live URL here fails at construction rather than at the first order. |
+| `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY` | Alpaca Paper credentials. |
+| `TRADIER_BASE_URL` | The Tradier endpoint. Sandbox only, refused the same way. |
+| `TRADIER_TOKEN` | Tradier sandbox token. |
+| `TRADIER_ACCOUNT_ID` | The account orders are placed against; Tradier scopes its paths by it. |
+
+V0 implements no real-money path. Both adapters check this themselves rather than
+trusting configuration, because a venue URL is a string and a mistake in it is the one
+mistake nobody gets to take back.

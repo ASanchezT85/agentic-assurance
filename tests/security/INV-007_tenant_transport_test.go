@@ -171,22 +171,19 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 	authEntryPoints := []string{"requireTenant", "requireCaller", "tenantOf(r, creds)",
 		"identity.FromTransport", "presentedFrom("}
 
-	files := []string{
-		"../../cmd/assurance-gateway/main.go",
-		"../../cmd/fleet-engine/main.go",
-		"../../internal/fleet/api.go",
-		"../../internal/simulation/api.go",
-	}
+	// Discovered, not listed. The first version named four files, and a new package
+	// with an unauthenticated route was invisible to it: the same
+	// enumerate-your-own-coverage bug this guard exists to catch, in the guard.
+	files := goSources(t)
 
 	routes := regexp.MustCompile(`(?m)HandleFunc\(\s*"([^"]+)"\s*,\s*([A-Za-z0-9_.,()&{} ]+?)\)\s*$`)
 	checked := 0
 
 	for _, path := range files {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+		source := readSource(t, path)
+		if !strings.Contains(source, "HandleFunc(") {
+			continue
 		}
-		source := string(raw)
 
 		for _, match := range routes.FindAllStringSubmatch(source, -1) {
 			route, handler := match[1], strings.TrimSpace(match[2])

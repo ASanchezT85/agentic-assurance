@@ -1,10 +1,6 @@
 package security
 
 import (
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -36,20 +32,52 @@ var enforcementPackages = map[string]string{
 	"internal/gateway":   "the composition root is the enforcement path itself",
 }
 
-// intelligencePackages are the ones the fleet engine is built from.
-var intelligencePackages = []string{"internal/fleet", "internal/simulation"}
-
+// The intelligence plane is whatever the fleet engine can reach.
+//
+// Discovered rather than listed. The first version named internal/fleet and
+// internal/simulation, and a new package in that binary was invisible to it — the
+// same enumerate-your-own-coverage bug these guards exist to catch, reproduced inside
+// the guard. Verified by adding a package that reads authority grants and wiring it
+// in: the listed version passed.
+//
+// Transitive, because a process is bounded by everything it can reach and not by what
+// its own files happen to name.
 func TestTheIntelligencePlaneCannotReachEnforcement(t *testing.T) {
-	for _, pkg := range intelligencePackages {
-		for _, file := range goFiles(t, "../../"+pkg) {
-			for _, imported := range importsOf(t, file) {
-				trimmed := strings.TrimPrefix(imported, "agentic-assurance/")
-				if why, forbidden := enforcementPackages[trimmed]; forbidden {
-					t.Errorf("%s imports %s. The intelligence plane recommends and never "+
-						"enforces (INV-009), and %s. A simulation answers what would "+
-						"happen; only an authorized customer control changes what does.",
-						file, trimmed, why)
-				}
+	reachable := dependencyClosure(t, "agentic-assurance/cmd/fleet-engine")
+
+	if len(reachable) < 3 {
+		t.Fatalf("the fleet engine reaches only %d local packages; the walk is not "+
+			"finding its imports and this guard would pass over nothing", len(reachable))
+	}
+
+	for pkg := range reachable {
+		trimmed := strings.TrimPrefix(pkg, "agentic-assurance/")
+		if why, forbidden := enforcementPackages[trimmed]; forbidden {
+			t.Errorf("the fleet engine reaches %s. The intelligence plane recommends "+
+				"and never enforces (INV-009), and %s. A simulation answers what would "+
+				"happen; only an authorized customer control changes what does.",
+				trimmed, why)
+		}
+	}
+}
+
+// The reverse, so a hard decision never depends on the analytical plane being up.
+//
+// The gateway reaches internal/fleet on purpose: it writes telemetry. What must not
+// happen is a policy or authority decision that cannot be made without analytics
+// (INV-005).
+func TestEnforcementDoesNotDependOnAnalytics(t *testing.T) {
+	for _, decider := range []string{
+		"agentic-assurance/internal/policy",
+		"agentic-assurance/internal/authority",
+		"agentic-assurance/internal/identity",
+	} {
+		for pkg := range dependencyClosure(t, decider) {
+			trimmed := strings.TrimPrefix(pkg, "agentic-assurance/")
+			if trimmed == "internal/fleet" || trimmed == "internal/simulation" {
+				t.Errorf("%s reaches %s; a decision would depend on the analytical "+
+					"plane being reachable (INV-005)",
+					strings.TrimPrefix(decider, "agentic-assurance/"), trimmed)
 			}
 		}
 	}
@@ -58,8 +86,11 @@ func TestTheIntelligencePlaneCannotReachEnforcement(t *testing.T) {
 // The binary itself, because a package can stay clean while the process wires
 // something the packages never mention.
 func TestTheFleetEngineBinaryCannotReachEnforcement(t *testing.T) {
-	for _, file := range goFiles(t, "../../cmd/fleet-engine") {
-		for _, imported := range importsOf(t, file) {
+	for _, file := range goSources(t) {
+		if packageOf(file) != "agentic-assurance/cmd/fleet-engine" {
+			continue
+		}
+		for _, imported := range localImports(t, file) {
 			trimmed := strings.TrimPrefix(imported, "agentic-assurance/")
 			if why, forbidden := enforcementPackages[trimmed]; forbidden {
 				t.Errorf("cmd/fleet-engine imports %s. %s, and the intelligence plane "+
@@ -80,24 +111,26 @@ func TestEveryMutatingIntelligenceRouteIsAccountedFor(t *testing.T) {
 		"POST /v1/simulations/{id}/cancel": "stops a simulation this plane started",
 	}
 
+	// Every file the fleet engine can reach, discovered. A mutating route added in a
+	// package this guard never heard of is the case the listed version missed.
+	reachable := dependencyClosure(t, "agentic-assurance/cmd/fleet-engine")
+	reachable["agentic-assurance/cmd/fleet-engine"] = true
+
 	found := map[string]bool{}
-	for _, dir := range []string{"../../internal/fleet", "../../internal/simulation", "../../cmd/fleet-engine"} {
-		for _, file := range goFiles(t, dir) {
-			raw, err := os.ReadFile(file)
-			if err != nil {
-				t.Fatalf("read %s: %v", file, err)
-			}
-			for _, line := range strings.Split(string(raw), "\n") {
-				for _, verb := range []string{"POST ", "PUT ", "PATCH ", "DELETE "} {
-					marker := `"` + verb
-					idx := strings.Index(line, marker)
-					if idx < 0 || !strings.Contains(line, "HandleFunc") {
-						continue
-					}
-					rest := line[idx+1:]
-					route := rest[:strings.Index(rest, `"`)]
-					found[route] = true
+	for _, file := range goSources(t) {
+		if !reachable[packageOf(file)] {
+			continue
+		}
+		for _, line := range strings.Split(readSource(t, file), "\n") {
+			for _, verb := range []string{"POST ", "PUT ", "PATCH ", "DELETE "} {
+				marker := `"` + verb
+				idx := strings.Index(line, marker)
+				if idx < 0 || !strings.Contains(line, "HandleFunc") {
+					continue
 				}
+				rest := line[idx+1:]
+				route := rest[:strings.Index(rest, `"`)]
+				found[route] = true
 			}
 		}
 	}
@@ -116,37 +149,4 @@ func TestEveryMutatingIntelligenceRouteIsAccountedFor(t *testing.T) {
 				"prunes stops being read", route)
 		}
 	}
-}
-
-func goFiles(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s: %v", dir, err)
-	}
-	var files []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		files = append(files, filepath.Join(dir, name))
-	}
-	if len(files) == 0 {
-		t.Fatalf("%s has no non-test Go files; the guard is looking in the wrong place", dir)
-	}
-	return files
-}
-
-func importsOf(t *testing.T, path string) []string {
-	t.Helper()
-	parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	var out []string
-	for _, spec := range parsed.Imports {
-		out = append(out, strings.Trim(spec.Path.Value, `"`))
-	}
-	return out
 }

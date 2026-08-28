@@ -126,48 +126,95 @@ func TestOperationsDocumentsTheDistinction(t *testing.T) {
 
 // Secrets never enter evidence. Spec section 35 forbids them in telemetry payloads,
 // and evidence is the most durable payload in the system.
+//
+// The payload literals themselves, not the files that contain them.
+//
+// Two earlier versions of this guard were wrong in opposite directions. The first read
+// internal/evidence/event.go alone: that file declares the event and does not decide
+// what goes in Payload, so a token written into a payload from the pipeline went
+// straight past it, verified by writing one. The second read whole files, and flagged
+// the ClickHouse client's connection password and then every mention of
+// identity.Credentials — correct code, punished, which teaches authors to route around
+// guards.
+//
+// A substring search over files was always going to collide once "credential" became a
+// legitimate concept in this codebase. So the guard reads the map literal assigned to
+// Payload and nothing else: its keys, and any string constants in it.
 func TestEvidenceCarriesNoCredentialFields(t *testing.T) {
-	// The schema, and everything that builds an evidence payload for it.
-	//
-	// This used to read internal/evidence/event.go alone. That file declares the
-	// event; it does not decide what goes in Payload, and a token written into a
-	// payload by any producer went straight past. Verified by putting one there: the
-	// guard stayed green. Its name promised more than one file could deliver.
-	//
-	// Scoped to the producers of evidence payloads, and deliberately not to every file
-	// that handles a secret. internal/fleet/clickhouse.go holds a ClickHouse password
-	// because a client needs one to connect; flagging it would be a guard punishing
-	// correct code, and the authors of the next correct thing learn to route around
-	// guards that do that.
-	sources := []string{
-		"../../internal/evidence/event.go",
-		"../../internal/gateway/pipeline.go",
-		"../../internal/simulation/evidence.go",
-	}
+	banned := []string{"secretkey", "secret_key", "apikey", "api_key", "password",
+		"bearer", "access_token", "private_key", "authorization"}
 
-	banned := []string{"secretkey", "apikey", "password", "credential", "bearer",
-		"api_key", "secret_key", "access_token", "private_key"}
+	payloads := 0
 
-	for _, path := range sources {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
+	for _, path := range goSources(t) {
+		source := readSource(t, path)
+		if !strings.Contains(source, "evidence.Event{") {
+			continue
 		}
-		for _, line := range strings.Split(string(raw), "\n") {
-			trimmed := strings.TrimSpace(line)
-			// Comments are exempt. A guard that punishes the sentence explaining why
-			// a secret is absent teaches authors to delete the explanation.
-			if strings.HasPrefix(trimmed, "//") {
-				continue
+
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, source, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+
+		ast.Inspect(file, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok || !isEvidenceEvent(lit.Type) {
+				return true
 			}
-			lowered := strings.ToLower(trimmed)
-			for _, word := range banned {
-				if strings.Contains(lowered, word) {
-					t.Errorf("%s: %q mentions %q. Broker secrets are never logged, never "+
-						"returned through an API and never in evidence (spec section 35).",
-						path, trimmed, word)
+			for _, elt := range lit.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, ok := kv.Key.(*ast.Ident); !ok || key.Name != "Payload" {
+					continue
+				}
+				payloads++
+				for _, word := range stringsIn(kv.Value) {
+					lowered := strings.ToLower(word)
+					for _, b := range banned {
+						if strings.Contains(lowered, b) {
+							t.Errorf("%s: an evidence payload carries %q, which mentions "+
+								"%q. Broker secrets are never logged, never returned "+
+								"through an API and never in evidence (spec section 35).",
+								path, word, b)
+						}
+					}
 				}
 			}
-		}
+			return true
+		})
 	}
+
+	if payloads == 0 {
+		t.Fatal("no evidence payload literal was found; the guard is inspecting nothing " +
+			"and would stay green whatever a payload carried")
+	}
+}
+
+func isEvidenceEvent(expr ast.Expr) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "evidence" && sel.Sel.Name == "Event"
+}
+
+// stringsIn returns every string literal in an expression: a payload's keys are
+// strings, and so is anything constant it carries.
+func stringsIn(expr ast.Expr) []string {
+	var out []string
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			out = append(out, strings.Trim(lit.Value, `"`))
+		}
+		if ident, ok := n.(*ast.Ident); ok {
+			out = append(out, ident.Name)
+		}
+		return true
+	})
+	return out
 }
