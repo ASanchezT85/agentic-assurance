@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 13 of seventeen (0 through 16).
+Phase 14 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -96,7 +96,12 @@ rate and forced a genuine change to the detection rules.
 Phase 13 delivers shadow mode: the four fleet-level controls as recorded
 hypotheticals, a ledger with retrospective precision and false-positive analysis, and
 enforcement that the type system reserves for the customer. **All fifteen security
-invariants now have tests.** The submission path is still not wired.
+invariants now have tests.**
+
+Phase 14 delivers the console: the six surfaces of spec section 48 and no seventh.
+Fleet, Flow, Dependencies and Incidents read real data; Lab and Controls say plainly
+what is missing and why, rather than rendering placeholder rows. The console has no
+write path, and a test enforces that. The submission path is still not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 
@@ -184,8 +189,8 @@ Beyond unit tests, the repository tests itself:
 - `tests/structure_test.go` — mandatory directories, root files, all 24 ADRs, all 12
   scenarios, all 15 security invariants documented.
 - `tests/scope_guard_test.go` — no broker credentials required, no trading
-  recommendation module, no composite risk score, no LLM dependency, and the console
-  is still a scaffold (ADR-017).
+  recommendation module, no composite risk score, no LLM dependency, exactly six
+  console surfaces, and no write path in the console.
 - `packages/schema_compat_test.go` — the schema versioning policy, enforced.
 - `simulator/test_determinism.py` — the same seed produces the same experiment, in
   one process and across two.

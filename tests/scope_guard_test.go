@@ -198,34 +198,93 @@ func TestGatewayRequiresNoLLMPackage(t *testing.T) {
 	})
 }
 
-// TestConsoleIsStillAScaffold — ADR-017. The Phase 0 console proves the toolchain
-// compiles. It does not fetch, and it does not render financial data. Delete this
-// guard in the same commit that opens Phase 14.
-func TestConsoleIsStillAScaffold(t *testing.T) {
+// TestConsoleHasExactlySixSurfaces — ADR-017 and spec section 48.
+//
+// This replaces the Phase 0 scaffold guard, which failed if any page performed I/O.
+// ADR-017 said that guard comes off in the same commit that adds the first real
+// surface, and Phase 14 is that commit.
+//
+// What replaces it is the constraint that actually matters now. Section 48 fixes six
+// principal surfaces and ends by saying not to add dashboards without a defined
+// acceptance requirement. Consoles do not grow a seventh screen by decision; they
+// grow one because somebody needed a place to put something.
+func TestConsoleHasExactlySixSurfaces(t *testing.T) {
+	required := map[string]bool{
+		"fleet": false, "flow": false, "dependencies": false,
+		"incidents": false, "lab": false, "controls": false,
+	}
+
 	appDir := abs(t, "apps/console-web/app")
-	err := filepath.WalkDir(appDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		if !sourceExts[filepath.Ext(path)] {
-			return nil
-		}
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		body := string(raw)
-		for _, b := range []string{"fetch(", "axios", "new WebSocket", "EventSource("} {
-			if strings.Contains(body, b) {
-				rel, _ := filepath.Rel(appDir, path)
-				t.Errorf("apps/console-web/app/%s performs I/O (%q); the Phase 0 console is a build target, not a UI (ADR-017)",
-					filepath.ToSlash(rel), b)
-			}
-		}
-		return nil
-	})
+	entries, err := os.ReadDir(appDir)
 	if err != nil {
-		t.Fatalf("walk console: %v", err)
+		t.Fatalf("read console app: %v", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Next.js private and grouping directories are not routes.
+		if strings.HasPrefix(name, "_") || strings.HasPrefix(name, "(") || strings.HasPrefix(name, "@") {
+			continue
+		}
+		if _, isSurface := required[name]; !isSurface {
+			t.Errorf("apps/console-web/app/%s is a seventh surface; spec section 48 fixes "+
+				"six and requires a defined acceptance requirement for any more", name)
+			continue
+		}
+		required[name] = true
+	}
+
+	for name, present := range required {
+		if !present {
+			t.Errorf("surface %q from spec section 48 is missing", name)
+		}
+	}
+}
+
+// TestConsoleHasNoWritePath — spec sections 17 and 59.
+//
+// Production must be unaffected when the console is down, which is only true while
+// the console cannot cause anything. A form that posts, or a fetch with a method,
+// makes it operationally load-bearing: the fastest way to stop trading would then run
+// through a service the architecture treats as optional.
+func TestConsoleHasNoWritePath(t *testing.T) {
+	roots := []string{"apps/console-web/app", "apps/console-web/lib", "apps/console-web/components"}
+
+	for _, root := range roots {
+		dir := abs(t, root)
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			if !sourceExts[filepath.Ext(path)] {
+				return nil
+			}
+			raw, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return readErr
+			}
+			body := string(raw)
+			rel, _ := filepath.Rel(abs(t, "."), path)
+			rel = filepath.ToSlash(rel)
+
+			for _, write := range []string{
+				`method: "POST"`, `method: "PUT"`, `method: "PATCH"`, `method: "DELETE"`,
+				`method: 'POST'`, `method: 'PUT'`, `method: 'PATCH'`, `method: 'DELETE'`,
+				`method="post"`, `method="POST"`,
+			} {
+				if strings.Contains(body, write) {
+					t.Errorf("%s contains %s; the console reads and production must be "+
+						"unaffected when it is down (spec sections 17 and 59)", rel, write)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", root, err)
+		}
 	}
 }
 

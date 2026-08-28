@@ -1,6 +1,12 @@
 # ADR-017 — The Phase 0 console is a build target, not a UI
 
-**Status:** ACCEPTED (resolves a contradiction in MASTER_BUILD_SPEC.md v0.1)
+**Status:** SUPERSEDED BY EVENTS — Phase 14 opened the six surfaces, as item 5
+predicted. The scaffold guard was removed in the same commit that added the first real
+one, which is what item 4 required. Kept in full because the reasoning is what
+justified the guard existing at all, and a reader asking "why was the console empty for
+fourteen phases" should find the answer here.
+
+**Originally:** ACCEPTED (resolves a contradiction in MASTER_BUILD_SPEC.md v0.1)
 
 ## Context
 
@@ -25,8 +31,12 @@ scaffold ends and UI begins. That gap is exactly where a dashboard gets built ea
 ## Consequences
 
 - CI proves the toolchain without granting permission to build screens.
-- The guard is a grep. It is deliberately crude; when Phase 14 starts, the guard is
-  removed in the same commit that adds the first real surface.
+- The guard was a grep. It was deliberately crude, and it was removed in the same
+  commit that added the first real surface, as item 4 required.
+- What replaced it is the constraint that matters now: `TestConsoleHasExactlySixSurfaces`
+  fails on a seventh route, and `TestConsoleHasNoWritePath` fails on any request
+  carrying a method. Consoles do not grow a seventh screen by decision; they grow one
+  because somebody needed a place to put something.
 
 ## Prohibited reinterpretations
 
