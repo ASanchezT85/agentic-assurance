@@ -177,6 +177,7 @@ func (r *Runner) Submit(ctx context.Context, req Request) (Run, error) {
 		Scenario:    req.Scenario,
 		Seed:        *req.Seed,
 		RequestedBy: req.RequestedBy,
+		SubmittedBy: req.SubmittedBy,
 		Status:      StatusQueued,
 		RequestedAt: at,
 	}
@@ -229,7 +230,7 @@ func (r *Runner) unregister(run Run) {
 // the spot. When it did not, the replica that does holds a watchdog on the row and
 // stops it within one Watchdog interval, so the CPU comes back either way and the
 // caller is told which of the two they got rather than being left to assume.
-func (r *Runner) Cancel(ctx context.Context, tenantID, runID, by string) (owned bool, err error) {
+func (r *Runner) Cancel(ctx context.Context, tenantID, runID, by, byIdentity string) (owned bool, err error) {
 	if r.Store == nil {
 		return false, errors.New("no run store configured")
 	}
@@ -242,7 +243,7 @@ func (r *Runner) Cancel(ctx context.Context, tenantID, runID, by string) (owned 
 		return false, ErrNoSuchRun
 	}
 
-	changed, err := r.Store.Cancel(ctx, tenantID, runID, r.now(), by)
+	changed, err := r.Store.Cancel(ctx, tenantID, runID, r.now(), by, byIdentity)
 	if err != nil {
 		return false, err
 	}
@@ -264,10 +265,12 @@ func (r *Runner) Cancel(ctx context.Context, tenantID, runID, by string) (owned 
 		existing.Status = StatusCancelled
 		existing.CancelledAt = &at
 		existing.CancelledBy = by
+		existing.CancelledByIdentity = byIdentity
 		r.Evidence.Cancelled(ctx, *existing)
 	}
 
-	r.log().Info("simulation cancelled", "run_id", runID, "by", by, "owned", held)
+	r.log().Info("simulation cancelled", "run_id", runID, "by", by,
+		"identity", byIdentity, "owned", held)
 	return held, nil
 }
 

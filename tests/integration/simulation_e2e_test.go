@@ -601,7 +601,7 @@ func TestARunIsKilledByTheReplicaThatHoldsIt(t *testing.T) {
 	long := submit(replicaA, "long", 31)
 	waitForStatus(t, store, tenant, long.RunID, simulation.StatusRunning)
 
-	owned, err := replicaB.Cancel(context.Background(), tenant, long.RunID, "ops@example")
+	owned, err := replicaB.Cancel(context.Background(), tenant, long.RunID, "ops@example", "svc_test")
 	if err != nil {
 		t.Fatalf("cancel from the other replica: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestARunIsKilledByTheReplicaThatHoldsIt(t *testing.T) {
 		}
 		if status != simulation.StatusQueued {
 			// The slot came back, so the engine really was killed.
-			_, _ = replicaA.Cancel(context.Background(), tenant, short.RunID, "test-cleanup")
+			_, _ = replicaA.Cancel(context.Background(), tenant, short.RunID, "test-cleanup", "svc_test")
 
 			cancelled, err := store.Load(context.Background(), tenant, long.RunID)
 			if err != nil {

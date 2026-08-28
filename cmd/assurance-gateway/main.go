@@ -47,7 +47,7 @@ type evidenceReader interface {
 	ByAggregate(ctx context.Context, tenantID, aggregateID string) ([]evidence.Event, error)
 }
 
-func newMux(reader evidenceReader, submit http.HandlerFunc) *http.ServeMux {
+func newMux(reader evidenceReader, submit http.HandlerFunc, creds *identity.Credentials) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	health := func(w http.ResponseWriter, _ *http.Request) {
@@ -63,8 +63,8 @@ func newMux(reader evidenceReader, submit http.HandlerFunc) *http.ServeMux {
 	// ADR-023. Spec section 66 step 19 requires the chain
 	// agent -> intent -> authority -> policy -> broker order -> result to be
 	// inspectable, and section 59 forbids the console from being required for it.
-	mux.HandleFunc("GET /v1/evidence", evidenceByCorrelation(reader))
-	mux.HandleFunc("GET /v1/intents/{id}/evidence", evidenceByIntent(reader))
+	mux.HandleFunc("GET /v1/evidence", evidenceByCorrelation(reader, creds))
+	mux.HandleFunc("GET /v1/intents/{id}/evidence", evidenceByIntent(reader, creds))
 
 	// The write path. Absent rather than answering when the enforcement plane is not
 	// fully configured: a 404 is honest, and a handler that accepted intents it
@@ -76,26 +76,48 @@ func newMux(reader evidenceReader, submit http.HandlerFunc) *http.ServeMux {
 	return mux
 }
 
-// tenantOf reads the tenant from the request.
+// tenantOf establishes which tenant a caller speaks for.
 //
-// Phase 6 takes it from a header. That is not authentication and does not pretend to
-// be: the authenticated-tenant requirement of spec section 46 arrives with the API
-// surface that carries authentication. Until then these endpoints are reachable only
-// inside the customer's own network, and the handler says so rather than implying a
-// check it does not perform.
-func tenantOf(r *http.Request) string {
-	return strings.TrimSpace(r.Header.Get("X-Tenant-Id"))
+// It used to read a header, with a comment saying authentication would arrive with the
+// surface that carried it. It never did, and what these endpoints return is the whole
+// audit chain: every intent, identity, authority decision, policy decision and broker
+// order. Naming a tenant in a header was enough to read all of it.
+//
+// The tenant comes from the credential now (INV-007, ADR-025). A header, if sent, must
+// agree: ignoring one that disagrees would let a caller believe they were reading
+// someone else's evidence.
+func tenantOf(r *http.Request, creds *identity.Credentials) (string, int, string) {
+	var certs []*x509.Certificate
+	if r.TLS != nil {
+		certs = r.TLS.PeerCertificates
+	}
+	attested := (&identity.Verifier{}).Resolve(
+		identity.FromTransport(r.Header.Get("Authorization"), certs, creds))
+
+	if err := identity.RequireExecutable(attested); err != nil {
+		return "", http.StatusUnauthorized, "the caller is not authenticated"
+	}
+	if attested.TenantID == "" {
+		return "", http.StatusUnauthorized,
+			"the caller is authenticated but no tenant is established for it"
+	}
+	if claimed := strings.TrimSpace(r.Header.Get("X-Tenant-Id")); claimed != "" &&
+		claimed != attested.TenantID {
+		return "", http.StatusForbidden,
+			"the request names a tenant this caller is not authenticated for"
+	}
+	return attested.TenantID, 0, ""
 }
 
-func evidenceByCorrelation(reader evidenceReader) http.HandlerFunc {
+func evidenceByCorrelation(reader evidenceReader, creds *identity.Credentials) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenant := tenantOf(r)
-		correlationID := strings.TrimSpace(r.URL.Query().Get("correlation_id"))
-
+		tenant, status, message := tenantOf(r, creds)
 		if tenant == "" {
-			writeError(w, http.StatusBadRequest, "X-Tenant-Id is required")
+			writeError(w, status, message)
 			return
 		}
+		correlationID := strings.TrimSpace(r.URL.Query().Get("correlation_id"))
+
 		if correlationID == "" {
 			writeError(w, http.StatusBadRequest, "correlation_id is required")
 			return
@@ -106,15 +128,15 @@ func evidenceByCorrelation(reader evidenceReader) http.HandlerFunc {
 	}
 }
 
-func evidenceByIntent(reader evidenceReader) http.HandlerFunc {
+func evidenceByIntent(reader evidenceReader, creds *identity.Credentials) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenant := tenantOf(r)
-		intentID := strings.TrimSpace(r.PathValue("id"))
-
+		tenant, status, message := tenantOf(r, creds)
 		if tenant == "" {
-			writeError(w, http.StatusBadRequest, "X-Tenant-Id is required")
+			writeError(w, status, message)
 			return
 		}
+		intentID := strings.TrimSpace(r.PathValue("id"))
+
 		if intentID == "" {
 			writeError(w, http.StatusBadRequest, "intent id is required")
 			return
@@ -200,6 +222,23 @@ func openEvidence(ctx context.Context, log *slog.Logger) evidenceReader {
 // these is load-bearing: without a venue nothing executes, without a signed policy
 // bundle nothing is constrained, without credentials nothing is authenticated, and
 // without a usage ledger every grant with a rolling limit denies.
+// openCredentials parses the API credential registry.
+//
+// Separate from buildPipeline because the read endpoints need it too, and they are
+// useful without a venue or a policy bundle. Tying their authentication to the write
+// path's configuration would make an operator who only wants to read evidence
+// configure a broker to do it.
+func openCredentials(log *slog.Logger) *identity.Credentials {
+	creds, err := identity.ParseCredentials(os.Getenv("GATEWAY_API_CREDENTIALS"))
+	if err != nil {
+		log.Warn("no usable GATEWAY_API_CREDENTIALS",
+			"err", err.Error(),
+			"consequence", "every endpoint that carries tenant data refuses")
+		return nil
+	}
+	return creds
+}
+
 func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *identity.Credentials) {
 	missing := func(what, why string) (*gateway.Pipeline, *identity.Credentials) {
 		log.Warn("submission path not served", "missing", what, "consequence", why)
@@ -216,8 +255,8 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 		return nil, nil
 	}
 
-	creds, err := identity.ParseCredentials(os.Getenv("GATEWAY_API_CREDENTIALS"))
-	if err != nil {
+	creds := openCredentials(log)
+	if creds == nil {
 		return missing("GATEWAY_API_CREDENTIALS", "an unauthenticated caller must never produce an executable order (INV-001)")
 	}
 
@@ -344,7 +383,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pipeline, creds := buildPipeline(ctx, log)
+	creds := openCredentials(log)
+	pipeline, _ := buildPipeline(ctx, log)
 	var submit http.HandlerFunc
 	if pipeline != nil {
 		submit = gateway.SubmitHandler(pipeline, creds)
@@ -353,7 +393,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(openEvidence(ctx, log), submit),
+		Handler:           newMux(openEvidence(ctx, log), submit, creds),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -45,7 +45,7 @@ const runColumns = `
 	tenant_id, run_id, scenario, seed, requested_by, status,
 	requested_at, started_at, completed_at,
 	experiment_id, result_fingerprint, scenario_source_hash, record, error,
-	cancelled_at, cancelled_by`
+	cancelled_at, cancelled_by, submitted_by, cancelled_by_identity`
 
 // Cancel marks a run cancelled, if it has not already finished.
 //
@@ -56,7 +56,7 @@ const runColumns = `
 // The guard is in the WHERE clause rather than in a read followed by a write: the
 // engine finishing and the operator cancelling race by nature, and one statement is
 // how the database settles it rather than whichever goroutine got there first.
-func (s *Store) Cancel(ctx context.Context, tenantID, runID string, at time.Time, by string) (bool, error) {
+func (s *Store) Cancel(ctx context.Context, tenantID, runID string, at time.Time, by, byIdentity string) (bool, error) {
 	if by == "" {
 		return false, errors.New("a cancellation without an actor cannot be explained later")
 	}
@@ -66,9 +66,9 @@ func (s *Store) Cancel(ctx context.Context, tenantID, runID string, at time.Time
 		tag, err := tx.Exec(ctx, `
 			UPDATE simulation_runs
 			SET status = 'CANCELLED', cancelled_at = $3, cancelled_by = $4,
-			    completed_at = COALESCE(completed_at, $3)
+			    cancelled_by_identity = $5, completed_at = COALESCE(completed_at, $3)
 			WHERE tenant_id = $1 AND run_id = $2 AND status IN ('QUEUED', 'RUNNING')`,
-			tenantID, runID, at.UTC(), by)
+			tenantID, runID, at.UTC(), by, nullIfEmpty(byIdentity))
 		if err != nil {
 			return err
 		}
@@ -101,10 +101,11 @@ func (s *Store) Create(ctx context.Context, run Run) error {
 	return s.withTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO simulation_runs
-				(tenant_id, run_id, scenario, seed, requested_by, status, requested_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				(tenant_id, run_id, scenario, seed, requested_by, status, requested_at,
+				 submitted_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 			run.TenantID, run.RunID, run.Scenario, run.Seed, run.RequestedBy,
-			string(run.Status), run.RequestedAt.UTC())
+			string(run.Status), run.RequestedAt.UTC(), nullIfEmpty(run.SubmittedBy))
 		return err
 	})
 }
@@ -229,12 +230,14 @@ func scanRun(rows pgx.Rows) (Run, error) {
 		failure      *string
 		cancelledAt  *time.Time
 		cancelledBy  *string
+		submittedBy  *string
+		cancelledByI *string
 	)
 
 	if err := rows.Scan(&run.TenantID, &run.RunID, &run.Scenario, &run.Seed,
 		&run.RequestedBy, &status, &run.RequestedAt, &startedAt, &completedAt,
 		&experimentID, &fingerprint, &sourceHash, &record, &failure,
-		&cancelledAt, &cancelledBy); err != nil {
+		&cancelledAt, &cancelledBy, &submittedBy, &cancelledByI); err != nil {
 		return Run{}, err
 	}
 
@@ -253,6 +256,8 @@ func scanRun(rows pgx.Rows) (Run, error) {
 	run.Error = deref(failure)
 	run.CancelledAt = utcOrNil(cancelledAt)
 	run.CancelledBy = deref(cancelledBy)
+	run.SubmittedBy = deref(submittedBy)
+	run.CancelledByIdentity = deref(cancelledByI)
 
 	if len(record) > 0 {
 		if err := json.Unmarshal(record, &run.Record); err != nil {

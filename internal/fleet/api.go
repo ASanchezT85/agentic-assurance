@@ -2,11 +2,14 @@ package fleet
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"agentic-assurance/internal/identity"
 )
 
 // The intelligence API (spec section 46).
@@ -25,15 +28,29 @@ type Reader interface {
 // API serves the intelligence surface.
 type API struct {
 	Store Reader
+
+	// Credentials authenticate callers and say which tenant each speaks for.
+	//
+	// The tenant used to come from a header, with a comment saying that authentication
+	// arrived with the surface that carried it. It never did, and what these endpoints
+	// return is a customer's risk posture: directional imbalance, gross and net flow,
+	// agent count, and which models and feeds a fleet depends on. Naming a tenant in a
+	// header was enough to read all of it.
+	//
+	// Nil means the endpoints refuse everything. There is no unauthenticated mode.
+	Credentials *identity.Credentials
 }
 
-// tenantOf reads the tenant from the request.
+// presentedFrom adapts an HTTP request to what identity understands.
 //
-// A header, and not authentication. Spec section 46 requires an authenticated tenant
-// on every endpoint; that arrives with the API surface that carries authentication.
-// Saying so here is better than a handler that implies a check it does not perform.
-func tenantOf(r *http.Request) string {
-	return strings.TrimSpace(r.Header.Get("X-Tenant-Id"))
+// The adaptation lives here rather than in internal/identity because that package is
+// on the enforcement path and INV-005 forbids it from importing net/http.
+func presentedFrom(r *http.Request, creds *identity.Credentials) identity.Presented {
+	var certs []*x509.Certificate
+	if r.TLS != nil {
+		certs = r.TLS.PeerCertificates
+	}
+	return identity.FromTransport(r.Header.Get("Authorization"), certs, creds)
 }
 
 // Routes registers the read-only intelligence endpoints.
@@ -143,21 +160,44 @@ func (a *API) dependencies(w http.ResponseWriter, r *http.Request) {
 	writeRows(w, tenant, rows)
 }
 
+// requireTenant establishes who is calling and which tenant they speak for.
+//
+// The tenant comes from the credential, never from the request (INV-007, ADR-025).
 func (a *API) requireTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
-	tenant := tenantOf(r)
-	if tenant == "" {
-		writeError(w, http.StatusBadRequest, "X-Tenant-Id is required")
-		return "", false
-	}
-	if !safeIdentifier(tenant) {
-		writeError(w, http.StatusBadRequest, "tenant id is not identifier-shaped")
-		return "", false
-	}
 	if a.Store == nil {
 		writeError(w, http.StatusServiceUnavailable, "no analytical store is configured")
 		return "", false
 	}
-	return tenant, true
+
+	attested := (&identity.Verifier{}).Resolve(presentedFrom(r, a.Credentials))
+	if err := identity.RequireExecutable(attested); err != nil {
+		writeError(w, http.StatusUnauthorized, "the caller is not authenticated")
+		return "", false
+	}
+	if attested.TenantID == "" {
+		writeError(w, http.StatusUnauthorized,
+			"the caller is authenticated but no tenant is established for it")
+		return "", false
+	}
+	if !safeIdentifier(attested.TenantID) {
+		// The tenant is interpolated into a query below. A credential is configured
+		// by an operator rather than sent by a caller, so this cannot normally fail;
+		// it is checked anyway because the cost of being wrong here is a query, not
+		// an error message.
+		writeError(w, http.StatusUnauthorized, "tenant id is not identifier-shaped")
+		return "", false
+	}
+
+	// A header, if sent, must agree. Ignoring one that disagrees would let a caller
+	// believe they were reading another tenant's fleet.
+	if claimed := strings.TrimSpace(r.Header.Get("X-Tenant-Id")); claimed != "" &&
+		claimed != attested.TenantID {
+		writeError(w, http.StatusForbidden,
+			"the request names a tenant this caller is not authenticated for")
+		return "", false
+	}
+
+	return attested.TenantID, true
 }
 
 func (a *API) query(w http.ResponseWriter, r *http.Request, sql string) []map[string]any {

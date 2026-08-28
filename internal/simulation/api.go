@@ -56,7 +56,7 @@ type cancelRequest struct {
 }
 
 func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
-	tenant, ok := a.requireTenant(w, r)
+	tenant, who, ok := a.requireCaller(w, r)
 	if !ok {
 		return
 	}
@@ -94,7 +94,7 @@ func (a *API) cancel(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := contextWithTimeout(r, 15*time.Second)
 	defer cancel()
 
-	owned, err := a.Runner.Cancel(ctx, tenant, runID, strings.TrimSpace(req.CancelledBy))
+	owned, err := a.Runner.Cancel(ctx, tenant, runID, strings.TrimSpace(req.CancelledBy), who)
 	switch {
 	case errors.Is(err, ErrNoSuchRun):
 		// The same answer as a run belonging to someone else. Distinguishing them is
@@ -157,20 +157,26 @@ func presentedFrom(r *http.Request, creds *identity.Credentials) identity.Presen
 // caller name any tenant, and every simulation lookup that follows is scoped by it:
 // they would read another customer's results and cancel their runs (INV-007, ADR-025).
 func (a *API) requireTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tenant, _, ok := a.requireCaller(w, r)
+	return tenant, ok
+}
+
+// requireCaller also returns the authenticated identity, for the audit trail.
+func (a *API) requireCaller(w http.ResponseWriter, r *http.Request) (string, string, bool) {
 	if a.Store == nil {
 		writeError(w, http.StatusServiceUnavailable, "no simulation store is configured")
-		return "", false
+		return "", "", false
 	}
 
 	attested := (&identity.Verifier{}).Resolve(presentedFrom(r, a.Credentials))
 	if err := identity.RequireExecutable(attested); err != nil {
 		writeError(w, http.StatusUnauthorized, "the caller is not authenticated")
-		return "", false
+		return "", "", false
 	}
 	if attested.TenantID == "" {
 		writeError(w, http.StatusUnauthorized,
 			"the caller is authenticated but no tenant is established for it")
-		return "", false
+		return "", "", false
 	}
 
 	// A header, if sent, must agree. Silently ignoring one that disagrees would let a
@@ -180,14 +186,14 @@ func (a *API) requireTenant(w http.ResponseWriter, r *http.Request) (string, boo
 		claimed != attested.TenantID {
 		writeError(w, http.StatusForbidden,
 			"the request names a tenant this caller is not authenticated for")
-		return "", false
+		return "", "", false
 	}
 
-	return attested.TenantID, true
+	return attested.TenantID, attested.APIIdentity, true
 }
 
 func (a *API) submit(w http.ResponseWriter, r *http.Request) {
-	tenant, ok := a.requireTenant(w, r)
+	tenant, who, ok := a.requireCaller(w, r)
 	if !ok {
 		return
 	}
@@ -217,6 +223,7 @@ func (a *API) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.TenantID = tenant
+	req.SubmittedBy = who
 
 	ctx, cancel := contextWithTimeout(r, 10*time.Second)
 	defer cancel()

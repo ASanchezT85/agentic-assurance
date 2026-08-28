@@ -321,7 +321,7 @@ the startup log names what is missing.
 | Variable | Without it |
 |----------|-----------|
 | `POSTGRES_APP_DSN` | A simulation nobody can retrieve is a log line. |
-| `SIMULATION_API_CREDENTIALS` | Nothing authenticates a caller, and a run is stored, retrieved and cancelled by tenant. Same format as the gateway's. |
+| `SIMULATION_API_CREDENTIALS` | Nothing authenticates a caller on **either** the simulation endpoints or the intelligence API, and both carry tenant data. Same format as the gateway's. |
 | `SIMULATOR_PYTHON` | There is no engine to run. The project interpreter is `.venv/Scripts/python.exe` or `.venv/bin/python`. |
 | `SIMULATOR_REPO` | Working directory for the engine, which is invoked as `-m simulator.engine`. Default `.` |
 | `SIMULATOR_SCENARIO_DIR` | Which scenario files a caller may name. Default `simulator/scenarios`. |

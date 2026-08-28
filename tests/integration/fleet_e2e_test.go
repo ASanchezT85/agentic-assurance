@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"agentic-assurance/internal/fleet"
+	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
 )
 
@@ -40,6 +41,8 @@ func clickhouse(t *testing.T) *fleet.Sink {
 	}
 	return fleet.NewSink(strings.TrimRight(base, "/"), user, os.Getenv("CLICKHOUSE_PASSWORD"))
 }
+
+const fleetToken = "fleet-integration-token-32-plus-chars"
 
 func fleetTenant() string {
 	return fmt.Sprintf("tenant_fleet_%d", time.Now().UnixNano())
@@ -248,8 +251,15 @@ func TestFleetEngineEndToEnd(t *testing.T) {
 	}
 
 	// And the intelligence API serves it.
+	// The intelligence API authenticates now: naming a tenant in a header used to be
+	// enough to read another customer's risk posture.
+	creds, err := identity.ParseCredentials("svc_reader@" + tenant + "=" + fleetToken)
+	if err != nil {
+		t.Fatalf("credentials: %v", err)
+	}
+
 	mux := http.NewServeMux()
-	(&fleet.API{Store: sink}).Routes(mux)
+	(&fleet.API{Store: sink, Credentials: creds}).Routes(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -350,7 +360,8 @@ func waitForMeasurement(t *testing.T, base, tenant string) {
 func getRows(t *testing.T, url, tenant string) []map[string]any {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
-	req.Header.Set("X-Tenant-Id", tenant)
+	req.Header.Set("Authorization", "Bearer "+fleetToken)
+	_ = tenant
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

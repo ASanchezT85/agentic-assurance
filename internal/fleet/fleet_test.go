@@ -1,7 +1,11 @@
 package fleet
 
 import (
+	"agentic-assurance/internal/identity"
+	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -349,3 +353,72 @@ func TestMeasureOverEnvelopesAssumesAuthorized(t *testing.T) {
 			m.AuthorizedIntents, m.RefusedIntents)
 	}
 }
+
+// The intelligence API returns a customer's risk posture: directional imbalance, gross
+// and net flow, agent count, and which models and feeds a fleet depends on. Naming a
+// tenant in a header used to be enough to read all of it.
+func TestTheIntelligenceAPIRequiresAuthentication(t *testing.T) {
+	const token = "fleet-reader-token-of-32-plus-chars-ok"
+	creds, err := identity.ParseCredentials("svc_reader@tenant_a=" + token)
+	if err != nil {
+		t.Fatalf("credentials: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	(&API{Store: stubReader{}, Credentials: creds}).Routes(mux)
+
+	cases := []struct {
+		name       string
+		auth       string
+		tenant     string
+		wantStatus int
+	}{
+		{"no credential", "", "", http.StatusUnauthorized},
+		{"header only", "", "tenant_a", http.StatusUnauthorized},
+		{"wrong token", "Bearer " + token + "x", "", http.StatusUnauthorized},
+		{"credential", "Bearer " + token, "", http.StatusOK},
+		{"credential and agreeing header", "Bearer " + token, "tenant_a", http.StatusOK},
+		{"credential and another tenant", "Bearer " + token, "tenant_victim", http.StatusForbidden},
+	}
+
+	for _, path := range []string{"/v1/fleet/state", "/v1/cohorts", "/v1/dependencies"} {
+		for _, tc := range cases {
+			t.Run(path+"/"+tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				if tc.auth != "" {
+					req.Header.Set("Authorization", tc.auth)
+				}
+				if tc.tenant != "" {
+					req.Header.Set("X-Tenant-Id", tc.tenant)
+				}
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, req)
+
+				if rec.Code != tc.wantStatus {
+					t.Errorf("status = %d, want %d: %s", rec.Code, tc.wantStatus, rec.Body.String())
+				}
+			})
+		}
+	}
+}
+
+// With no credentials configured the endpoints refuse. There is no unauthenticated
+// mode, and an operator who forgets the registry gets a closed door rather than an
+// open one.
+func TestTheIntelligenceAPIRefusesWithoutCredentials(t *testing.T) {
+	mux := http.NewServeMux()
+	(&API{Store: stubReader{}}).Routes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/fleet/state", nil)
+	req.Header.Set("Authorization", "Bearer anything-at-all-thirty-two-characters")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+type stubReader struct{}
+
+func (stubReader) Query(context.Context, string) (string, error) { return "", nil }

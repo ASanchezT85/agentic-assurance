@@ -33,7 +33,7 @@ import (
 
 const component = "fleet-engine"
 
-func newMux(store fleet.Reader, sim *simulation.API) *http.ServeMux {
+func newMux(store fleet.Reader, sim *simulation.API, creds *identity.Credentials) *http.ServeMux {
 	mux := http.NewServeMux()
 	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -49,7 +49,7 @@ func newMux(store fleet.Reader, sim *simulation.API) *http.ServeMux {
 	// The intelligence API of spec section 46. Read-only: the fleet engine must not
 	// submit orders or modify customer policy (section 29), and there is no handler
 	// here that writes anything.
-	(&fleet.API{Store: store}).Routes(mux)
+	(&fleet.API{Store: store, Credentials: creds}).Routes(mux)
 
 	// The simulation surface (spec section 46). Mounted here rather than as a fifth
 	// deployable: a simulation is intelligence, not enforcement, and ADR-011 counts
@@ -210,10 +210,20 @@ func main() {
 		log.Info("simulation API served", "routes", "POST /v1/simulations, GET /v1/simulations/{id}")
 	}
 
+	// The intelligence API returns a customer's risk posture. It authenticates with
+	// the same registry as the simulation surface, and refuses everything without one.
+	creds, err := identity.ParseCredentials(os.Getenv("SIMULATION_API_CREDENTIALS"))
+	if err != nil {
+		log.Warn("no usable SIMULATION_API_CREDENTIALS",
+			"err", err.Error(),
+			"consequence", "every endpoint that carries tenant data refuses")
+		creds = nil
+	}
+
 	store := openStore(log)
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(store, sim),
+		Handler:           newMux(store, sim, creds),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

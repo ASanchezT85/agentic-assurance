@@ -10,12 +10,30 @@ import (
 	"time"
 
 	"agentic-assurance/internal/evidence"
+	"agentic-assurance/internal/identity"
 )
+
+const evidenceToken = "evidence-token-of-at-least-32-chars-ok"
+
+// evidenceCredentials issues one credential for tenant_a.
+func evidenceCredentials(t *testing.T) *identity.Credentials {
+	t.Helper()
+	creds, err := identity.ParseCredentials("svc_reader@tenant_acme=" + evidenceToken)
+	if err != nil {
+		t.Fatalf("credentials: %v", err)
+	}
+	return creds
+}
+
+func asReader(req *http.Request) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+evidenceToken)
+	return req
+}
 
 func TestHealthEndpoints(t *testing.T) {
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rec := httptest.NewRecorder()
-		newMux(nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		newMux(nil, nil, evidenceCredentials(t)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: got %d, want 200", path, rec.Code)
@@ -79,9 +97,9 @@ func TestEvidenceByCorrelation(t *testing.T) {
 	reader := &stubReader{events: []evidence.Event{sampleEvent()}}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
-	req.Header.Set("X-Tenant-Id", "tenant_acme")
+	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(reader, nil).ServeHTTP(rec, req)
+	newMux(reader, nil, evidenceCredentials(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -109,9 +127,9 @@ func TestEvidenceByIntent(t *testing.T) {
 	reader := &stubReader{events: []evidence.Event{sampleEvent()}}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/intents/env_1/evidence", nil)
-	req.Header.Set("X-Tenant-Id", "tenant_acme")
+	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(reader, nil).ServeHTTP(rec, req)
+	newMux(reader, nil, evidenceCredentials(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -122,26 +140,69 @@ func TestEvidenceByIntent(t *testing.T) {
 }
 
 // A query with no tenant must be refused rather than served across tenants.
-func TestEvidenceRequiresATenant(t *testing.T) {
+// The evidence endpoints return the whole audit chain for a tenant. Naming one in a
+// header used to be enough to read it.
+func TestEvidenceRequiresAuthentication(t *testing.T) {
 	reader := &stubReader{events: []evidence.Event{sampleEvent()}}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
-	rec := httptest.NewRecorder()
-	newMux(reader, nil).ServeHTTP(rec, req)
+	for _, name := range []string{"no credential", "header only", "wrong token"} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
+			switch name {
+			case "header only":
+				req.Header.Set("X-Tenant-Id", "tenant_acme")
+			case "wrong token":
+				req.Header.Set("Authorization", "Bearer "+evidenceToken+"-wrong")
+			}
+			rec := httptest.NewRecorder()
+			newMux(reader, nil, evidenceCredentials(t)).ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status %d; a request with no tenant must not be served", rec.Code)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status %d, want 401: %s", rec.Code, rec.Body.String())
+			}
+			if reader.gotTenant != "" {
+				t.Error("the store was queried for an unauthenticated caller")
+			}
+		})
+	}
+}
+
+// A header naming a tenant the caller is not authenticated for is refused rather than
+// ignored, so nobody reads a chain believing it belongs to someone else.
+func TestEvidenceRefusesADisagreeingHeader(t *testing.T) {
+	reader := &stubReader{events: []evidence.Event{sampleEvent()}}
+
+	req := asReader(httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil))
+	req.Header.Set("X-Tenant-Id", "tenant_victim")
+	rec := httptest.NewRecorder()
+	newMux(reader, nil, evidenceCredentials(t)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", rec.Code)
 	}
 	if reader.gotTenant != "" {
-		t.Error("the store was queried without a tenant")
+		t.Error("the store was queried for a tenant the caller does not own")
+	}
+}
+
+// With no credentials configured every tenant-carrying endpoint refuses. There is no
+// unauthenticated mode.
+func TestEvidenceRefusesEverythingWithoutCredentials(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
+	req.Header.Set("Authorization", "Bearer "+evidenceToken)
+	rec := httptest.NewRecorder()
+	newMux(&stubReader{}, nil, nil).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status %d, want 401", rec.Code)
 	}
 }
 
 func TestEvidenceRequiresACorrelationID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence", nil)
-	req.Header.Set("X-Tenant-Id", "tenant_acme")
+	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(&stubReader{}, nil).ServeHTTP(rec, req)
+	newMux(&stubReader{}, nil, evidenceCredentials(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status %d", rec.Code)
@@ -152,16 +213,16 @@ func TestEvidenceRequiresACorrelationID(t *testing.T) {
 // healthy. An operator needs to be able to see the gateway is alive.
 func TestEvidenceUnavailableWithoutAStore(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
-	req.Header.Set("X-Tenant-Id", "tenant_acme")
+	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(nil, nil).ServeHTTP(rec, req)
+	newMux(nil, nil, evidenceCredentials(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503", rec.Code)
 	}
 
 	health := httptest.NewRecorder()
-	newMux(nil, nil).ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	newMux(nil, nil, evidenceCredentials(t)).ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if health.Code != http.StatusOK {
 		t.Error("the gateway reported unhealthy because a database was missing")
 	}
@@ -172,9 +233,9 @@ func TestStoreErrorsAreNotLeaked(t *testing.T) {
 	reader := &stubReader{err: errors.New("relation \"evidence_events\" does not exist in tenant_globex")}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/evidence?correlation_id=corr_1", nil)
-	req.Header.Set("X-Tenant-Id", "tenant_acme")
+	asReader(req)
 	rec := httptest.NewRecorder()
-	newMux(reader, nil).ServeHTTP(rec, req)
+	newMux(reader, nil, evidenceCredentials(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d", rec.Code)
@@ -187,11 +248,11 @@ func TestStoreErrorsAreNotLeaked(t *testing.T) {
 // The HTTP surface is read-only. There is no route through which evidence can be
 // written, corrected or deleted (ADR-009, INV-006).
 func TestEvidenceEndpointsAreReadOnly(t *testing.T) {
-	mux := newMux(&stubReader{}, nil)
+	mux := newMux(&stubReader{}, nil, evidenceCredentials(t))
 
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/v1/evidence?correlation_id=corr_1", nil)
-		req.Header.Set("X-Tenant-Id", "tenant_acme")
+		asReader(req)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 

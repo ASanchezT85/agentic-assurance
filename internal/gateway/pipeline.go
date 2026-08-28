@@ -181,8 +181,20 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		})
 		return p.deny(result, StageIdentity, "ATTESTATION_CLAIM_EXCEEDS_EVIDENCE", err.Error())
 	}
-	// The tenant the caller was authenticated for, against the one the envelope
-	// claims. Without this an authenticated caller could name any tenant and every
+	if err := identity.RequireExecutable(established); err != nil {
+		p.record(ctx, env, evidence.IdentityFailed, at, map[string]any{
+			"established": string(established.Level),
+			"reason":      err.Error(),
+		})
+		return p.deny(result, StageIdentity, "UNAUTHENTICATED_WORKLOAD", err.Error())
+	}
+
+	// Then the tenant the caller was authenticated for, against the one the envelope
+	// claims. After executability, because whether a caller can act at all is the
+	// more fundamental question: asking which tenant an unauthenticated caller
+	// belongs to answers the wrong one, and it left RequireExecutable unreachable.
+	//
+	// Without this check an authenticated caller could name any tenant and every
 	// lookup that follows would use it: the grant, the policy bundle, the idempotency
 	// record and the row level security setting all take env.TenantID. The database
 	// half of INV-007 was enforced the whole time and isolated correctly to a tenant
@@ -195,14 +207,6 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		return p.deny(result, StageIdentity, "TENANT_NOT_AUTHENTICATED", err.Error())
 	}
 
-	if err := identity.RequireExecutable(established); err != nil {
-		p.record(ctx, env, evidence.IdentityFailed, at, map[string]any{
-			"established": string(established.Level),
-			"reason":      err.Error(),
-		})
-		return p.deny(result, StageIdentity, "UNAUTHENTICATED_WORKLOAD", err.Error())
-	}
-
 	p.record(ctx, env, evidence.IntentReceived, at, map[string]any{
 		"instrument_id": env.Intent.InstrumentID,
 		"side":          string(env.Intent.Side),
@@ -212,6 +216,12 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		"level":     string(established.Level),
 		"method":    established.Method,
 		"spiffe_id": established.SpiffeID.String(),
+		// Which credential acted, not only that one did. For an A1 caller the SPIFFE
+		// id is empty, so without this the chain says an authenticated caller
+		// submitted the order and cannot say which: "who placed this" had no answer
+		// for the level most callers actually reach.
+		"api_identity": established.APIIdentity,
+		"tenant_id":    established.TenantID,
 	})
 
 	// 5. Idempotency, before anything is evaluated. A duplicate must return the

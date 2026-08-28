@@ -25,8 +25,20 @@ POST /v1/simulations                    DONE (internal/simulation)
 GET  /v1/simulations/{id}               DONE (internal/simulation)
 ```
 
-Every mutation endpoint requires an authenticated tenant, an authorized actor, a
-correlation id, and produces an audit event.
+**Every endpoint that carries tenant data authenticates**, not only the mutating ones.
+The tenant comes from the credential (`identity@tenant=token`), never from a header or
+a body field, and a header that disagrees is `403` rather than ignored. There is no
+unauthenticated mode: with no credential registry configured, every such endpoint
+refuses.
+
+That was not true until an audit went looking. `GET /v1/evidence` returned a tenant's
+whole audit chain and `GET /v1/fleet/state` returned its risk posture, both to anyone
+who named the tenant in a header. Each carried an honest comment saying a header is not
+authentication and that the real thing would arrive with the surface that carried it.
+It did not arrive, and the comments made the gap look handled.
+
+Mutation endpoints additionally require an authorized actor and a correlation id, and
+produce an audit event.
 
 ## POST /v1/intents
 

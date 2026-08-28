@@ -55,7 +55,16 @@ type Request struct {
 
 	// RequestedBy is the human or service that asked. Spec section 36: humans are
 	// audited too, and a simulation is a request against a customer's data.
+	//
+	// Self-declared, and kept because it is the only place a human name can come
+	// from: a credential identifies a service, not the person operating it. It is
+	// recorded beside SubmittedBy rather than instead of it.
 	RequestedBy string `json:"requested_by"`
+
+	// SubmittedBy is the authenticated credential. Not settable by the caller: it is
+	// filled from the transport, and it is the half of "who asked" that is worth
+	// anything six months later.
+	SubmittedBy string `json:"-"`
 }
 
 // Validate checks a request before anything is started.
@@ -152,8 +161,14 @@ type Run struct {
 	// Error is why a failed run failed, in the engine's own words.
 	Error string `json:"error,omitempty"`
 
-	CancelledAt *time.Time `json:"cancelled_at,omitempty"`
-	CancelledBy string     `json:"cancelled_by,omitempty"`
+	// SubmittedBy and CancelledByIdentity are the authenticated credentials behind
+	// RequestedBy and CancelledBy. Those two are text the caller typed; these are
+	// what the transport established.
+	SubmittedBy string `json:"submitted_by,omitempty"`
+
+	CancelledAt         *time.Time `json:"cancelled_at,omitempty"`
+	CancelledBy         string     `json:"cancelled_by,omitempty"`
+	CancelledByIdentity string     `json:"cancelled_by_identity,omitempty"`
 }
 
 // ErrNotCancellable is returned for a run that has already finished.
