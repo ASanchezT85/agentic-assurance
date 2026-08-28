@@ -156,6 +156,7 @@ func TestCoreDoesNotImportAnyAdapter(t *testing.T) {
 	for _, dir := range []string{
 		"../../internal/broker", "../../internal/execution", "../../internal/intent",
 		"../../internal/authority", "../../internal/identity", "../../internal/policy",
+		"../../internal/fleet", "../../internal/evidence", "../../internal/incident",
 	} {
 		fset := token.NewFileSet()
 		pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {

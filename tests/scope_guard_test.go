@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -314,6 +315,8 @@ var allowedModules = map[string]string{
 		"reports the main module does not need it; go mod tidy retains it for the test graph.",
 	"github.com/nats-io/nats.go": "NATS JetStream client (spec section 9.7). Phase 6: the " +
 		"event backbone. Asynchronous only, and forbidden on the hot path by INV-005.",
+	// The market data adapter is stdlib-only on purpose: it speaks HTTP and JSON, and
+	// a provider SDK would put a vendor's types one import from the fleet engine.
 	"github.com/nats-io/nkeys":      "nats.go transitive dependency (authentication).",
 	"github.com/nats-io/nuid":       "nats.go transitive dependency (identifier generation).",
 	"github.com/klauspost/compress": "nats.go transitive dependency.",
@@ -355,5 +358,68 @@ func TestDependenciesAreOnTheAllowlist(t *testing.T) {
 				"Add it there with the reason it is needed, or remove the dependency.",
 				module, "tests/scope_guard_test.go")
 		}
+	}
+}
+
+// TestNoAPIKeyValuesAreCommitted looks for a credential that was written down.
+//
+// The existing env-file guard checks for named broker variables. This one is about
+// values: an assignment whose right-hand side looks like an actual key, anywhere in
+// the repository. Keys arrive by chat, by copy-paste and by "just for a minute", and
+// a repository is the worst place for one to land quietly.
+func TestNoAPIKeyValuesAreCommitted(t *testing.T) {
+	// <NAME>_KEY / _SECRET / _TOKEN / _PASSWORD followed by a value that is not
+	// obviously a placeholder.
+	assignment := regexp.MustCompile(
+		`(?i)(api[_-]?key|apikey|secret[_-]?key|access[_-]?token|auth[_-]?token|password)\s*[:=]\s*["']?([A-Za-z0-9_\-]{16,})["']?`)
+
+	// Placeholders and test doubles are fine and necessary; a guard that banned them
+	// would ban the tests that prove the real thing is handled correctly.
+	//
+	// The `_dev_only` suffix is the convention for a value that is deliberately
+	// written down because it is worthless outside a developer's laptop. Making it a
+	// naming rule rather than a per-file exception means the intent is visible in the
+	// value itself, and anyone adding one has to say so in the name.
+	allowed := regexp.MustCompile(`(?i)(^(test|fake|dummy|example|placeholder|changeme|your|xxx)|_dev_only$|^super-secret-key-value$)`)
+
+	root := abs(t, ".")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDirs[d.Name()] || d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".go", ".ts", ".tsx", ".py", ".yml", ".yaml", ".json", ".sh", ".md", ".sql", "":
+		default:
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if strings.HasSuffix(rel, "_guard_test.go") {
+			return nil // this file describes the pattern it is looking for
+		}
+
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		for _, match := range assignment.FindAllStringSubmatch(string(raw), -1) {
+			value := match[2]
+			if allowed.MatchString(value) {
+				continue
+			}
+			t.Errorf("%s assigns %s a concrete-looking value; credentials belong in the "+
+				"environment or a secret manager, never in the repository (spec section 35)",
+				rel, match[1])
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
 	}
 }

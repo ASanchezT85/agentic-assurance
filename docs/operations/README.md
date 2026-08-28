@@ -152,3 +152,38 @@ Rotating logs aggressively is fine. Deleting evidence is not, and the applicatio
 cannot: it holds `SELECT` and `INSERT` on that table and nothing else.
 
 Secrets belong in neither (spec section 35).
+
+## Market data (optional)
+
+`ALPHAVANTAGE_API_KEY` enables the participation component of the Fleet Risk Vector.
+Without it, `P` is UNKNOWN, which is the correct outcome and not a degraded one
+(ADR-019).
+
+**The free plan does not make P usable for real cohorts.** It serves daily totals;
+intraday is a paid endpoint, and the key is capped at 25 requests per day. The adapter
+refuses any window shorter than a session rather than prorating a daily volume across
+a minute, because intraday volume is heavily weighted to the open and the close and a
+prorated denominator would look precise while being wrong in both directions.
+
+So today the adapter answers session-length questions and the fleet engine asks
+minute-length ones. Closing that needs an intraday feed.
+
+Verified live on 2026-08-27: AAPL, 10,198,442,317 of notional.
+
+```sh
+ALPHAVANTAGE_API_KEY=... go test -tags=integration -run Live ./tests/integration/
+```
+
+The test skips without a key and spends at most one request.
+
+## Credentials in this repository
+
+There are none, and a guard says so. `TestNoAPIKeyValuesAreCommitted` scans every
+committed file for an assignment whose value looks like a real key.
+
+Values that are deliberately written down because they are worthless outside a
+laptop end in **`_dev_only`** (`assurance_dev_only`, `assurance_app_dev_only`). That
+is a naming convention the guard recognises, so the intent lives in the value itself
+and anyone adding one has to say so in the name.
+
+Everything else belongs in the environment or a secret manager.
