@@ -63,6 +63,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # numpy is a runtime dependency as of Phase 11: the twin's determinism rests
+      # on numpy.random.Generator, whose stream is reproducible from a seed.
+      - run: python -m pip install --quiet "numpy>=2.1"
       - run: python -m pip install --quiet pytest ruff mypy
       - run: python -m ruff check .
       - run: python -m mypy

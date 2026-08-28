@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 10 of seventeen (0 through 16).
+Phase 11 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -82,7 +82,13 @@ the rule that produced it, incidents carrying their severity rule and shared
 dependencies, human-action audit, and timeline reconstruction **from evidence rather
 than from memory**. What the system recommended and what a person did are separate
 lines throughout, because conflating them is how a shadow-mode suggestion becomes
-indistinguishable from an enforced control. The submission path is still not wired.
+indistinguishable from an enforced control.
+
+Phase 11 delivers the Digital Twin: market, agent, execution and assurance engines in
+Python, with reproducible experiments. The same seed produces the same experiment, in
+the same process and across processes, and the experiment record carries everything
+spec section 40 requires to rerun an investigation. The submission path is still not
+wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 
@@ -114,7 +120,7 @@ Details: `docs/architecture/`.
 | Go | 1.25 | 1.26.4 |
 | Node | 20 | 26.3.0 |
 | pnpm | 10 | 11.8.0 |
-| Python | 3.11 | 3.14.6 |
+| Python | 3.12 | 3.14.6 |
 | Docker (with compose plugin) | 24 | 29.7.2 |
 | make | 4 | optional; see below |
 
@@ -173,6 +179,8 @@ Beyond unit tests, the repository tests itself:
   recommendation module, no composite risk score, no LLM dependency, and the console
   is still a scaffold (ADR-017).
 - `packages/schema_compat_test.go` — the schema versioning policy, enforced.
+- `simulator/test_determinism.py` — the same seed produces the same experiment, in
+  one process and across two.
 - `internal/intent/schema_sync_test.go` — the published schema and the Go validator
   cannot drift apart in either direction.
 - `tests/fixtures/envelopes/` — every invalid fixture declares the error codes it must

@@ -3,17 +3,23 @@ name = "agentic-assurance-simulator"
 version = "0.0.0"
 description = "Digital Twin simulator for the Agentic Order-Flow Assurance Platform"
 readme = "README.md"
-requires-python = ">=3.11"
+# 3.12 rather than 3.11: numpy 2.5's type stubs use `type` statements, which mypy
+# cannot parse under 3.11. The runtime would probably tolerate 3.11; a project that
+# cannot typecheck on its own floor does not really have that floor.
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Alexander J Sanchez T" }]
-dependencies = []
+
+# NumPy is required rather than optional as of Phase 11: the Digital Twin's
+# determinism guarantee rests on numpy.random.Generator, whose stream is reproducible
+# from a seed in a way Python's own random module does not promise across versions.
+dependencies = ["numpy>=2.1"]
 
 [project.optional-dependencies]
 # Baseline quantitative libraries from MASTER_BUILD_SPEC.md §9.2. Not imported in
 # Phase 0 — the simulator has no implementation yet (handoff §4).
 sim = [
-  "numpy>=2.1",
   "polars>=1.20",
   "scipy>=1.14",
   "pyarrow>=18.0",
@@ -34,7 +40,7 @@ packages = ["simulator"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
@@ -43,7 +49,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
 "tests/*" = ["ANN"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 files = ["simulator"]
 

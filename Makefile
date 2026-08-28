@@ -4,7 +4,7 @@
 #   Go      >= 1.25   (tested on 1.26.4; pgx v5.10 sets the floor)
 #   Node    >= 20     (tested on 26.3.0)
 #   pnpm    >= 10     (tested on 11.8.0)
-#   Python  >= 3.11   (tested on 3.14.6)
+#   Python  >= 3.12   (tested on 3.14.6; numpy 2.5 stubs set the floor)
 #   Docker  >= 24     (tested on 29.7.2, with the compose plugin)
 #   make    >= 4      (Windows: scoop/choco, or run scripts/verify.sh instead)
 
