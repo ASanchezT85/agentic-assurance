@@ -26,7 +26,7 @@ maximize returns, and it will not be extended to (ADR-001).
 
 ## Current phase
 
-Phase 11 of seventeen (0 through 16).
+Phase 12 of seventeen (0 through 16).
 
 Phase 0 delivered the monorepo, the locked architecture decisions, schema locations
 with a compatibility harness, local infrastructure and CI, with no business logic.
@@ -87,8 +87,12 @@ indistinguishable from an enforced control.
 Phase 11 delivers the Digital Twin: market, agent, execution and assurance engines in
 Python, with reproducible experiments. The same seed produces the same experiment, in
 the same process and across processes, and the experiment record carries everything
-spec section 40 requires to rerun an investigation. The submission path is still not
-wired.
+spec section 40 requires to rerun an investigation.
+
+Phase 12 delivers the stress library: all twelve scenarios of spec section 41, each
+with assertions, run against the real Go engines. S12 measures the false intervention
+rate and forced a genuine change to the detection rules. The submission path is still
+not wired.
 
 Roadmap: `MASTER_BUILD_SPEC.md` §57.
 

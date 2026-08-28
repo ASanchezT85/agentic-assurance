@@ -1,5 +1,11 @@
 scenario_id: S08
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Liquidity shock
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: fleet
+assertions: tests/scenarios
+note: >
+  The same flow into a hundredth of the venue volume. Asserts participation
+  deteriorates and the recommendation stays a recommendation.

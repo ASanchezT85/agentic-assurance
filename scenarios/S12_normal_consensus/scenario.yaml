@@ -1,5 +1,11 @@
 scenario_id: S12
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Normal consensus
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: fleet
+assertions: tests/scenarios
+note: >
+  Sixty agents agreeing during a real event. Asserts the agreement is NOT reported
+  as an anomaly and measures the false intervention rate across twenty windows.

@@ -1,5 +1,11 @@
 scenario_id: S03
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Stale market feed
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: platform
+assertions: tests/scenarios
+note: >
+  Asserts an old observation survives validation unchanged, so policy can act on
+  it rather than the platform silently assuming the price is current.

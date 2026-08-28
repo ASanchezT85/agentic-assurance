@@ -1,5 +1,11 @@
 scenario_id: S09
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Policy regression
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: platform
+assertions: tests/scenarios
+note: >
+  A ceiling raised a hundredfold. Asserts simulation surfaces the difference and
+  that the bundle cannot reach production without the full pipeline.

@@ -1,5 +1,11 @@
 scenario_id: S01
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Correlated stop-loss
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: fleet
+assertions: tests/scenarios
+note: >
+  Forty agents hit their own stop-loss on one price move. Asserts the burst
+  is detected and that nothing in the incident accuses them of anything.

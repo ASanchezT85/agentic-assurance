@@ -1,5 +1,11 @@
 scenario_id: S10
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Intelligence outage
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: platform
+assertions: tests/scenarios
+note: >
+  Every external dependency nil. Asserts hard limits still bind, that a compliant
+  order still passes, and that 500 requests do not degrade it.

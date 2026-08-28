@@ -1,5 +1,11 @@
 scenario_id: S05
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Retry storm
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: platform
+assertions: tests/scenarios
+note: >
+  Fifty retries of one intent after a lost response. Asserts exactly one
+  submission reaches the venue and every retry returns the prior outcome.

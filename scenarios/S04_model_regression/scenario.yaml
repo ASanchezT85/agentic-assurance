@@ -1,5 +1,11 @@
 scenario_id: S04
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Model regression
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: fleet
+assertions: tests/scenarios
+note: >
+  Twenty-five agents sharing only a model family. Asserts the model concentration
+  is what an anomaly names, not the feeds or strategies.

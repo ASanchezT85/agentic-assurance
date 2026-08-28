@@ -1,5 +1,11 @@
 scenario_id: S11
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Agent credential compromise
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: platform
+assertions: tests/scenarios
+note: >
+  A workload claiming A2 with nothing to show. Asserts the claim is refused, the
+  workload cannot execute, and a stolen grant does not help.

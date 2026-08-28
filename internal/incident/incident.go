@@ -77,6 +77,14 @@ type DetectionRules struct {
 	Concentration float64
 	MinCoverage   float64
 
+	// AbnormalConsensus is how far observed agreement must exceed what the activity
+	// level already explains before one-directional flow is reported as an anomaly.
+	//
+	// Scenario S12 forced this field into existence. Without it the directional rule
+	// fires on every legitimate event that produces broad rational agreement, which
+	// is the over-detection that trains operators to ignore the alerts.
+	AbnormalConsensus float64
+
 	// MinAgents is the cohort size below which nothing is reported. Two agents
 	// agreeing is not a fleet.
 	MinAgents int
@@ -87,6 +95,7 @@ func DefaultRules() DetectionRules {
 	return DetectionRules{
 		BurstRobustScore:     4.0,
 		DirectionalImbalance: 0.9,
+		AbnormalConsensus:    0.2,
 		Concentration:        0.7,
 		MinCoverage:          0.5,
 		MinAgents:            3,
@@ -112,12 +121,30 @@ func Detect(r fleet.RiskVector, rules DetectionRules, at time.Time) []Anomaly {
 	}
 
 	if r.D.Known && r.D.Value >= rules.DirectionalImbalance {
-		out = append(out, Anomaly{
-			Component:   r.D,
-			Rule:        fmt.Sprintf("D >= %.2f", rules.DirectionalImbalance),
-			Observation: fmt.Sprintf("flow is %.0f%% one-directional", r.D.Value*100),
-			DetectedAt:  at.UTC(),
-		})
+		// Agreement is not abnormality. When abnormal consensus is measurable and
+		// low, the activity level already explains the agreement, and reporting it
+		// anyway is what scenario S12 exists to prevent: a fleet engine that flags
+		// every earnings-day rally is one whose alerts get ignored.
+		//
+		// Without a baseline nothing can be said either way, so the anomaly is
+		// reported and says so rather than being silently suppressed.
+		explained := r.A.Known && r.A.Value < rules.AbnormalConsensus
+
+		if !explained {
+			observation := fmt.Sprintf("flow is %.0f%% one-directional", r.D.Value*100)
+			if !r.A.Known {
+				observation += "; there is no baseline for this context, so whether that " +
+					"is abnormal here cannot be said"
+			} else {
+				observation += fmt.Sprintf("; %.2f more than the activity level explains", r.A.Value)
+			}
+			out = append(out, Anomaly{
+				Component:   r.D,
+				Rule:        fmt.Sprintf("D >= %.2f and A >= %.2f", rules.DirectionalImbalance, rules.AbnormalConsensus),
+				Observation: observation,
+				DetectedAt:  at.UTC(),
+			})
+		}
 	}
 
 	for _, c := range []fleet.Component{r.Cm, r.Cs, r.Cf} {

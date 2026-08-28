@@ -1,5 +1,11 @@
 scenario_id: S02
-scenario_version: 0
-status: NOT_IMPLEMENTED
+scenario_version: 1
+name: Poisoned news
+status: IMPLEMENTED
 owning_phase: 12
 spec_section: "41"
+exercises: fleet
+assertions: tests/scenarios
+note: >
+  Thirty agents, four models, five strategies, one feed. Asserts feed concentration
+  is the finding and that the dependency evidence reaches the incident and its events.

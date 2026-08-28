@@ -1,10 +1,11 @@
 scenario_id: S07
 scenario_version: 1
+name: Cross-agent accumulation
 status: IMPLEMENTED
-owning_phase: 7
+owning_phase: 12
 spec_section: "41"
+exercises: intent
 assertions: tests/scenarios
 note: >
-  Deterministic assertions against constructed intent streams, delivered as the
-  Phase 7 exit criteria. The simulator-driven version, with agent populations and
-  market state, arrives in Phase 12.
+  The section 21 example exactly: three agents, 11,500 combined, each within its
+  own grant. Asserts the principal-level view sees it.

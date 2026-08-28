@@ -148,3 +148,27 @@ the *next* burst looks normal. A median does not move.
 The 30-observation minimum and the coarse US-centric session labels are documented
 defaults whose provenance is convention. They must be replaced by real venue
 calendars and measured sample requirements before anyone enforces on a burst score.
+
+## What S12 changed
+
+Scenario S12 exists to punish over-detection, and it did its job.
+
+The directional-imbalance rule originally fired on any cohort whose flow was more than
+90% one-sided. That is correct on a coordinated sell-off and wrong on an earnings-day
+rally, where sixty agents agree because something happened. A fleet engine that flags
+every legitimate event is one whose alerts get ignored, which is worse than not having
+them.
+
+The rule now consults abnormal consensus first. When `A` is measurable and low, the
+activity level already explains the agreement and no anomaly is reported. When there
+is no baseline, the anomaly is reported and says so: *"there is no baseline for this
+context, so whether that is abnormal here cannot be said."* Suppressing it silently
+would be the opposite failure.
+
+The burst still fires either way, and should: activity really did spike, and saying so
+is useful. What the system must not do is treat agreement as the finding.
+
+Measured across twenty windows of ordinary two-way activity at a range of intensities:
+**0 false interventions**. The number is logged by the test rather than asserted at a
+point, because the useful thing is the trend, and the bound only stops it silently
+becoming useless.
