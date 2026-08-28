@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -33,20 +33,28 @@ import (
 func simInterpreter(t *testing.T) string {
 	t.Helper()
 	root := simRepoRoot(t)
+	// SIMULATOR_PYTHON first, because that is what the runner itself reads.
 	for _, c := range []string{
+		os.Getenv("SIMULATOR_PYTHON"),
 		filepath.Join(root, ".venv", "Scripts", "python.exe"),
 		filepath.Join(root, ".venv", "bin", "python"),
 	} {
-		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+		if c == "" {
+			continue
+		}
+		info, err := os.Stat(c)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		// It has to be able to run the engine, not merely start: a container's own
+		// python3 starts and has no numpy.
+		probe := exec.Command(c, "-c", "import numpy, simulator.engine")
+		probe.Dir = root
+		if probe.Run() == nil {
 			return c
 		}
 	}
-	if runtime.GOOS != "windows" {
-		if _, err := os.Stat("/usr/bin/python3"); err == nil {
-			return "/usr/bin/python3"
-		}
-	}
-	t.Skip("no project interpreter; run make bootstrap")
+	t.Skip("no interpreter that can run the engine; run make bootstrap")
 	return ""
 }
 

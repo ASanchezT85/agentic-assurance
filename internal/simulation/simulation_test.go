@@ -3,13 +3,14 @@ package simulation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -368,19 +369,41 @@ func interpreter(t *testing.T) string {
 	t.Helper()
 
 	root := repoRoot(t)
+	// SIMULATOR_PYTHON first, because that is what the runner itself reads: a test
+	// that looked only in .venv would skip on a machine configured the way production
+	// is.
 	candidates := []string{
+		os.Getenv("SIMULATOR_PYTHON"),
 		filepath.Join(root, ".venv", "Scripts", "python.exe"),
 		filepath.Join(root, ".venv", "bin", "python"),
 	}
-	if runtime.GOOS != "windows" {
-		candidates = append(candidates, "/usr/bin/python3")
-	}
+	// The system interpreter is not a candidate. It starts and has no numpy, so it
+	// would pass a weaker probe and fail the run; the project's own venv is the only
+	// thing this is meant to find.
 	for _, c := range candidates {
-		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+		if c == "" {
+			continue
+		}
+		info, err := os.Stat(c)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		// It has to be able to run the ENGINE, not merely start. Two versions of this
+		// check were too weak. Checking that the file exists failed inside a Linux
+		// container against a .venv built on Windows; checking that the interpreter
+		// starts then found the container's own python3, which runs and has no numpy.
+		// Importing what the engine imports is the question the test actually has.
+		//
+		// It matters beyond tidiness: the first failure was "fixed" by excluding this
+		// package from the race detector, which quietly removed the one package with
+		// two goroutines, a mutex and an atomic from the only tool that checks them.
+		probe := exec.Command(c, "-c", "import numpy, simulator.engine")
+		probe.Dir = repoRoot(t)
+		if probe.Run() == nil {
 			return c
 		}
 	}
-	t.Skip("no project interpreter; run make bootstrap")
+	t.Skip("no runnable project interpreter; run make bootstrap")
 	return ""
 }
 
@@ -494,4 +517,69 @@ func runPythonCtx(ctx context.Context, r *Runner, args ...string) (string, error
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "PYTHONHASHSEED=0"}
 	out, err := cmd.Output()
 	return string(out), err
+}
+
+// The in-flight registry, from many goroutines.
+//
+// It is written when a run is accepted, read when one is cancelled, and deleted when
+// one finishes — three different goroutines by construction. It had no concurrent test,
+// so putting this package back under the race detector covered nothing: removing the
+// lock from register produced zero reported races, because nothing ran concurrently
+// while the detector watched.
+//
+// The store-backed half of cancellation, and the watchdog, are exercised in
+// tests/integration, which the race script does not reach.
+func TestTheInFlightRegistryUnderConcurrency(t *testing.T) {
+	r := &Runner{inFlight: map[string]context.CancelFunc{}}
+
+	const workers = 16
+	const iterations = 64
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for worker := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			for i := range iterations {
+				run := Run{
+					TenantID: fmt.Sprintf("tenant_%d", worker%3),
+					RunID:    fmt.Sprintf("sim_%d_%d", worker, i),
+				}
+
+				_, cancel := context.WithCancel(context.Background())
+				r.register(run, cancel)
+
+				// A reader racing the writer, which is what a cancellation arriving
+				// mid-flight actually is.
+				r.mu.Lock()
+				_, held := r.inFlight[inFlightKey(run.TenantID, run.RunID)]
+				r.mu.Unlock()
+				if !held {
+					t.Errorf("a run vanished from the registry between register and read")
+				}
+
+				r.unregister(run)
+				cancel()
+			}
+		}()
+	}
+
+	close(start)
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the workers did not finish; something is deadlocked")
+	}
+
+	if len(r.inFlight) != 0 {
+		t.Errorf("%d runs left in the registry; every one was unregistered", len(r.inFlight))
+	}
 }

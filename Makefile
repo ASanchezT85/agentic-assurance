@@ -43,6 +43,9 @@ test-chaos: ## Chaos suite. STOPS REAL CONTAINERS; do not run alongside anything
 test-race: ## Race detector, in a container (-race needs cgo; this machine has no C compiler)
 	sh scripts/test-race.sh
 
+test-race-integration: ## Race detector over the integration suite too (run `make up && make migrate` first)
+	INTEGRATION=1 sh scripts/test-race.sh
+
 lint: ## Run all linters
 	@test -z "$$(gofmt -l . )" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 	go vet ./...

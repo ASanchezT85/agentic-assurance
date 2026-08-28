@@ -408,7 +408,8 @@ everything.
 |-----------------|---------------------------|
 | `make test-integration` | Needs real PostgreSQL, ClickHouse, NATS, Redis and SPIRE. Row level security, the append-only trigger, mutual TLS and the cross-replica kill are only real against real services. |
 | `make test-chaos` | Stops those containers, so it cannot run alongside anything else. |
-| `make test-race` | `-race` needs cgo, and this development environment has no C compiler. It runs in a `golang:1.25` container instead. |
+| `make test-race` | `-race` needs cgo, and this development environment has no C compiler. It runs in a container built from `scripts/race.Dockerfile`. |
+| `make test-race-integration` | The same, over the integration suite against services on the host. This is where the concurrent idempotency claims, the cross-replica cancellation and the watchdog actually run. |
 
 ### The race detector
 
@@ -423,6 +424,19 @@ race report over sequential tests says the tests are sequential.
 `tests/security/concurrency_test.go` exercises them, and removing a single lock from
 the usage ledger produces four data races, which is how that suite was checked.
 
-The simulation tests are excluded from the container run: they execute the project's
-Python interpreter, which is a Windows binary the container cannot run. The failure is
-the mount, not the code, and a suite that always fails is one people learn to ignore.
+Nothing is excluded. The first version skipped `internal/simulation`, because its tests
+execute the project's Python interpreter and a `.venv` built on Windows cannot run in a
+Linux container. That removed from the detector the one package with two goroutines, a
+mutex and an atomic — the cancellation path, the watchdog and the in-flight map — for a
+reason that had nothing to do with concurrency, and removing the lock from its registry
+then produced zero reported races.
+
+The image carries an interpreter instead, and the helper that finds one checks that it
+can import what the engine imports rather than that a file exists. Two weaker versions
+of that check each hid something: the file test failed against a Windows `.venv`, and
+the "does it start" test found the container's own `python3`, which starts and has no
+numpy.
+
+Over the integration suite the detector reports 43 passing and 13 skipped. The skips are
+SPIRE, which needs a docker client the container does not have, and the live market data
+tests, which need an API key.
