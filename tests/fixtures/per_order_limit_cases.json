@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "The one rule the Digital Twin and the production authority engine both implement.",
+    "",
+    "simulator/assurance/engine.py says plainly that it is not the production engine and",
+    "that its rules can drift from the Go ones. That was honest and it was undetectable:",
+    "nothing compared them, so the first divergence would have surfaced as a scenario",
+    "that passed in the twin and a fleet that behaved differently in production.",
+    "",
+    "Both engines read this file. A case here is a claim about what the platform does,",
+    "and it has to hold in both languages or one of them is wrong.",
+    "",
+    "Only the per-order notional limit is shared. Rolling and daily limits need consumed",
+    "usage, which the twin deliberately does not reimplement, and listing them here would",
+    "assert an agreement that does not exist."
+  ],
+
+  "cases": [
+    {
+      "name": "well under the limit",
+      "per_order_notional": 25000.0,
+      "quantity": 10.0,
+      "reference_price": 100.0,
+      "allowed": true
+    },
+    {
+      "name": "exactly at the limit is allowed",
+      "per_order_notional": 25000.0,
+      "quantity": 250.0,
+      "reference_price": 100.0,
+      "allowed": true,
+      "why": "the boundary is the most likely place for two implementations to disagree, and > rather than >= is the whole difference"
+    },
+    {
+      "name": "one cent over the limit is refused",
+      "per_order_notional": 25000.0,
+      "quantity": 250.0001,
+      "reference_price": 100.0,
+      "allowed": false,
+      "code": "PER_ORDER_LIMIT_EXCEEDED"
+    },
+    {
+      "name": "far over the limit",
+      "per_order_notional": 15000.0,
+      "quantity": 1000.0,
+      "reference_price": 190.5,
+      "allowed": false,
+      "code": "PER_ORDER_LIMIT_EXCEEDED"
+    },
+    {
+      "name": "a limit of zero is no limit",
+      "per_order_notional": 0.0,
+      "quantity": 1000000.0,
+      "reference_price": 100.0,
+      "allowed": true,
+      "why": "zero means unset in both engines. An engine that read it as a limit of zero would refuse everything, which is the failure that looks like working enforcement"
+    },
+    {
+      "name": "a tiny order against a tiny limit",
+      "per_order_notional": 1.0,
+      "quantity": 0.01,
+      "reference_price": 50.0,
+      "allowed": true
+    }
+  ]
+}

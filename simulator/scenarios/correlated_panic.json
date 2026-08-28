@@ -1,0 +1,37 @@
+{
+  "scenario_id": "correlated_panic",
+  "scenario_version": 1,
+  "description": "One shared feed, one shared model, and a population that panics together. The question is what enforcement is worth when every agent decides the same thing at the same moment.",
+
+  "steps": 60,
+  "volatility": 0.004,
+  "initial_depth": 20000.0,
+  "liquidity_decay": 0.97,
+  "participation_rate": 0.25,
+
+  "archetypes": [
+    {
+      "name": "herd",
+      "population": 120,
+      "declared_model": "model_A",
+      "declared_feed": "feed_A",
+      "strategy_id": "strategy_momentum",
+      "panic_probability": 0.35,
+      "stale_data_sensitivity": 0.6,
+      "retry_probability": 0.2
+    },
+    {
+      "name": "independent",
+      "population": 15,
+      "declared_model": "model_B",
+      "declared_feed": "feed_B",
+      "strategy_id": "strategy_reversion",
+      "panic_probability": 0.02
+    }
+  ],
+
+  "limits": { "per_order_notional": 15000.0 },
+
+  "response_loss_probability": 0.05,
+  "rejection_probability": 0.02
+}

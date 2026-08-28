@@ -177,7 +177,8 @@ def run(
 
     intents_submitted = 0
     retries_attempted = 0
-    unknown_outcomes = 0
+    unknown_on_first_attempt = 0
+    retries_also_unknown = 0
 
     for step in range(scenario.steps):
         market.step(drift=scenario.drift)
@@ -214,21 +215,33 @@ def run(
             fill = execution.submit(intent)
 
             if fill.outcome is Outcome.UNKNOWN:
-                unknown_outcomes += 1
+                unknown_on_first_attempt += 1
                 # A blind retry. The twin models the agent doing the wrong thing so
                 # that a scenario can measure what it costs: the platform's job is to
                 # make the retry harmless, not to assume nobody retries.
                 if agent.will_retry:
                     retries_attempted += 1
-                    execution.submit(intent)
+                    retry = execution.submit(intent)
+                    if retry.outcome is Outcome.UNKNOWN:
+                        # The compounding case, and the reason the retry's own outcome
+                        # is no longer discarded: an agent that retried into a second
+                        # ambiguous answer now has two orders it cannot account for,
+                        # and nothing in the record said so.
+                        retries_also_unknown += 1
 
     results: dict[str, Any] = {
         "intents_submitted": intents_submitted,
         "denied": assurance.denied_count(),
         "denial_codes": assurance.denial_codes(),
+        # outcomes counts every submission the venue answered, retries included.
+        # unknown_on_first_attempt counts only what made an agent decide to retry.
+        # They are deliberately different numbers, and they used to have the same
+        # name: a run reported unknown_outcomes 70 beside outcomes.UNKNOWN 71, which
+        # reads as an arithmetic error rather than as two questions.
         "outcomes": execution.outcome_counts(),
-        "unknown_outcomes": unknown_outcomes,
+        "unknown_on_first_attempt": unknown_on_first_attempt,
         "retries_attempted": retries_attempted,
+        "retries_also_unknown": retries_also_unknown,
         "duplicate_receipts": execution.duplicate_receipts(),
         "final_mid": market.state.mid,
         "permanent_impact": market.state.permanent_impact,

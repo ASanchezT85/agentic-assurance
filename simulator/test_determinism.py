@@ -156,7 +156,9 @@ def test_market_path_is_independent_of_execution_draws() -> None:
     quiet_record = run(quiet, seed=5)
     lossy_record = run(lossy, seed=5)
 
-    assert quiet_record.results["unknown_outcomes"] != lossy_record.results["unknown_outcomes"], (
+    quiet_unknown = quiet_record.results["unknown_on_first_attempt"]
+    lossy_unknown = lossy_record.results["unknown_on_first_attempt"]
+    assert quiet_unknown != lossy_unknown, (
         "precondition: the two runs should differ in execution outcomes"
     )
 
@@ -251,7 +253,7 @@ def test_blind_retries_reach_the_venue_twice() -> None:
     """
     record = run(SCENARIO, seed=20260827)
 
-    assert record.results["unknown_outcomes"] > 0, (
+    assert record.results["unknown_on_first_attempt"] > 0, (
         "no response was lost; the scenario cannot exercise retry behaviour"
     )
     assert record.results["retries_attempted"] > 0, "no agent retried"
