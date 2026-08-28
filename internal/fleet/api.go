@@ -39,12 +39,29 @@ type API struct {
 	//
 	// Nil means the endpoints refuse everything. There is no unauthenticated mode.
 	Credentials *identity.Credentials
+
+	// Identity verifies workload certificates. Nil means a bare verifier, which
+	// accepts no SVID and therefore supports no A2: an operator who deployed SPIRE
+	// would find mutual TLS working on the submission endpoint and silently not here.
+	Identity *identity.Verifier
 }
 
 // presentedFrom adapts an HTTP request to what identity understands.
 //
 // The adaptation lives here rather than in internal/identity because that package is
 // on the enforcement path and INV-005 forbids it from importing net/http.
+// verifier is the configured one, or a bare one that accepts no certificate.
+//
+// A bare verifier is a safe default and a silent one: it fails every SVID closed. The
+// field exists so the choice is made at construction rather than by whichever handler
+// happened to instantiate one.
+func (a *API) verifier() *identity.Verifier {
+	if a.Identity != nil {
+		return a.Identity
+	}
+	return &identity.Verifier{}
+}
+
 func presentedFrom(r *http.Request, creds *identity.Credentials) identity.Presented {
 	var certs []*x509.Certificate
 	if r.TLS != nil {
@@ -169,7 +186,7 @@ func (a *API) requireTenant(w http.ResponseWriter, r *http.Request) (string, boo
 		return "", false
 	}
 
-	attested := (&identity.Verifier{}).Resolve(presentedFrom(r, a.Credentials))
+	attested := a.verifier().Resolve(presentedFrom(r, a.Credentials))
 	if err := identity.RequireExecutable(attested); err != nil {
 		writeError(w, http.StatusUnauthorized, "the caller is not authenticated")
 		return "", false

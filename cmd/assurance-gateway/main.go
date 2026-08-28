@@ -47,7 +47,7 @@ type evidenceReader interface {
 	ByAggregate(ctx context.Context, tenantID, aggregateID string) ([]evidence.Event, error)
 }
 
-func newMux(reader evidenceReader, submit http.HandlerFunc, creds *identity.Credentials) *http.ServeMux {
+func newMux(reader evidenceReader, submit http.HandlerFunc, creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	health := func(w http.ResponseWriter, _ *http.Request) {
@@ -63,8 +63,8 @@ func newMux(reader evidenceReader, submit http.HandlerFunc, creds *identity.Cred
 	// ADR-023. Spec section 66 step 19 requires the chain
 	// agent -> intent -> authority -> policy -> broker order -> result to be
 	// inspectable, and section 59 forbids the console from being required for it.
-	mux.HandleFunc("GET /v1/evidence", evidenceByCorrelation(reader, creds))
-	mux.HandleFunc("GET /v1/intents/{id}/evidence", evidenceByIntent(reader, creds))
+	mux.HandleFunc("GET /v1/evidence", evidenceByCorrelation(reader, creds, verifier))
+	mux.HandleFunc("GET /v1/intents/{id}/evidence", evidenceByIntent(reader, creds, verifier))
 
 	// The write path. Absent rather than answering when the enforcement plane is not
 	// fully configured: a 404 is honest, and a handler that accepted intents it
@@ -86,12 +86,15 @@ func newMux(reader evidenceReader, submit http.HandlerFunc, creds *identity.Cred
 // The tenant comes from the credential now (INV-007, ADR-025). A header, if sent, must
 // agree: ignoring one that disagrees would let a caller believe they were reading
 // someone else's evidence.
-func tenantOf(r *http.Request, creds *identity.Credentials) (string, int, string) {
+func tenantOf(r *http.Request, creds *identity.Credentials, verifier *identity.Verifier) (string, int, string) {
 	var certs []*x509.Certificate
 	if r.TLS != nil {
 		certs = r.TLS.PeerCertificates
 	}
-	attested := (&identity.Verifier{}).Resolve(
+	if verifier == nil {
+		verifier = &identity.Verifier{}
+	}
+	attested := verifier.Resolve(
 		identity.FromTransport(r.Header.Get("Authorization"), certs, creds))
 
 	if err := identity.RequireExecutable(attested); err != nil {
@@ -109,9 +112,9 @@ func tenantOf(r *http.Request, creds *identity.Credentials) (string, int, string
 	return attested.TenantID, 0, ""
 }
 
-func evidenceByCorrelation(reader evidenceReader, creds *identity.Credentials) http.HandlerFunc {
+func evidenceByCorrelation(reader evidenceReader, creds *identity.Credentials, verifier *identity.Verifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenant, status, message := tenantOf(r, creds)
+		tenant, status, message := tenantOf(r, creds, verifier)
 		if tenant == "" {
 			writeError(w, status, message)
 			return
@@ -128,9 +131,9 @@ func evidenceByCorrelation(reader evidenceReader, creds *identity.Credentials) h
 	}
 }
 
-func evidenceByIntent(reader evidenceReader, creds *identity.Credentials) http.HandlerFunc {
+func evidenceByIntent(reader evidenceReader, creds *identity.Credentials, verifier *identity.Verifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tenant, status, message := tenantOf(r, creds)
+		tenant, status, message := tenantOf(r, creds, verifier)
 		if tenant == "" {
 			writeError(w, status, message)
 			return
@@ -407,7 +410,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(openEvidence(ctx, log), submit, creds),
+		Handler:           newMux(openEvidence(ctx, log), submit, creds, identityVerifier()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

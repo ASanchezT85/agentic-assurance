@@ -260,6 +260,17 @@ Optional, and their absence is a stated degradation rather than a failure:
 | `SPIFFE_TRUST_BUNDLE`, `SPIFFE_TRUST_DOMAIN` | An SVID cannot be verified, so callers reach A1 at best. Reported, not silently treated as attestation. |
 | `SPIFFE_WORKLOADS` | A verified SVID establishes a workload and no customer, and the request is refused naming the missing entry. `spiffe://domain/path=tenant`; a path ending in `/` matches everything beneath it. |
 
+Both binaries read the same three settings, so a workload certificate reaches A2 on
+every surface or on none. Having it work on the submission endpoint and silently not on
+the ones that read a customer's own data is an inconsistency an operator discovers from
+a 401 they cannot explain.
+
+**A caller may present both a certificate and a bearer credential.** A verified SVID
+wins; when it does not verify — a service mesh certificate arriving at a service that
+does not speak SPIFFE, for instance — the credential is used and the response records
+why the certificate was rejected. Presenting a certificate does not cost a caller its
+credential.
+
 The gateway will not sign or activate a policy bundle. One that reaches it must
 already be ACTIVE and signed: a gateway that activated its own policy would be
 deciding what constrains it, which is the shape INV-009 exists to forbid.

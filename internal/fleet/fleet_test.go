@@ -3,9 +3,17 @@ package fleet
 import (
 	"agentic-assurance/internal/identity"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"math"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -422,3 +430,126 @@ func TestTheIntelligenceAPIRefusesWithoutCredentials(t *testing.T) {
 type stubReader struct{}
 
 func (stubReader) Query(context.Context, string) (string, error) { return "", nil }
+
+// The intelligence API supports workload certificates too.
+//
+// It used to construct a bare verifier inline, which accepts no SVID: mutual TLS
+// worked on the submission endpoint and silently not here, so a caller with only a
+// certificate could place orders and not read its own fleet. The verifier is a field
+// now, so the choice is made at construction rather than by whichever handler
+// instantiated one.
+func TestTheIntelligenceAPIAcceptsAWorkloadCertificate(t *testing.T) {
+	// No credentials at all: the certificate is the only way in.
+	workloads, err := identity.ParseWorkloads("spiffe://acme.example/ns/readers/=tenant_a")
+	if err != nil {
+		t.Fatalf("workloads: %v", err)
+	}
+
+	root, leaf := issueSVID(t, "acme.example", "/ns/readers/sa/console")
+
+	pool := x509.NewCertPool()
+	pool.AddCert(root)
+
+	api := &API{
+		Store: stubReader{},
+		Identity: &identity.Verifier{
+			TrustDomain: "acme.example",
+			Bundle:      pool,
+			Workloads:   workloads,
+		},
+	}
+	mux := http.NewServeMux()
+	api.Routes(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/fleet/state", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	// And a workload nobody mapped is refused, with the same certificate machinery.
+	unmapped := &API{
+		Store: stubReader{},
+		Identity: &identity.Verifier{
+			TrustDomain: "acme.example",
+			Bundle:      pool,
+			Workloads:   mustWorkloads(t, "spiffe://acme.example/ns/other/=tenant_a"),
+		},
+	}
+	other := http.NewServeMux()
+	unmapped.Routes(other)
+
+	req2 := httptest.NewRequest(http.MethodGet, "/v1/fleet/state", nil)
+	req2.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}
+	rec2 := httptest.NewRecorder()
+	other.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusUnauthorized {
+		t.Errorf("an unmapped workload got %d, want 401", rec2.Code)
+	}
+}
+
+func mustWorkloads(t *testing.T, raw string) *identity.Workloads {
+	t.Helper()
+	w, err := identity.ParseWorkloads(raw)
+	if err != nil {
+		t.Fatalf("workloads: %v", err)
+	}
+	return w
+}
+
+// issueSVID mints a self-signed CA and a workload certificate under it.
+func issueSVID(t *testing.T, trustDomain, path string) (root, leaf *x509.Certificate) {
+	t.Helper()
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ca key: %v", err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: trustDomain},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("ca: %v", err)
+	}
+	root, err = x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse ca: %v", err)
+	}
+
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("leaf key: %v", err)
+	}
+	uri, err := url.Parse("spiffe://" + trustDomain + path)
+	if err != nil {
+		t.Fatalf("uri: %v", err)
+	}
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:         []*url.URL{uri},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, root, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("leaf: %v", err)
+	}
+	leaf, err = x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatalf("parse leaf: %v", err)
+	}
+	return root, leaf
+}

@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -33,7 +34,8 @@ import (
 
 const component = "fleet-engine"
 
-func newMux(store fleet.Reader, sim *simulation.API, creds *identity.Credentials) *http.ServeMux {
+func newMux(store fleet.Reader, sim *simulation.API, creds *identity.Credentials,
+	verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -49,7 +51,7 @@ func newMux(store fleet.Reader, sim *simulation.API, creds *identity.Credentials
 	// The intelligence API of spec section 46. Read-only: the fleet engine must not
 	// submit orders or modify customer policy (section 29), and there is no handler
 	// here that writes anything.
-	(&fleet.API{Store: store, Credentials: creds}).Routes(mux)
+	(&fleet.API{Store: store, Credentials: creds, Identity: verifier}).Routes(mux)
 
 	// The simulation surface (spec section 46). Mounted here rather than as a fifth
 	// deployable: a simulation is intelligence, not enforcement, and ADR-011 counts
@@ -174,7 +176,50 @@ func openSimulation(ctx context.Context, log *slog.Logger) *simulation.API {
 		return nil
 	}
 
-	return &simulation.API{Runner: runner, Store: runner.Store, Credentials: creds}
+	return &simulation.API{
+		Runner:      runner,
+		Store:       runner.Store,
+		Credentials: creds,
+		Identity:    workloadVerifier(log),
+	}
+}
+
+// workloadVerifier builds the SVID verifier, if SPIRE is configured.
+//
+// The same construction as the gateway's, because a caller with a workload certificate
+// must reach A2 on every surface or on none. Having it work on the submission endpoint
+// and silently not on the ones that read a customer's own data is the kind of
+// inconsistency an operator discovers from a 401 they cannot explain.
+func workloadVerifier(log *slog.Logger) *identity.Verifier {
+	path := os.Getenv("SPIFFE_TRUST_BUNDLE")
+	if path == "" {
+		return &identity.Verifier{}
+	}
+
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		log.Warn("SPIFFE trust bundle unreadable; workload certificates will not verify",
+			"path", path, "err", err)
+		return &identity.Verifier{}
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(pem) {
+		log.Warn("SPIFFE trust bundle contains no certificates", "path", path)
+		return &identity.Verifier{}
+	}
+
+	workloads, err := identity.ParseWorkloads(os.Getenv("SPIFFE_WORKLOADS"))
+	if err != nil {
+		log.Warn("no usable SPIFFE_WORKLOADS; verified workloads establish no tenant",
+			"err", err.Error())
+		workloads = nil
+	}
+
+	return &identity.Verifier{
+		Bundle:      roots,
+		TrustDomain: os.Getenv("SPIFFE_TRUST_DOMAIN"),
+		Workloads:   workloads,
+	}
 }
 
 func intOr(key string, fallback int) int {
@@ -223,7 +268,7 @@ func main() {
 	store := openStore(log)
 	srv := &http.Server{
 		Addr:              addr(),
-		Handler:           newMux(store, sim, creds),
+		Handler:           newMux(store, sim, creds, workloadVerifier(log)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

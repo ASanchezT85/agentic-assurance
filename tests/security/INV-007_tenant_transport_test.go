@@ -1,9 +1,12 @@
 package security
 
 import (
+	"crypto/x509"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -175,9 +178,11 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 		"health": "liveness and readiness say whether the process is up, nothing about a customer",
 	}
 
-	// The ways a handler establishes who is calling.
-	authEntryPoints := []string{"requireTenant", "requireCaller", "tenantOf(r, creds)",
-		"identity.FromTransport", "presentedFrom("}
+	// The one primitive every authenticated path reaches, directly or through a
+	// helper. Named rather than listing the helpers: an earlier version matched
+	// "tenantOf(r, creds)" and broke the moment that function took another argument,
+	// which is a guard failing on a rename rather than on a hole.
+	const authEntryPoint = "identity.FromTransport"
 
 	// Discovered, not listed. The first version named four files, and a new package
 	// with an unauthenticated route was invisible to it: the same
@@ -219,36 +224,24 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 				"submit": "../../internal/gateway/http.go:SubmitHandler",
 			}
 
-			body, found := funcBody(source, name)
-			if !found {
-				if where, known := elsewhere[name]; known {
-					file, fn, _ := strings.Cut(where, ":")
-					other, err := os.ReadFile(file)
-					if err != nil {
-						t.Fatalf("read %s: %v", file, err)
-					}
-					body, found = funcBody(string(other), fn)
+			target, fn := path, name
+			if !funcExists(t, path, name) {
+				where, known := elsewhere[name]
+				if !known {
+					t.Errorf("%s registers %q with handler %q and no function by that "+
+						"name is in the file; this guard cannot see whether it "+
+						"authenticates", path, route, name)
+					continue
 				}
-			}
-			if !found {
-				t.Errorf("%s registers %q with handler %q and no function by that name "+
-					"is in the file; this guard cannot see whether it authenticates",
-					path, route, name)
-				continue
+				target, fn, _ = strings.Cut(where, ":")
 			}
 
-			authenticates := false
-			for _, entry := range authEntryPoints {
-				if strings.Contains(body, entry) {
-					authenticates = true
-					break
-				}
-			}
-			if !authenticates {
-				t.Errorf("%s serves %s and its handler %q reaches none of %v. Every route "+
-					"that carries tenant data authenticates, and the tenant comes from the "+
-					"credential rather than from the request (INV-007).",
-					path, route, name, authEntryPoints)
+			if !reachesAuth(t, target, fn, authEntryPoint, 0) {
+				t.Errorf("%s serves %s and its handler %q never reaches %s, directly or "+
+					"through a function in the same file. Every route that carries tenant "+
+					"data authenticates, and the tenant comes from the credential rather "+
+					"than from the request (INV-007).",
+					path, route, name, authEntryPoint)
 			}
 			checked++
 		}
@@ -260,31 +253,143 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 	}
 }
 
-// funcBody returns the source of a named function, brace-matched.
-func funcBody(source, name string) (string, bool) {
-	marker := regexp.MustCompile(`func (\([^)]*\) )?` + regexp.QuoteMeta(name) + `\(`)
-	loc := marker.FindStringIndex(source)
-	if loc == nil {
-		return "", false
+// reachesAuth reports whether a function reaches the authentication primitive,
+// following calls to functions declared in the same file.
+//
+// The parser rather than a regular expression. The regex version resolved every call
+// correctly when driven by hand and returned false from inside itself, and an hour of
+// staring at it is an hour not spent on the thing it was guarding. A guard nobody can
+// debug is a guard nobody trusts.
+func reachesAuth(t *testing.T, path, fn, entry string, depth int) bool {
+	t.Helper()
+
+	if depth > 3 {
+		return false
 	}
 
-	open := strings.Index(source[loc[1]:], "{")
-	if open < 0 {
-		return "", false
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, readSource(t, path), 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
 	}
-	start := loc[1] + open
 
-	depth := 0
-	for i := start; i < len(source); i++ {
-		switch source[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return source[start : i+1], true
+	decl := findFunc(file, fn)
+	if decl == nil || decl.Body == nil {
+		return false
+	}
+
+	pkg, sel, _ := strings.Cut(entry, ".")
+
+	found := false
+	var called []string
+
+	ast.Inspect(decl.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch target := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			// identity.FromTransport(...)
+			if ident, ok := target.X.(*ast.Ident); ok && ident.Name == pkg && target.Sel.Name == sel {
+				found = true
 			}
+			// a.requireTenant(...) — a method on this file's own type.
+			called = append(called, target.Sel.Name)
+		case *ast.Ident:
+			called = append(called, target.Name)
+		}
+		return true
+	})
+
+	if found {
+		return true
+	}
+	for _, name := range called {
+		if name == fn {
+			continue // direct recursion
+		}
+		if reachesAuth(t, path, name, entry, depth+1) {
+			return true
 		}
 	}
-	return "", false
+	return false
+}
+
+// findFunc returns a function or method declaration by name.
+func findFunc(file *ast.File, name string) *ast.FuncDecl {
+	for _, d := range file.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == name {
+			return fn
+		}
+	}
+	return nil
+}
+
+// funcExists reports whether a file declares a function by that name.
+func funcExists(t *testing.T, path, name string) bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, readSource(t, path), parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return findFunc(file, name) != nil
+}
+
+// A client certificate must not suppress a bearer credential.
+//
+// FromTransport used to return as soon as it saw a peer certificate, so a caller
+// behind a service mesh — which presents one on every connection — was A0 with a
+// perfectly valid token in the request. Resolve's own comment says a
+// presented-but-invalid SVID "falls back to whatever the caller independently
+// established", and it was never given anything to fall back to.
+//
+// Nobody hit it while A2 was unreachable. Making A2 reachable made it a lockout.
+func TestACertificateDoesNotSuppressACredential(t *testing.T) {
+	creds := credentials(t)
+
+	// A certificate this verifier cannot validate: no trust bundle is configured,
+	// which is exactly the shape of a mesh certificate arriving at a service that
+	// does not speak SPIFFE.
+	presented := identity.FromTransport("Bearer "+tenantToken,
+		[]*x509.Certificate{{}}, creds)
+
+	if presented.APIIdentity == "" {
+		t.Fatal("the bearer credential was not read because a certificate was present")
+	}
+
+	attested := (&identity.Verifier{}).Resolve(presented)
+
+	if err := identity.RequireExecutable(attested); err != nil {
+		t.Errorf("a caller with a valid credential behind mutual TLS is %s: %v",
+			attested.Level, err)
+	}
+	if err := identity.RequireTenant(attested, "tenant_a"); err != nil {
+		t.Errorf("the credential's tenant did not survive: %v", err)
+	}
+	if attested.Downgrade == nil {
+		t.Error("the degradation carries no reason; an operator needs to know the " +
+			"certificate was rejected rather than absent")
+	}
+}
+
+// A verified workload that maps to nothing cannot borrow a credential's tenant.
+//
+// Otherwise a caller could pair a certificate mapped to no customer with a credential
+// for some other one, and have the stronger-looking identity carry the weaker one's
+// scope. The registry decides for a workload, or nothing does.
+func TestAVerifiedWorkloadCannotBorrowACredentialsTenant(t *testing.T) {
+	// Reached through Resolve's own logic rather than a live certificate: the
+	// SPIRE-backed half is in tests/integration.
+	attested := identity.Attested{
+		Level:       "A2",
+		SpiffeID:    identity.SPIFFEID{TrustDomain: "acme.example", Path: "/ns/unmapped"},
+		APIIdentity: "svc_a",
+		TenantID:    "",
+	}
+
+	if err := identity.RequireTenant(attested, "tenant_a"); err == nil {
+		t.Fatal("an unmapped workload acted on a tenant it was never mapped to")
+	}
 }

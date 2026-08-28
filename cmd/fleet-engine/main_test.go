@@ -10,7 +10,7 @@ import (
 func TestHealthEndpoints(t *testing.T) {
 	for _, path := range []string{"/healthz", "/readyz"} {
 		rec := httptest.NewRecorder()
-		newMux(nil, nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		newMux(nil, nil, nil, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: got %d, want 200", path, rec.Code)

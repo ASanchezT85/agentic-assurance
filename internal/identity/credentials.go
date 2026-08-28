@@ -107,21 +107,26 @@ func (c *Credentials) Identify(token string) (Caller, bool) {
 func FromTransport(authorization string, peerCertificates []*x509.Certificate, creds *Credentials) Presented {
 	var p Presented
 
+	// Both, when both are present. Resolve prefers a verified SVID and degrades to
+	// whatever else the caller established when it does not verify — and that
+	// fallback needs the credential to have been read.
+	//
+	// This used to return as soon as it saw a certificate, so a caller behind a
+	// service mesh, which presents one on every connection, was A0 with a perfectly
+	// good bearer token in the request. Nobody hit it while A2 was unreachable;
+	// making A2 reachable made it a real lockout.
 	if len(peerCertificates) > 0 {
 		p.SVID = peerCertificates[0]
 		if len(peerCertificates) > 1 {
 			p.Intermediates = peerCertificates[1:]
 		}
-		return p
 	}
 
-	token, ok := strings.CutPrefix(authorization, "Bearer ")
-	if !ok {
-		return p
-	}
-	if caller, authenticated := creds.Identify(strings.TrimSpace(token)); authenticated {
-		p.APIIdentity = caller.Identity
-		p.TenantID = caller.TenantID
+	if token, ok := strings.CutPrefix(authorization, "Bearer "); ok {
+		if caller, authenticated := creds.Identify(strings.TrimSpace(token)); authenticated {
+			p.APIIdentity = caller.Identity
+			p.TenantID = caller.TenantID
+		}
 	}
 	return p
 }

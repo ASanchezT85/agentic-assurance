@@ -78,16 +78,15 @@ func (v *Verifier) Resolve(p Presented) Attested {
 	if p.SVID != nil {
 		verified, err := v.Verify(p.SVID, p.Intermediates)
 		if err == nil {
-			// The tenant comes from the workload registry, never from anything the
-			// caller sent. A workload with no entry establishes no tenant, and
-			// RequireTenant then refuses: an unassigned workload is one nobody has
-			// said belongs to a customer, and guessing would assign it to one.
-			tenant := p.TenantID
-			if mapped, ok := v.Workloads.TenantFor(verified.ID); ok {
-				tenant = mapped
-			} else {
-				tenant = ""
-			}
+			// The tenant comes from the workload registry and from nothing else. A
+			// workload with no entry establishes no tenant and RequireTenant refuses:
+			// an unassigned workload is one nobody has said belongs to a customer.
+			//
+			// A bearer credential presented alongside does not fill the gap. It would
+			// let a caller pair a mapped-to-nothing certificate with a credential for
+			// some other tenant and have the stronger-looking identity carry the
+			// weaker one's scope.
+			tenant, _ := v.Workloads.TenantFor(verified.ID)
 
 			return Attested{
 				Level:       intent.AttestationA2,
