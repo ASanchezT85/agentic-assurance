@@ -1,9 +1,13 @@
 // Command fleet-engine is the intelligence plane.
 //
-// It measures closed windows of stored intents and serves the read-only intelligence
-// API of spec section 46. It recommends and it never enforces: there is no code here
-// that can submit an order or change a customer's policy, which is INV-009 expressed
-// as an absence rather than as a check.
+// It measures closed windows of stored intents and serves the intelligence API of spec
+// section 46, plus the simulation endpoints. It recommends and never enforces, and what
+// makes that true is imports rather than this sentence: the binary cannot reach a policy
+// bundle, an authority grant, an idempotency record or a venue, and
+// tests/security/INV-009_intelligence_plane_test.go checks its whole dependency closure.
+//
+// It used to say "read-only", which stayed in this comment after two POST routes were
+// added to the plane. True of internal/fleet, and not of the process it describes.
 //
 // The producer runs only when cohorts are configured. Without them the engine serves
 // whatever is already stored and measures nothing new, and it says so at startup

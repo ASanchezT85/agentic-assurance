@@ -17,7 +17,7 @@ import (
 // hands an intent over and returns, and everything expensive happens here.
 //
 // The measured reason this is not inline: the gateway's whole enforcement path is
-// 11.6 microseconds at p50, and one HTTP round trip to ClickHouse is three orders of
+// 12.5 microseconds at p50, and one HTTP round trip to ClickHouse is three orders of
 // magnitude more. Inlining it would not slow the path down, it would replace it.
 type Telemetry struct {
 	Sink *fleet.Sink

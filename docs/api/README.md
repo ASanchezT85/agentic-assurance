@@ -76,10 +76,10 @@ hand-written (§60). Nothing is generated in Phase 0 because no endpoint exists 
 ## Evidence endpoints (Phase 6)
 
 ```sh
-curl -H 'X-Tenant-Id: tenant_acme' \
+curl -H "Authorization: Bearer $GATEWAY_TOKEN" \
   'http://localhost:8080/v1/evidence?correlation_id=corr_1'
 
-curl -H 'X-Tenant-Id: tenant_acme' \
+curl -H "Authorization: Bearer $GATEWAY_TOKEN" \
   'http://localhost:8080/v1/intents/env_1/evidence'
 ```
 
@@ -88,34 +88,37 @@ corrections appear as later events referencing earlier ones and are never merged
 away, because a reader needs to see that a correction happened rather than a tidied
 result.
 
-**The tenant comes from a header, and that is not authentication.** Spec section 46
-requires an authenticated tenant on every endpoint; that arrives with the API surface
-that carries authentication. Until then these endpoints are reachable only inside the
-customer's own network, and the handler makes no check it does not perform.
+**The tenant comes from the credential.** It used to come from a header, and this
+paragraph used to say so and promise that authentication would arrive with the surface
+that carried it. It arrived — and the paragraph did not change, so for two audit passes
+it told a reader these endpoints were unauthenticated and safe only behind network
+isolation. A stale caveat is worse than none: it describes a system nobody is running.
 
 ## Intelligence API (Phase 14)
 
-Served by **fleet-engine**, read-only, tenant-scoped by header.
+Served by **fleet-engine**, read-only, and tenant-scoped by the caller's credential.
 
 ```sh
-curl -H 'X-Tenant-Id: tenant_acme' http://localhost:8081/v1/fleet/state
-curl -H 'X-Tenant-Id: tenant_acme' http://localhost:8081/v1/cohorts
-curl -H 'X-Tenant-Id: tenant_acme' http://localhost:8081/v1/dependencies
+curl -H "Authorization: Bearer $INTELLIGENCE_TOKEN" http://localhost:8081/v1/fleet/state
+curl -H "Authorization: Bearer $INTELLIGENCE_TOKEN" http://localhost:8081/v1/cohorts
+curl -H "Authorization: Bearer $INTELLIGENCE_TOKEN" http://localhost:8081/v1/dependencies
 ```
 
-There is no handler here that writes anything, which is not a convention: spec section
-29 forbids the fleet engine from submitting orders or modifying customer policy, and
-an API with no write path cannot be talked into one.
+There is no handler in `internal/fleet` that writes anything. That is true of the
+package and not of the process: the fleet engine also serves the simulation endpoints,
+which create and cancel simulation runs. What bounds the plane is imports rather than
+this sentence — it cannot reach a policy bundle, an authority grant, an idempotency
+record or a venue, and `tests/security/INV-009_intelligence_plane_test.go` checks that
+against the binary's whole dependency closure.
 
 `/v1/dependencies` is not in the section 46 list. It was added because section 48.3
 requires a Dependencies surface and there was no endpoint behind it; it is a read-only
 projection of `dependency_observations` and is recorded here rather than left as an
 undocumented addition.
 
-**The tenant is a header and that is not authentication.** Section 46 requires an
-authenticated tenant on every endpoint. That arrives with the API surface that carries
-authentication; until then these are reachable only inside the customer's network, and
-the handler makes no check it does not perform.
+**The tenant comes from the credential**, and a header that disagrees with it is 403
+rather than ignored. What these endpoints return is a customer's risk posture, and
+naming a tenant in a header was enough to read all of it until an audit went looking.
 
 The tenant is validated as identifier-shaped rather than escaped. ClickHouse's HTTP
 interface has no parameter binding in the form this client uses, and an identifier

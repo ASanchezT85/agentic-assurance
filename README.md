@@ -105,7 +105,7 @@ write path, and a test enforces that.
 
 Phase 15 is the hardening gate: all fifteen invariants re-checked for completeness and
 under concurrency, a chaos suite that stops real containers, and the section 50.1
-targets measured. The enforcement path costs **11.6 µs at p50** against a 2 ms target;
+targets measured. The enforcement path costs **12.5 µs at p50** against a 2 ms target;
 the idempotency round trip costs **3.34 ms** and exceeds that budget on its own, which
 ADR-015 predicted and named the remedy for.
 

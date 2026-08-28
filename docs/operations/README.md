@@ -209,7 +209,7 @@ interrupt anything else using the compose stack while it runs. Run it alone.
 
 | | p50 | p95 | p99 | Section 50.1 target |
 |---|---|---|---|---|
-| Enforcement path | 11.6 µs | 17.6 µs | 22.6 µs | 2 ms / 5 ms / 10 ms |
+| Enforcement path | 12.5 µs | 16.8 µs | 20.5 µs | 2 ms / 5 ms / 10 ms |
 | Idempotency claim | 3.34 ms | 4.23 ms | 5.25 ms | — |
 
 The enforcement path is envelope decode and validation, authority evaluation and

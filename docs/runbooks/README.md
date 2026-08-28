@@ -58,9 +58,17 @@ a convenience; `evidence_events` is the record. If the two ever disagree, the ev
 is right.
 
 ```sh
-curl -H 'X-Tenant-Id: <tenant>' \
+curl -H "Authorization: Bearer $GATEWAY_TOKEN" \
   'http://localhost:8080/v1/evidence?correlation_id=<correlation id>'
 ```
+
+The tenant comes from the credential, not from a header: a token is issued to one
+tenant and the endpoint returns that tenant's chain. A header naming a different one is
+refused with 403 rather than ignored.
+
+This command used to pass the tenant in a header, and kept saying so for two audit
+passes after the endpoint started requiring authentication. A runbook is read during an
+incident, which is the worst moment to be handed a command that returns 401.
 
 `incident.Reconstruct` takes events and returns a timeline. It deliberately does not
 accept an incident: a function that did would be replaying memory.
