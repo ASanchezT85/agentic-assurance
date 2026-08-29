@@ -241,3 +241,57 @@ func TestTelemetryRecordsWhichControlRefused(t *testing.T) {
 		t.Errorf("policy_action = %q on an order policy never saw", row.PolicyAction)
 	}
 }
+
+// One key, two intents.
+//
+// The mirror of ENVELOPE_REUSED and the more dangerous direction: that one is two keys
+// for one stated intention, this is two intentions under one key. Until it was checked,
+// the second caller was handed the first one's outcome — so an agent that reused a key
+// for a different order was told its order had been accepted and filled when nothing of
+// the kind had been sent.
+func TestAKeyClaimedByAnotherEnvelopeIsRefused(t *testing.T) {
+	p, fake, _ := harness(t)
+
+	if result := p.Submit(context.Background(), envelope(nil), presentedAPI()); !result.Accepted {
+		t.Fatalf("the first submission was refused: %s %s", result.Stage, result.Code)
+	}
+
+	// Same key, different envelope, different size.
+	other := envelope(func(m map[string]any) {
+		m["envelope_id"] = "env_a_different_intent"
+		m["correlation_id"] = "corr_a_different_intent"
+		m["intent"].(map[string]any)["quantity"] = 7
+	})
+
+	result := p.Submit(context.Background(), other, presentedAPI())
+	if result.Accepted {
+		t.Fatal("a second intent under the same key was accepted")
+	}
+	if result.Stage != StageIdempotency || result.Code != "IDEMPOTENCY_KEY_REUSED" {
+		t.Errorf("stage/code = %s/%s, want IDEMPOTENCY/IDEMPOTENCY_KEY_REUSED: %s",
+			result.Stage, result.Code, result.Reason)
+	}
+	if result.Replayed {
+		t.Error("the refusal is marked as a replay; the caller would read it as their order")
+	}
+	if result.Outcome != nil {
+		t.Error("the refusal carries an outcome that belongs to another intent")
+	}
+	if fake.Submissions("coid-idem-01J8Z3K9QW") != 1 {
+		t.Errorf("the venue saw %d submissions, want 1",
+			fake.Submissions("coid-idem-01J8Z3K9QW"))
+	}
+}
+
+// And the honest retry still works: same key, same envelope, prior outcome returned.
+func TestTheSameEnvelopeRetryingIsStillAReplay(t *testing.T) {
+	p, _, _ := harness(t)
+
+	if result := p.Submit(context.Background(), envelope(nil), presentedAPI()); !result.Accepted {
+		t.Fatalf("first: %s %s", result.Stage, result.Code)
+	}
+	result := p.Submit(context.Background(), envelope(nil), presentedAPI())
+	if !result.Replayed || result.Code != "DUPLICATE" {
+		t.Errorf("a genuine retry got %s/%v, want DUPLICATE/replayed", result.Code, result.Replayed)
+	}
+}

@@ -22,6 +22,17 @@ import (
 // called a repeat of an earlier one, and honouring both produces two orders for one
 // stated intention. Refused rather than reconciled: the platform cannot tell which of
 // the two the caller meant.
+// ErrKeyReused is returned when an idempotency key is presented with a different
+// envelope than the one that claimed it.
+//
+// The mirror of ErrEnvelopeReused, and the more dangerous direction. That one is two
+// keys for one stated intention; this is two intentions under one key, and until it was
+// checked the second caller was handed the first one's outcome — so an agent that
+// reused a key for a different order was told its order had been accepted and filled
+// when nothing of the kind had been sent. An assurance platform answering for an order
+// that does not exist is the failure it exists to prevent.
+var ErrKeyReused = errors.New("this idempotency key was claimed by a different envelope")
+
 var ErrEnvelopeReused = errors.New("this envelope id was already submitted under a different idempotency key")
 
 // RecordState is the lifecycle of an idempotency record.

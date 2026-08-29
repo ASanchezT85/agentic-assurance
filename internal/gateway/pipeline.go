@@ -266,6 +266,21 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 
 	// 5. Idempotency, before anything is evaluated. A duplicate must return the
 	// answer the first caller was given, not a fresh evaluation that could differ.
+	if reused, by := p.keyClaimedByAnother(ctx, env); reused {
+		// Refused rather than answered with the earlier order. A caller that reused a
+		// key for a different intent would otherwise be told its order was accepted
+		// and filled, and no such order was ever sent.
+		p.record(ctx, env, evidence.IdentityFailed, at, map[string]any{
+			"idempotency_key": env.IdempotencyKey,
+			"claimed_by":      by,
+			"reason":          "the idempotency key belongs to a different envelope",
+		})
+		return p.deny(result, StageIdempotency, "IDEMPOTENCY_KEY_REUSED",
+			"this idempotency key was claimed by envelope "+by+"; a key identifies one "+
+				"intent, and returning that one's outcome would report an order this "+
+				"request never placed (spec section 12.2)")
+	}
+
 	if prior, found := p.priorOutcome(ctx, env); found {
 		// Recorded, because otherwise the chain shows an intent arriving and no
 		// decision following it: the outcome was returned, not produced.
@@ -493,6 +508,23 @@ func (p *Pipeline) observed(env *intent.AgentExecutionEnvelope, r Result) Result
 	}
 	p.Telemetry.Observe(env, d)
 	return r
+}
+
+// keyClaimedByAnother reports whether this key already belongs to a different envelope.
+//
+// Checked before the replay path rather than inside it: a replay returns the earlier
+// outcome, and the whole question here is whether that outcome belongs to this caller.
+// A store error answers "no" and the claim inside execution fails closed for the same
+// reason priorOutcome does — an outage must not become a refusal of legitimate retries.
+func (p *Pipeline) keyClaimedByAnother(ctx context.Context, env *intent.AgentExecutionEnvelope) (bool, string) {
+	record, err := p.Execution.Store.Load(ctx, env.TenantID, env.IdempotencyKey)
+	if err != nil || record == nil || record.EnvelopeID == "" {
+		return false, ""
+	}
+	if record.EnvelopeID == env.EnvelopeID {
+		return false, ""
+	}
+	return true, record.EnvelopeID
 }
 
 // priorOutcome looks for a resolved idempotency record.

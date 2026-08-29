@@ -62,6 +62,9 @@ func (s *Service) Submit(ctx context.Context, env *intent.AgentExecutionEnvelope
 	}
 
 	if cached := s.fromCache(ctx, env.TenantID, env.IdempotencyKey); cached != nil {
+		if cached.EnvelopeID != "" && cached.EnvelopeID != env.EnvelopeID {
+			return Outcome{}, fmt.Errorf("%w: %s claimed it", ErrKeyReused, cached.EnvelopeID)
+		}
 		return replay(cached.Outcome), nil
 	}
 
@@ -82,6 +85,12 @@ func (s *Service) Submit(ctx context.Context, env *intent.AgentExecutionEnvelope
 	}
 
 	if !claimed {
+		// The key is taken. By this envelope it is a retry; by another it is a caller
+		// about to be told its order succeeded when what succeeded was somebody
+		// else's.
+		if existing != nil && existing.EnvelopeID != "" && existing.EnvelopeID != env.EnvelopeID {
+			return Outcome{}, fmt.Errorf("%w: %s claimed it", ErrKeyReused, existing.EnvelopeID)
+		}
 		return s.resumeExisting(ctx, existing)
 	}
 

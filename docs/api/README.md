@@ -63,7 +63,7 @@ mistake a refusal for an acceptance:
 | 202 | The outcome is unresolved. The platform accepted the intent and does not yet know what the venue did (INV-004). Not a failure. |
 | 400 | The envelope did not validate. `details` carries the validation codes. |
 | 401 | Nothing authenticated the caller, or the envelope claimed more attestation than the transport established. |
-| 403 | Authority or hard policy refused. `stage` names which. |
+| 403 | Authority, a fleet control or hard policy refused, or the idempotency key belongs to another envelope. `stage` names which. |
 | 413 | The envelope exceeds the accepted size. |
 | 422 | The intent could not be executed, for instance because no venue symbol exists for the instrument. |
 
@@ -395,6 +395,13 @@ record is right (ADR-009).
 
 An envelope refused at validation is still 404, and correctly: nothing established an
 envelope id to ask about, and the refusal named the fields in its own response.
+
+**One key, one intent, both ways.** A key presented with a different envelope is
+`IDEMPOTENCY_KEY_REUSED` rather than the earlier order's outcome. That direction was
+open until an audit sent the same key with a different quantity and was told, with a
+`200`, that its order had been accepted and filled — by an order it never placed. A
+retry of the same envelope under the same key is still a replay, which is what
+idempotency is for.
 
 Building it turned up that nothing enforced spec section 12.2's one-intent-per-envelope
 rule. Two submissions carrying the same envelope id under different idempotency keys
