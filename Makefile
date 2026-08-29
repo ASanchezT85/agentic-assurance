@@ -40,6 +40,12 @@ test-integration: ## Integration tests (run `make up && make migrate` first)
 openapi: ## Regenerate docs/api/openapi.json from the routes and packages/ schemas
 	go run ./cmd/openapi-gen -root .
 
+test-load-sustained: ## Steady traffic for LOAD_MINUTES (default 2), reporting per-minute latency and codes
+	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=load -count=1 -v -timeout 30m ./tests/performance/ -run TestSustainedLoad
+
+test-load-tenants: ## Several tenants under load; needs LOAD_TENANTS="tenant=token,..."
+	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=load -count=1 -v -timeout 20m ./tests/performance/ -run TestTenantsUnderLoad
+
 test-live: ## Place a real order at Alpaca Paper (spec section 66 step 7). Needs ALPACA_* credentials
 	go test -tags=live -count=1 -v ./tests/integration/ -run TestAlpacaPaper
 

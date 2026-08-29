@@ -264,6 +264,33 @@ refused" and looks exactly like a platform that stopped deciding; sockets are ca
 Application Control on this host blocks freshly built test binaries under
 `AppData\Local\Temp`.
 
+### Sustained, and across tenants
+
+Two more runs behind the same `load` tag. `make test-load` covers the burst; these are
+`-run TestSustainedLoad` and `-run TestTenantsUnderLoad`.
+
+**Sustained, 2 minutes, 50 workers each with its own grant:**
+
+| Minute | Decided | p50 | p99 | Codes |
+|---|---|---|---|---|
+| 0 | 23,037 | 125 ms | 221 ms | ACCEPTED 23,037 |
+| 1 | 28,332 | 124 ms | 171 ms | ACCEPTED 18,613, ROLLING_LIMIT_EXCEEDED 9,719 |
+
+51,419 decisions, **428/s sustained**, no 5xx and no unanswered request.
+
+The refusals are the finding worth keeping. Each grant allows 1,000,000 of rolling
+hourly notional and each order is 1,200, so a worker gets 833 orders an hour and this
+run spent that in about ninety seconds. The platform did not slow down or fall over: it
+kept deciding at the same latency and started saying no, which is the behaviour a
+rolling limit is for. The run reports decision codes as well as statuses for exactly
+this reason — a wall of 403s nobody can attribute reads as a platform falling over.
+
+**Across tenants:** two tenants submitting concurrently, each with its own credential,
+grant and signed policy bundle. Every intent each one lists is its own. That check is
+not about speed: a pooled connection carrying a stale `app.tenant_id` is a failure
+concurrency produces and a quiet test never sees, and INV-007 had only ever been proved
+against an idle database.
+
 ### Alpaca Paper, the one check that needs a real venue
 
 Spec section 66 step 7 asks for valid orders sent to Alpaca Paper. Everything about the
