@@ -40,6 +40,9 @@ test-integration: ## Integration tests (run `make up && make migrate` first)
 openapi: ## Regenerate docs/api/openapi.json from the routes and packages/ schemas
 	go run ./cmd/openapi-gen -root .
 
+test-live: ## Place a real order at Alpaca Paper (spec section 66 step 7). Needs ALPACA_* credentials
+	go test -tags=live -count=1 -v ./tests/integration/ -run TestAlpacaPaper
+
 test-load: ## 1,000 synthetic agents against a running gateway (spec section 56 item 1)
 	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=load -count=1 -v -timeout 20m ./tests/performance/ -run TestAThousandAgents
 

@@ -262,6 +262,29 @@ refused" and looks exactly like a platform that stopped deciding; sockets are ca
 Application Control on this host blocks freshly built test binaries under
 `AppData\Local\Temp`.
 
+### Alpaca Paper, the one check that needs a real venue
+
+Spec section 66 step 7 asks for valid orders sent to Alpaca Paper. Everything about the
+adapter is covered against a stub — request shape, status mapping, ambiguous timeouts,
+credentials never surfacing — and a stub cannot answer the only question a live run
+answers: whether the request we build is the request Alpaca accepts.
+
+```sh
+ALPACA_BASE_URL=https://paper-api.alpaca.markets ALPACA_KEY_ID=... ALPACA_SECRET_KEY=... make test-live
+```
+
+It places a limit order far below the market so it rests rather than fills, reconciles
+it by client order id — the half that matters for an ambiguous outcome, because the id
+has to be one Alpaca actually stored — and cancels it, so a run leaves no position and
+no resting order behind. Without credentials it skips loudly: a green run that proved
+nothing is worse than a skipped one.
+
+The adapter refuses a non-paper endpoint at construction, so a live URL in that
+variable fails before the first order rather than after it.
+
+**Not yet run.** It needs paper credentials this repository does not have and must never
+contain (spec section 35).
+
 ### A measurement defect worth remembering
 
 The first version of the gateway benchmark timed one evaluation per sample and
