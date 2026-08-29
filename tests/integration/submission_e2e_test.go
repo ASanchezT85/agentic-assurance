@@ -122,11 +122,11 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 	evStore := evidence.NewStore(pool)
 
 	pipeline := &gateway.Pipeline{
-		Identity:      &identity.Verifier{},
-		Grants:        gateway.StoreGrants{Store: grants},
-		Policies:      bundles,
-		Usage:         usage,
-		UsageRecorder: usage,
+		Identity: &identity.Verifier{},
+		Grants:   gateway.StoreGrants{Store: grants},
+		Policies: bundles,
+		Usage:    usage,
+		Reserve:  usage,
 		Execution: &execution.Service{
 			Broker: venue,
 			Store:  execution.NewPostgresStore(pool),

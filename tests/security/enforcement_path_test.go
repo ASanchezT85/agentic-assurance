@@ -81,11 +81,11 @@ func newPathRig(t *testing.T) *pathRig {
 		usage:  usage,
 		grants: grants,
 		pipeline: &gateway.Pipeline{
-			Identity:      &identity.Verifier{},
-			Grants:        grants,
-			Policies:      pathBundles{pathBundle(t)},
-			Usage:         usage,
-			UsageRecorder: usage,
+			Identity: &identity.Verifier{},
+			Grants:   grants,
+			Policies: pathBundles{pathBundle(t)},
+			Usage:    usage,
+			Reserve:  usage,
 			Execution: &execution.Service{
 				Broker: venue,
 				Store:  execution.NewMemoryStore(),

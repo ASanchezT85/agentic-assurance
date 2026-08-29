@@ -152,16 +152,16 @@ func harness(t *testing.T) (*Pipeline, *fakebroker.Broker, *memEvidence) {
 	ev := &memEvidence{}
 	usage := authority.NewMemoryUsage()
 	p := &Pipeline{
-		Identity:      &identity.Verifier{},
-		Grants:        memGrants{"grant_test": grant()},
-		Usage:         usage,
-		UsageRecorder: usage,
-		Policies:      memBundles{activeBundle(t)},
-		Execution:     &execution.Service{Broker: fake, Store: execution.NewMemoryStore(), Now: func() time.Time { return at }},
-		Symbols:       StaticSymbols{"instr_us_equity_00206R102": "AAPL", "instr_us_equity_PENNY": "PNY"},
-		Evidence:      ev,
-		Parent:        NewParentTracker(intent.DefaultClusterConfig),
-		Now:           func() time.Time { return at },
+		Identity:  &identity.Verifier{},
+		Grants:    memGrants{"grant_test": grant()},
+		Usage:     usage,
+		Reserve:   usage,
+		Policies:  memBundles{activeBundle(t)},
+		Execution: &execution.Service{Broker: fake, Store: execution.NewMemoryStore(), Now: func() time.Time { return at }},
+		Symbols:   StaticSymbols{"instr_us_equity_00206R102": "AAPL", "instr_us_equity_PENNY": "PNY"},
+		Evidence:  ev,
+		Parent:    NewParentTracker(intent.DefaultClusterConfig),
+		Now:       func() time.Time { return at },
 	}
 	return p, fake, ev
 }

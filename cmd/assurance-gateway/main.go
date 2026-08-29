@@ -342,11 +342,11 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 	}
 
 	return &gateway.Pipeline{
-		Identity:      identityVerifier(),
-		Grants:        gateway.StoreGrants{Store: authority.NewStore(pool)},
-		Policies:      bundles,
-		Usage:         usage,
-		UsageRecorder: usage,
+		Identity: identityVerifier(),
+		Grants:   gateway.StoreGrants{Store: authority.NewStore(pool)},
+		Policies: bundles,
+		Usage:    usage,
+		Reserve:  usage,
 		Execution: &execution.Service{
 			Broker: venue,
 			Store:  execution.NewPostgresStore(pool),

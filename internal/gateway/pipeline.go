@@ -145,12 +145,18 @@ type Pipeline struct {
 	// enforced, so it must not be waved through.
 	Usage authority.UsageSource
 
-	// UsageRecorder is written to after a submission. Separate from Usage because
-	// the evaluator must only ever read: a component that could record its own
-	// usage could also record none.
-	UsageRecorder authority.Recorder
-	Execution     *execution.Service
-	Symbols       SymbolResolver
+	// Reserve holds a grant's mutable limits atomically, immediately before the venue
+	// is called, and it is the authoritative authorization of size.
+	//
+	// Authority's earlier evaluation is a pre-check: it reads consumed usage in its
+	// own transaction, and between that read and the submission another gateway can
+	// decide the same thing. Every operation was race-free and four concurrent
+	// intents of 4,000 still put 16,000 through a 10,000 ceiling. A limit is not a
+	// structure that never loses a write; it is a decision nobody else can make at
+	// the same moment.
+	Reserve   authority.Reserver
+	Execution *execution.Service
+	Symbols   SymbolResolver
 
 	// Controls are the fleet controls a customer authorized. Optional: without a
 	// store the pipeline enforces everything else, and no fleet control binds —
@@ -430,6 +436,30 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		return p.deny(result, StageExecution, "UNSUPPORTED_ORDER", err.Error())
 	}
 
+	// The authoritative size decision, held before anything is sent and after every
+	// cheaper refusal has had its chance: a reservation taken for an order policy was
+	// going to deny is capacity held against nothing.
+	if p.Reserve != nil {
+		notional, determinable := authority.EffectiveNotional(env.Intent)
+		if determinable && grant != nil {
+			reservation, err := p.Reserve.Reserve(ctx, grant, env.IdempotencyKey, notional, at)
+			if err != nil {
+				return p.deny(result, StageAuthority, "USAGE_UNAVAILABLE",
+					"the reservation could not be taken: "+err.Error())
+			}
+			if !reservation.Allowed {
+				result.Authority = &reservation
+				p.record(ctx, env, evidence.AuthorityEvaluated, at, map[string]any{
+					"allowed":  false,
+					"code":     reservation.Code,
+					"grant_id": reservation.GrantID,
+					"stage":    "reservation",
+				})
+				return p.deny(result, StageAuthority, reservation.Code, reservation.Reason)
+			}
+		}
+	}
+
 	p.record(ctx, env, evidence.OrderSubmitted, at, map[string]any{
 		"client_order_id": req.ClientOrderID,
 	})
@@ -452,6 +482,10 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	if err != nil {
 		// An unresolved outcome is not a failure of the order. It means the platform
 		// does not know, which is a state an operator resolves (spec section 19).
+		//
+		// The reservation stays held. Releasing capacity for an order that may be
+		// working at a venue is how an unknown outcome turns into an exceeded ceiling
+		// (INV-002, INV-004).
 		p.record(ctx, env, evidence.OrderUnknown, at, map[string]any{
 			"client_order_id": req.ClientOrderID,
 			"reason":          err.Error(),
@@ -466,7 +500,7 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	// Usage is spent at submission, not at fill. A grant that caps an hour of
 	// exposure caps what was committed, and an order standing open at a venue is
 	// committed whether or not it has filled.
-	p.spend(ctx, env, outcome, at)
+	p.settle(ctx, env, outcome, at)
 
 	p.record(ctx, env, outcomeEvent(outcome.State), at, map[string]any{
 		"client_order_id": outcome.ClientOrderID,
@@ -578,34 +612,42 @@ func (p *Pipeline) orderRequest(env *intent.AgentExecutionEnvelope) (broker.Orde
 // with a consequence worth stating: an unrecorded submission is a submission the next
 // rolling-limit check does not see, so the ledger understates. It never overstates,
 // which is the direction that would deny orders that were within the grant.
-func (p *Pipeline) spend(ctx context.Context, env *intent.AgentExecutionEnvelope,
+// settle resolves the capacity a submission reserved.
+//
+// It replaces a function that created usage after the fact. That ordering was the
+// defect: the ledger learned what had been sent only once it had been sent, so two
+// decisions could read the same remaining capacity and both spend it.
+//
+// The states are the outcome's, not the platform's opinion of it:
+//
+//   - a definite venue rejection releases the notional. The order does not exist, and
+//     leaving it consumed would let anyone exhaust a customer's grant with requests a
+//     venue was always going to refuse;
+//   - a terminal outcome closes the open-order count while the notional stays spent
+//     for as long as its window holds it;
+//   - an unknown outcome never reaches here, and its reservation stays held.
+func (p *Pipeline) settle(ctx context.Context, env *intent.AgentExecutionEnvelope,
 	outcome execution.Outcome, at time.Time) {
 
-	if p.UsageRecorder == nil || outcome.Replayed {
+	if p.Reserve == nil || outcome.Replayed {
 		return
 	}
-	notional, determinable := authority.EffectiveNotional(env.Intent)
-	if !determinable {
-		// The grant would have denied an indeterminate notional if it capped size,
-		// so reaching here means it does not. Recording zero is honest; recording a
-		// guess would be inventing exposure.
-		notional = 0
+
+	state := authority.StateCommitted
+	if outcome.State == broker.StateRejected {
+		state = authority.StateReleased
 	}
 
 	terminal := outcome.State == broker.StateFilled ||
 		outcome.State == broker.StateRejected ||
 		outcome.State == broker.StateCancelled
 
-	if err := p.UsageRecorder.Record(ctx, authority.Entry{
-		TenantID:       env.TenantID,
-		GrantID:        env.AuthorityGrantID,
-		IdempotencyKey: env.IdempotencyKey,
-		Notional:       notional,
-		SubmittedAt:    at,
-		Open:           !terminal,
-	}); err != nil {
+	if err := p.Reserve.Settle(ctx, env.TenantID, env.IdempotencyKey, state, !terminal, at); err != nil {
+		// The capacity stays reserved, which errs toward refusing later orders rather
+		// than allowing them. That is the safe direction for a ceiling, and it is
+		// recorded so an operator can see it happened.
 		p.record(ctx, env, evidence.OrderUnknown, at, map[string]any{
-			"usage_not_recorded": err.Error(),
+			"reservation_not_settled": err.Error(),
 		})
 	}
 }
