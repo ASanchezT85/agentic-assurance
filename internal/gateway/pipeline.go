@@ -486,7 +486,12 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	if p.Reserve != nil {
 		notional, determinable := authority.EffectiveNotional(env.Intent)
 		if determinable && grant != nil {
-			reservation, err := p.Reserve.Reserve(ctx, grant, env.IdempotencyKey, notional, at)
+			reservation, err := p.Reserve.Reserve(ctx, grant, env.IdempotencyKey, notional,
+				authority.ReservationIdentity{
+					EnvelopeID:  env.EnvelopeID,
+					PrincipalID: env.Principal.PrincipalID,
+					AccountID:   env.Principal.AccountID,
+				}, at)
 			if err != nil {
 				return p.deny(result, StageAuthority, "USAGE_UNAVAILABLE",
 					"the reservation could not be taken: "+err.Error())
@@ -510,7 +515,13 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 
 	// The durable boundary. Nothing reaches a venue until the decision that permits it
 	// is committed.
+	//
+	// And a failure here is a definite non-submission: the reservation is released
+	// rather than left held. Holding capacity for an order that was never sent is how
+	// a broken caller exhausts a grant without ever trading, and it leaves a row that
+	// a later request could inherit.
 	if err := p.receipt(ctx, buffered); err != nil {
+		p.releaseReservation(ctx, env, at)
 		return p.deny(result, StageExecution, "EVIDENCE_UNAVAILABLE",
 			"the decision could not be recorded, so it was not acted on: "+err.Error())
 	}
@@ -518,6 +529,13 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	outcome, err := p.Execution.Submit(ctx, env, req)
 	result.Outcome = &outcome
 	result.Replayed = outcome.Replayed
+
+	if errors.Is(err, execution.ErrEnvelopeReused) || errors.Is(err, execution.ErrKeyReused) {
+		// Nothing was sent: the claim refused before the venue. Release, or the losing
+		// side of an envelope race leaves an orphan reservation behind — capacity held
+		// for an order that does not exist, under a key with no idempotency record.
+		p.releaseReservation(ctx, env, at)
+	}
 
 	if errors.Is(err, execution.ErrEnvelopeReused) {
 		// Not an ambiguous outcome: nothing was sent. The caller asked for a second
@@ -663,6 +681,27 @@ func (p *Pipeline) orderRequest(env *intent.AgentExecutionEnvelope) (broker.Orde
 // with a consequence worth stating: an unrecorded submission is a submission the next
 // rolling-limit check does not see, so the ledger understates. It never overstates,
 // which is the direction that would deny orders that were within the grant.
+// releaseReservation returns capacity when it is known that no order exists.
+//
+// Only for definite non-submission. An ambiguous outcome keeps its reservation, because
+// the order may be working and releasing it is how an unknown becomes an exceeded
+// ceiling (INV-004).
+func (p *Pipeline) releaseReservation(ctx context.Context, env *intent.AgentExecutionEnvelope,
+	at time.Time) {
+
+	if p.Reserve == nil || env == nil {
+		return
+	}
+	if err := p.Reserve.Release(ctx, env.TenantID, env.IdempotencyKey, at); err != nil {
+		// The capacity stays held, which errs toward refusing later orders rather than
+		// allowing them, and the identity check means it can no longer be inherited by
+		// a different request. Recorded so an operator can see it happened.
+		p.record(ctx, env, evidence.OrderUnknown, at, map[string]any{
+			"reservation_not_released": err.Error(),
+		})
+	}
+}
+
 // settle resolves the capacity a submission reserved.
 //
 // It replaces a function that created usage after the fact. That ordering was the

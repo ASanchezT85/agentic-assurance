@@ -1,0 +1,3 @@
+BEGIN;
+ALTER TABLE authority_usage DROP COLUMN IF EXISTS envelope_id, DROP COLUMN IF EXISTS principal_id, DROP COLUMN IF EXISTS account_id;
+COMMIT;

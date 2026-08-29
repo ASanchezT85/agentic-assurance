@@ -44,6 +44,23 @@ const (
 	StateReleased ReservationState = "RELEASED"
 )
 
+// ReservationIdentity is what a reservation was taken for.
+//
+// A reservation used to be keyed by (tenant, idempotency_key) and nothing else, so a
+// repeated key returned ALLOW without asking what it had been reserved for. A key left
+// behind by a failure that never reached a venue could then authorize a different
+// envelope, a different grant and a different amount — the ledger describing an intent
+// that never executed while the one that did was invisible to it.
+//
+// These fields are the immutable identity of an economic request. A repeated key is a
+// retry only if all of them match; anything else is a different intent wearing the same
+// key, and it is refused rather than allowed.
+type ReservationIdentity struct {
+	EnvelopeID  string
+	PrincipalID string
+	AccountID   string
+}
+
 // Reserver holds capacity atomically.
 //
 // Separate from Recorder because these are different acts: Record wrote down what had
@@ -59,7 +76,18 @@ type Reserver interface {
 	// already holds capacity keeps it: the ledger is keyed by the key for the same
 	// reason the idempotency record is.
 	Reserve(ctx context.Context, g *Grant, idempotencyKey string, notional float64,
-		at time.Time) (Decision, error)
+		who ReservationIdentity, at time.Time) (Decision, error)
+
+	// Release returns capacity when it is known that nothing was sent.
+	//
+	// Distinct from Settle, which records what a venue did. A pre-venue failure —
+	// the decision receipt could not commit, the envelope was already used, the order
+	// could not be built — establishes that no order exists, and leaving capacity
+	// held for one would let a broken caller exhaust a grant without ever trading.
+	//
+	// An ambiguous outcome is never released here. That is the one case where holding
+	// is right, because the order may be working.
+	Release(ctx context.Context, tenantID, idempotencyKey string, at time.Time) error
 
 	// Settle records what the venue did. Terminal outcomes close the open-order count;
 	// a definite rejection releases the notional; an unknown outcome changes nothing

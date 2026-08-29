@@ -2,6 +2,7 @@ package authority
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -37,6 +38,13 @@ type Entry struct {
 	// State is where the reserved capacity ended up. RELEASED rows are capacity
 	// returned and count against nothing.
 	State ReservationState
+
+	// What the capacity was reserved for. A repeated idempotency key is a retry only
+	// if every one of these matches; anything else is a different intent wearing the
+	// same key.
+	EnvelopeID  string
+	PrincipalID string
+	AccountID   string
 
 	ClosedAt *time.Time
 }
@@ -93,7 +101,7 @@ func (m *MemoryUsage) Close(_ context.Context, tenantID, idempotencyKey string, 
 // same call the gateway makes; the ceiling that has to hold across gateways is the
 // PostgreSQL one.
 func (m *MemoryUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey string,
-	notional float64, at time.Time) (Decision, error) {
+	notional float64, who ReservationIdentity, at time.Time) (Decision, error) {
 
 	if g == nil {
 		return Decision{}, fmt.Errorf("no grant to reserve against")
@@ -102,7 +110,13 @@ func (m *MemoryUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, held := m.entries[usageKey(g.TenantID, idempotencyKey)]; held {
+	if held, exists := m.entries[usageKey(g.TenantID, idempotencyKey)]; exists {
+		if held.GrantID != g.GrantID || held.EnvelopeID != who.EnvelopeID ||
+			held.PrincipalID != who.PrincipalID || held.AccountID != who.AccountID ||
+			held.Notional != notional {
+			return reservationDecision(g, at.UTC(), false, "RESERVATION_KEY_REUSED",
+				"this idempotency key already holds capacity for a different request"), nil
+		}
 		return allow(g, at.UTC()), nil
 	}
 
@@ -114,8 +128,23 @@ func (m *MemoryUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey stri
 	m.entries[usageKey(g.TenantID, idempotencyKey)] = &Entry{
 		TenantID: g.TenantID, GrantID: g.GrantID, IdempotencyKey: idempotencyKey,
 		Notional: notional, SubmittedAt: at.UTC(), Open: true, State: StateReserved,
+		EnvelopeID: who.EnvelopeID, PrincipalID: who.PrincipalID, AccountID: who.AccountID,
 	}
 	return allow(g, at.UTC()), nil
+}
+
+// Release drops a reservation nothing was sent for.
+func (m *MemoryUsage) Release(_ context.Context, tenantID, idempotencyKey string,
+	_ time.Time) error {
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := usageKey(tenantID, idempotencyKey)
+	if entry, ok := m.entries[key]; ok && entry.State == StateReserved {
+		delete(m.entries, key)
+	}
+	return nil
 }
 
 // Settle resolves a held reservation.
@@ -234,7 +263,7 @@ func (s *PostgresUsage) Close(ctx context.Context, tenantID, idempotencyKey stri
 // and it is transaction-scoped, so it is released by commit or rollback rather than by
 // remembering to.
 func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey string,
-	notional float64, at time.Time) (Decision, error) {
+	notional float64, who ReservationIdentity, at time.Time) (Decision, error) {
 
 	if g == nil {
 		return Decision{}, fmt.Errorf("no grant to reserve against")
@@ -250,18 +279,60 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 			return err
 		}
 
-		// A retry that already holds capacity keeps it. Counting it again would let a
-		// duplicate submission spend the grant twice, which is the same defect the
-		// idempotency record exists to prevent one layer down.
-		var held bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM authority_usage
-				 WHERE tenant_id = $1 AND idempotency_key = $2)`,
-			g.TenantID, idempotencyKey).Scan(&held); err != nil {
+		// A retry that already holds capacity keeps it — but only a retry.
+		//
+		// This used to answer "a row exists for this key" and return ALLOW. A key left
+		// behind by a failure that never reached a venue could then authorize a
+		// different envelope, a different grant and a different amount, and an
+		// idempotency record pruned by retention left a row that made a fresh request
+		// invisible to rolling accounting. The identity is what tells a retry from a
+		// different intent wearing the same key.
+		var (
+			held          bool
+			heldGrant     string
+			heldEnvelope  string
+			heldPrincipal string
+			heldAccount   string
+			heldNotional  float64
+			heldState     string
+		)
+		err := tx.QueryRow(ctx, `
+			SELECT grant_id, COALESCE(envelope_id, ''), COALESCE(principal_id, ''),
+			       COALESCE(account_id, ''), notional, state
+			  FROM authority_usage
+			 WHERE tenant_id = $1 AND idempotency_key = $2`,
+			g.TenantID, idempotencyKey).Scan(&heldGrant, &heldEnvelope, &heldPrincipal,
+			&heldAccount, &heldNotional, &heldState)
+		switch {
+		case err == nil:
+			held = true
+		case errors.Is(err, pgx.ErrNoRows):
+			held = false
+		default:
 			return err
 		}
+
 		if held {
+			mismatch := ""
+			switch {
+			case heldGrant != g.GrantID:
+				mismatch = "a different authority grant"
+			case heldEnvelope != who.EnvelopeID:
+				mismatch = "a different envelope"
+			case heldPrincipal != who.PrincipalID || heldAccount != who.AccountID:
+				mismatch = "a different principal or account"
+			case heldNotional != notional:
+				mismatch = "a different amount"
+			}
+			if mismatch != "" {
+				decision = reservationDecision(g, now, false, "RESERVATION_KEY_REUSED",
+					"this idempotency key already holds capacity for "+mismatch+
+						"; a key identifies one economic request, and inheriting that "+
+						"reservation would authorize an amount nobody evaluated (INV-002)")
+				return nil
+			}
+			// The same request again. It keeps the capacity it already holds, which is
+			// what makes a retry safe.
 			decision = allow(g, now)
 			return nil
 		}
@@ -289,9 +360,11 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO authority_usage
-				(tenant_id, grant_id, idempotency_key, notional, submitted_at, open, state)
-			VALUES ($1,$2,$3,$4,$5,true,$6)`,
-			g.TenantID, g.GrantID, idempotencyKey, notional, now, string(StateReserved)); err != nil {
+				(tenant_id, grant_id, idempotency_key, notional, submitted_at, open, state,
+				 envelope_id, principal_id, account_id)
+			VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,$9)`,
+			g.TenantID, g.GrantID, idempotencyKey, notional, now, string(StateReserved),
+			who.EnvelopeID, who.PrincipalID, who.AccountID); err != nil {
 			return err
 		}
 
@@ -305,6 +378,24 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 			"the reservation could not be committed: "+err.Error()), nil
 	}
 	return decision, nil
+}
+
+// Release deletes a reservation when it is known that nothing was sent.
+//
+// Deleted rather than marked RELEASED: a released row is capacity returned either way,
+// and removing it means the key is genuinely free for a later, properly evaluated
+// request. Marking would leave exactly the stale row this whole change exists to stop
+// being reusable.
+func (s *PostgresUsage) Release(ctx context.Context, tenantID, idempotencyKey string,
+	at time.Time) error {
+
+	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			DELETE FROM authority_usage
+			 WHERE tenant_id = $1 AND idempotency_key = $2 AND state = $3`,
+			tenantID, idempotencyKey, string(StateReserved))
+		return err
+	})
 }
 
 // Settle records what the venue did with reserved capacity.
