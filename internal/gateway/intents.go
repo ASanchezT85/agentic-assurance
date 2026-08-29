@@ -42,8 +42,15 @@ type GrantRevoker interface {
 }
 
 // IntentStatusHandler is GET /v1/intents/{id}.
-func IntentStatusHandler(store IntentStore, creds *identity.Credentials,
-	verifier *identity.Verifier) http.HandlerFunc {
+//
+// It takes an evidence reader as well as the execution store, because an intent that
+// was refused never reaches the execution store: the idempotency record is claimed at
+// submission to the venue, and identity, authority, a fleet control or policy all stop
+// before that. Answering 404 there told a caller who lost the response that their
+// intent never arrived, when the platform had received it and decided against it —
+// which is the answer this endpoint exists to give.
+func IntentStatusHandler(store IntentStore, decisions IntentDecisions,
+	creds *identity.Credentials, verifier *identity.Verifier) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, status, message := callerTenant(r, creds, verifier)
@@ -71,6 +78,10 @@ func IntentStatusHandler(store IntentStore, creds *identity.Credentials,
 			return
 		}
 		if record == nil {
+			if refusal, found := refusalFor(ctx, decisions, tenant, envelopeID); found {
+				writeJSON(w, http.StatusOK, refusal)
+				return
+			}
 			// The same answer whether it never existed or belongs to another tenant.
 			writeJSON(w, http.StatusNotFound, errorBody("no such intent"))
 			return
@@ -99,6 +110,56 @@ func IntentStatusHandler(store IntentStore, creds *identity.Credentials,
 		}
 		writeJSON(w, http.StatusOK, body)
 	}
+}
+
+// IntentDecisions reads the evidence an envelope produced.
+type IntentDecisions interface {
+	ByAggregate(ctx context.Context, tenantID, aggregateID string) ([]evidence.Event, error)
+}
+
+// refusalFor rebuilds what happened to an intent that never reached a venue.
+//
+// It reports the chain rather than a verdict of its own. The events already name the
+// stage that refused and carry its code; deriving a second taxonomy here would be a
+// summary that can disagree with the record, and when those disagree the record is
+// right (ADR-009).
+func refusalFor(ctx context.Context, decisions IntentDecisions,
+	tenantID, envelopeID string) (map[string]any, bool) {
+
+	if decisions == nil {
+		return nil, false
+	}
+	events, err := decisions.ByAggregate(ctx, tenantID, envelopeID)
+	if err != nil || len(events) == 0 {
+		return nil, false
+	}
+
+	chain := make([]map[string]any, 0, len(events))
+	for _, e := range events {
+		entry := map[string]any{
+			"event_name":  string(e.EventName),
+			"occurred_at": e.OccurredAt.UTC(),
+		}
+		// The fields a refusal carries, copied only when present. Every stage writes
+		// its own payload shape and this endpoint is not the place to unify them.
+		for _, key := range []string{"code", "reason", "action", "control", "established"} {
+			if v, ok := e.Payload[key]; ok {
+				entry[key] = v
+			}
+		}
+		chain = append(chain, entry)
+	}
+
+	return map[string]any{
+		"envelope_id": envelopeID,
+		"tenant_id":   tenantID,
+		"state":       "NOT_EXECUTED",
+		"executed":    false,
+		"explanation": "this intent was received and never reached a venue. The chain " +
+			"below is what the enforcement plane recorded; GET /v1/intents/" +
+			envelopeID + "/evidence returns it whole.",
+		"chain": chain,
+	}, true
 }
 
 // revokeRequest names who is cutting the authority and why.

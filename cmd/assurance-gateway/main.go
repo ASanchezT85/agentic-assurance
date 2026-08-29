@@ -457,7 +457,8 @@ func main() {
 	// an operator reaches for when it is not.
 	var status, revoke, issue, applyControl, revokeControl, listControls http.HandlerFunc
 	if pool := openPool(ctx, log); pool != nil {
-		status = gateway.IntentStatusHandler(execution.NewPostgresStore(pool), creds, verifier)
+		status = gateway.IntentStatusHandler(execution.NewPostgresStore(pool),
+			evidence.NewStore(pool), creds, verifier)
 		revoke = gateway.RevokeGrantHandler(authority.NewStore(pool), evidence.NewStore(pool),
 			creds, verifier, nil)
 		issue = gateway.IssueGrantHandler(authority.NewStore(pool), evidence.NewStore(pool),

@@ -315,6 +315,18 @@ meant for an auditor.
 A run that is still `PENDING` carries no `outcome` field, and that absence is the
 answer: the platform has claimed the key and does not yet know what the venue did.
 
+**An intent that was refused answers here too**, with `state: NOT_EXECUTED` and the
+evidence chain that stopped it. It used to answer 404: the idempotency record is
+claimed when an order is submitted to a venue, and identity, authority, a fleet control
+and policy all refuse before that, so a caller who lost the 403 was told their intent
+never arrived — the exact question this endpoint exists to answer, answered wrongly.
+The chain is reported rather than summarised into a verdict of this endpoint's own: a
+summary that can disagree with the record is one that eventually does, and then the
+record is right (ADR-009).
+
+An envelope refused at validation is still 404, and correctly: nothing established an
+envelope id to ask about, and the refusal named the fields in its own response.
+
 Building it turned up that nothing enforced spec section 12.2's one-intent-per-envelope
 rule. Two submissions carrying the same envelope id under different idempotency keys
 produced two orders for one stated intention — found when the unique index refused to
