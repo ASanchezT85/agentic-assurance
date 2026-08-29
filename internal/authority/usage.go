@@ -324,7 +324,7 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 				mismatch = "a different envelope"
 			case heldPrincipal != who.PrincipalID || heldAccount != who.AccountID:
 				mismatch = "a different principal or account"
-			case parseAmount(heldNotional) != notional:
+			case !sameAmount(heldNotional, notional):
 				mismatch = "a different amount"
 			}
 			if mismatch != "" {
@@ -361,8 +361,16 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 		}
 		// Text, not a float. A sum that travelled through a float64 would be a number
 		// the ceiling was compared against but not the number that was stored.
-		consumed.Rolling1hNotional = parseAmount(rolling)
-		consumed.DailyNotional = parseAmount(daily)
+		//
+		// An unreadable sum aborts the reservation. Consumed usage that cannot be read
+		// is not consumed usage of zero.
+		var parseErr error
+		if consumed.Rolling1hNotional, parseErr = parseAmount(rolling); parseErr != nil {
+			return parseErr
+		}
+		if consumed.DailyNotional, parseErr = parseAmount(daily); parseErr != nil {
+			return parseErr
+		}
 
 		if code, reason := checkLimits(g.Limits, consumed, notional); code != "" {
 			decision = reservationDecision(g, now, false, code, reason)
@@ -450,20 +458,42 @@ func (s *PostgresUsage) Usage(ctx context.Context, tenantID, grantID string, now
 			tenantID, grantID, now.Add(-time.Hour), dayStart,
 		).Scan(&rolling, &daily, &snap.OpenOrders)
 	})
-	snap.Rolling1hNotional = parseAmount(rolling)
-	snap.DailyNotional = parseAmount(daily)
-	return snap, err
+	if err != nil {
+		return snap, err
+	}
+	if snap.Rolling1hNotional, err = parseAmount(rolling); err != nil {
+		return Snapshot{}, err
+	}
+	if snap.DailyNotional, err = parseAmount(daily); err != nil {
+		return Snapshot{}, err
+	}
+	return snap, nil
 }
 
 // parseAmount reads a PostgreSQL numeric that arrived as text.
 //
-// An unreadable value becomes zero, which understates consumption rather than
-// overstating it — the wrong direction for a ceiling, so it cannot happen quietly: the
-// column is numeric(20,4) and everything written to it comes from Amount.String().
-func parseAmount(text string) money.Amount {
+// It returns the error rather than swallowing it. It used to return zero on a parse
+// failure, and zero means "nothing consumed": malformed authoritative state would have
+// read as a grant with its full capacity available, which is the one direction a ceiling
+// must never fail in. The condition is unlikely — the column is numeric(20,4) and
+// everything written to it comes from Amount.String() — and "unlikely" is not a property
+// a limit can be built on.
+//
+// The caller turns this into USAGE_UNAVAILABLE and denies.
+// sameAmount compares a stored amount with the one being reserved.
+//
+// An unreadable stored amount is not equal to anything: the reservation is refused as a
+// key reuse rather than treated as a match, because "we cannot read what this key holds"
+// must not resolve to "it holds what you are asking for".
+func sameAmount(text string, notional money.Amount) bool {
+	held, err := parseAmount(text)
+	return err == nil && held == notional
+}
+
+func parseAmount(text string) (money.Amount, error) {
 	amount, err := money.Parse(text)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("consumed usage %q is not a readable amount: %w", text, err)
 	}
-	return amount
+	return amount, nil
 }

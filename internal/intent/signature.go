@@ -1,10 +1,8 @@
 package intent
 
 import (
-	"bytes"
-	"encoding/json"
+	"agentic-assurance/internal/canonicaljson"
 	"fmt"
-	"sort"
 )
 
 // Canonical bytes for envelope signing.
@@ -30,105 +28,19 @@ import (
 //
 // The algorithm is part of the contract. A change to it is a new version, not a patch,
 // and CanonicalVersion is what a producer states it used.
-const CanonicalVersion = "v0.1"
+const CanonicalVersion = canonicaljson.Version
 
 // Canonical returns the bytes a signature covers.
+//
+// The generic canonical form of the envelope, minus its own signature field: a signature
+// cannot cover itself. The removal is here, in the domain that needs it, rather than
+// inside the canonicalizer — retention hashes event payloads with the same algorithm, and
+// a payload with a field called "signature" must keep it.
 func Canonical(raw []byte) ([]byte, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-
-	var document any
-	if err := decoder.Decode(&document); err != nil {
-		return nil, fmt.Errorf("envelope is not JSON: %w", err)
+	object, err := canonicaljson.CanonicalObject(raw)
+	if err != nil {
+		return nil, fmt.Errorf("envelope is not a JSON object: %w", err)
 	}
-
-	object, ok := document.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("envelope is not a JSON object")
-	}
-	// The signature cannot cover itself.
 	delete(object, "signature")
-
-	var out bytes.Buffer
-	if err := writeCanonical(&out, object); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
-}
-
-func writeCanonical(out *bytes.Buffer, value any) error {
-	switch v := value.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(v))
-		for key := range v {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-
-		out.WriteByte('{')
-		for i, key := range keys {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			if err := writeCanonicalString(out, key); err != nil {
-				return err
-			}
-			out.WriteByte(':')
-			if err := writeCanonical(out, v[key]); err != nil {
-				return err
-			}
-		}
-		out.WriteByte('}')
-		return nil
-
-	case []any:
-		out.WriteByte('[')
-		for i, item := range v {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			if err := writeCanonical(out, item); err != nil {
-				return err
-			}
-		}
-		out.WriteByte(']')
-		return nil
-
-	case json.Number:
-		// Verbatim. Parsing this into a float and printing it back is how a
-		// signature that was correct stops verifying.
-		out.WriteString(v.String())
-		return nil
-
-	case string:
-		return writeCanonicalString(out, v)
-
-	case bool:
-		if v {
-			out.WriteString("true")
-		} else {
-			out.WriteString("false")
-		}
-		return nil
-
-	case nil:
-		out.WriteString("null")
-		return nil
-
-	default:
-		return fmt.Errorf("value of type %T cannot appear in a canonical envelope", value)
-	}
-}
-
-func writeCanonicalString(out *bytes.Buffer, s string) error {
-	// encoding/json's own escaping, with HTML escaping off so the bytes depend on the
-	// string rather than on where it might be displayed.
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(s); err != nil {
-		return err
-	}
-	out.Write(bytes.TrimRight(buf.Bytes(), "\n"))
-	return nil
+	return canonicaljson.CanonicalizeObject(object)
 }

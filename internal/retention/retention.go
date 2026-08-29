@@ -13,6 +13,7 @@
 package retention
 
 import (
+	"agentic-assurance/internal/canonicaljson"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,7 +22,6 @@ import (
 	"time"
 
 	"agentic-assurance/internal/evidence"
-	"agentic-assurance/internal/intent"
 )
 
 // Class is what a policy is written against.
@@ -178,18 +178,25 @@ func ContentHash(e evidence.Event) (string, error) {
 
 // canonicalPayload serialises a payload deterministically.
 //
-// Through the envelope's canonical form, because the property needed here is the same
-// one signing needs: the same content must produce the same bytes, and a reordered map
-// must not look like an edit.
+// Through the generic canonical form, which removes nothing. It used to go through the
+// envelope signer's canonicalizer, which deletes a top-level field named "signature"
+// because a signature cannot cover itself — correct there, and wrong here: an event
+// payload with a field called "signature" had it dropped before hashing, so two archived
+// events differing only in that field produced identical bytes. An archive that claims to
+// cover the full immutable event covered all of it except the one field most likely to
+// carry an attestation.
 func canonicalPayload(payload map[string]any) ([]byte, error) {
 	if len(payload) == 0 {
 		return []byte("{}"), nil
 	}
+	// json.Number, so a number in a payload keeps its literal text through the hash.
+	// Marshalling a decoded float and hashing the result would make an archive's
+	// integrity depend on how Go happens to print a float this year.
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("payload is not serialisable: %w", err)
 	}
-	return intent.Canonical(raw)
+	return canonicaljson.Canonical(raw)
 }
 
 // ChainHash folds one event's content hash into the chain.
