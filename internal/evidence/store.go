@@ -129,28 +129,28 @@ func (s *Store) RecentAggregates(ctx context.Context, tenantID string, since tim
 	}
 	return s.query(ctx, tenantID, `
 		WITH envelopes AS (
-		    -- Aggregates that are intents. Everything else writes evidence too — a
-		    -- revoked control, an incident — and a list of "intents" that included
-		    -- them would be a list of aggregates wearing the wrong name.
-		    SELECT DISTINCT aggregate_id
+		    -- The newest intents, straight off the index, rather than a summary of the
+		    -- window. Aggregates that are intents: everything writes evidence, and a
+		    -- list of "intents" holding a revoked control would be a list of aggregates
+		    -- wearing the wrong name.
+		    --
+		    -- Ordered by when the intent arrived rather than by its last event. The
+		    -- earlier version ranked by last activity, which meant grouping every event
+		    -- of every envelope in the window — 909,061 rows into 177,087 groups to
+		    -- return fifty, about half a second on a day of real traffic.
+		    SELECT aggregate_id, occurred_at AS received_at
 		      FROM evidence_events
-		     WHERE tenant_id = $1 AND occurred_at >= $2 AND event_name = $4
-		), recent AS (
-		    SELECT e.aggregate_id, max(e.occurred_at) AS last_at
-		      FROM evidence_events e
-		      JOIN envelopes v ON v.aggregate_id = e.aggregate_id
-		     WHERE e.tenant_id = $1
-		     GROUP BY e.aggregate_id
-		     ORDER BY last_at DESC
+		     WHERE tenant_id = $1 AND event_name = $4 AND occurred_at >= $2
+		     ORDER BY occurred_at DESC
 		     LIMIT $3
 		)
 		SELECT e.event_id, e.schema_version, e.event_name, e.tenant_id, e.aggregate_id,
 		       e.correlation_id, e.causation_id, e.occurred_at, e.produced_at, e.producer,
 		       e.sequence, e.corrects_event_id, e.payload
 		  FROM evidence_events e
-		  JOIN recent r ON r.aggregate_id = e.aggregate_id
+		  JOIN envelopes v ON v.aggregate_id = e.aggregate_id
 		 WHERE e.tenant_id = $1
-		 ORDER BY r.last_at DESC, e.occurred_at ASC, e.sequence ASC, e.event_id ASC`,
+		 ORDER BY v.received_at DESC, e.occurred_at ASC, e.sequence ASC, e.event_id ASC`,
 		tenantID, since.UTC(), limit, string(IntentReceived))
 }
 

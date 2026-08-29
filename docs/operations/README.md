@@ -274,6 +274,16 @@ refused" and looks exactly like a platform that stopped deciding; sockets are ca
 Application Control on this host blocks freshly built test binaries under
 `AppData\Local\Temp`.
 
+### The listing query, measured against a day of traffic
+
+`GET /v1/intents` ranked envelopes by last activity, which meant summarising the window
+to fill one page: against 917,000 events the plan grouped **909,061 rows into 177,087
+aggregates** and kept fifty, at 450–880 ms. Ranking by arrival makes it a bounded index
+scan — **5–35 ms** on the same data, with the index from migration 0015.
+
+Worth keeping as a pattern rather than a fix: the query was correct from the first day
+and only wrong at volume, and the load runs are what produced the volume to see it in.
+
 ### Sustained, and across tenants
 
 Two more runs behind the same `load` tag. `make test-load` covers the burst; these are

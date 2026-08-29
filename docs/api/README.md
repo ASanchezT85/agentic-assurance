@@ -202,6 +202,15 @@ callers that each read the count, saw room and then wrote would both pass, and a
 limit that only approximately holds under load fails exactly when it matters. A replay
 keeps the slot it already holds, so a duplicate cannot spend the window twice.
 
+**The rate belongs to the control, not to each agent under it.** A throttle over five
+named agents at ten per minute permits ten orders between them, which is what
+"throttle this cohort" means; ten each is five controls. Said here because the other
+reading is just as natural and the difference is a factor of five during an incident.
+
+The counted window is pruned as it is consumed, two windows back. One row per allowed
+order kept for good would grow with traffic while only the last few minutes are ever
+read, and the count that enforces the limit would slow down as the control aged.
+
 The slot is spent at the control stage, before policy. An order refused later still
 counted, which errs toward throttling more — for a control authorized during an
 incident, that is the direction to err in. Revoking a throttle forgets its window, so a
@@ -344,8 +353,14 @@ left to go.
 curl -H "Authorization: Bearer $GATEWAY_TOKEN"   'http://localhost:8080/v1/intents?hours=24&limit=50'
 ```
 
-A tenant's recent intents, newest activity first, built from evidence rather than from
-the idempotency table. That choice is the endpoint: the idempotency table holds intents
+A tenant's recent intents, newest arrival first, built from evidence rather than from
+the idempotency table.
+
+Ranked by when each intent arrived rather than by its last event, and that is a
+performance decision stated rather than hidden: ranking by last activity meant grouping
+every event of every envelope in the window — measured at 909,061 rows into 177,087
+groups to return fifty, about half a second against a day of real traffic. By arrival
+it is a bounded index scan, 5–35 ms on the same data. That choice is the endpoint: the idempotency table holds intents
 that reached a venue, so a list built from it would show what was accepted and silently
 omit every refusal — the half of the record an assurance platform exists to keep.
 
