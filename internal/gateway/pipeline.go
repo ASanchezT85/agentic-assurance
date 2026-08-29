@@ -108,6 +108,12 @@ type SymbolResolver interface {
 // intelligence plane cannot construct (INV-009).
 type ControlSource interface {
 	InForce(ctx context.Context, tenantID string, at time.Time) ([]control.Control, error)
+
+	// Consume takes one slot in a THROTTLE's window. It writes, which is the single
+	// exception to this interface being read-only: a rate limit cannot be enforced by
+	// a component that cannot remember what it allowed.
+	Consume(ctx context.Context, tenantID string, c control.Control,
+		idempotencyKey string, at time.Time) (bool, int, error)
 }
 
 // EvidenceSink records what happened. It is deliberately fire-and-forget from the
@@ -309,6 +315,36 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 				"reason":     d.Reason,
 			})
 			return p.deny(result, StageControl, d.Code, d.Reason)
+		}
+
+		// Throttles last among the controls, because a scope that is stopped outright
+		// should be told that rather than told it is going too fast, and because a slot
+		// consumed by an order some other control was going to refuse is a slot spent
+		// on nothing.
+		//
+		// The slot is spent here rather than after the venue accepts. An order that
+		// passes this stage and is then refused by policy still counted, which errs
+		// toward throttling more — and for a control authorized during an incident,
+		// that is the direction to err in.
+		for _, throttle := range control.Throttles(inForce, env, at) {
+			allowed, used, err := p.Controls.Consume(ctx, env.TenantID, throttle,
+				env.IdempotencyKey, at)
+			if err != nil {
+				return p.deny(result, StageControl, "CONTROL_UNAVAILABLE",
+					"a throttle could not be counted: "+err.Error())
+			}
+			if !allowed {
+				d := control.Throttled(throttle, used)
+				p.record(ctx, env, evidence.ControlEnforced, at, map[string]any{
+					"control":    d.Code,
+					"control_id": d.ControlID,
+					"reason":     d.Reason,
+					"used":       used,
+					"max_orders": throttle.MaxOrders,
+					"window":     throttle.Window.String(),
+				})
+				return p.deny(result, StageControl, d.Code, d.Reason)
+			}
 		}
 	}
 

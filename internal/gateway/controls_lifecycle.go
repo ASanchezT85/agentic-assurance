@@ -29,6 +29,10 @@ import (
 type ControlLifecycle interface {
 	Revoke(ctx context.Context, tenantID, controlID, revokedBy string, at time.Time) (bool, error)
 	List(ctx context.Context, tenantID string) ([]control.Control, error)
+
+	// Forget drops a throttle's counted window. A scope that was throttled and then
+	// released must not carry a spent window into the next incident.
+	Forget(ctx context.Context, tenantID, controlID string) error
 }
 
 // RevokeControlHandler is POST /v1/controls/{id}/revoke.
@@ -96,6 +100,11 @@ func RevokeControlHandler(controls ControlLifecycle, evidenceStore *evidence.Sto
 		}
 
 		if !already {
+			// After the revocation and best effort: a counted window that outlives its
+			// control throttles nobody, because the control it belongs to no longer
+			// applies. Failing here must not turn a successful revocation into an
+			// error an operator retries under pressure.
+			_ = controls.Forget(ctx, tenant, id)
 			recordControlRevocation(ctx, evidenceStore, tenant, id,
 				strings.TrimSpace(req.RevokedBy), strings.TrimSpace(req.Reason), at)
 		}
@@ -147,16 +156,18 @@ func ListControlsHandler(controls ControlLifecycle, creds *identity.Credentials,
 		out := make([]map[string]any, 0, len(stored))
 		for _, c := range stored {
 			entry := map[string]any{
-				"control_id":    c.ControlID,
-				"incident_id":   c.IncidentID,
-				"action":        string(c.Action),
-				"cohort_id":     c.CohortID,
-				"agent_id":      c.AgentID,
-				"account_id":    c.AccountID,
-				"authorized_by": c.AuthorizedBy,
-				"reason":        c.Reason,
-				"applied_at":    c.AppliedAt,
-				"expires_at":    c.ExpiresAt,
+				"control_id":     c.ControlID,
+				"incident_id":    c.IncidentID,
+				"action":         string(c.Action),
+				"cohort_id":      c.CohortID,
+				"agent_id":       c.AgentID,
+				"account_id":     c.AccountID,
+				"authorized_by":  c.AuthorizedBy,
+				"reason":         c.Reason,
+				"applied_at":     c.AppliedAt,
+				"expires_at":     c.ExpiresAt,
+				"max_orders":     c.MaxOrders,
+				"window_seconds": int(c.Window.Seconds()),
 				// Computed rather than left to the reader, so nobody has to compare an
 				// expiry against their own clock to know whether orders are being
 				// refused right now.

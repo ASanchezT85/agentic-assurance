@@ -143,3 +143,124 @@ func TestControlStoreRefusesAnEmptyTenant(t *testing.T) {
 		t.Fatalf("err = %v, want ErrTenantContextMissing", err)
 	}
 }
+
+func throttleFixture(tenant, id string, at time.Time, max int) control.Control {
+	c := controlFixture(tenant, id, at)
+	c.Action = fleet.ControlThrottle
+	c.MaxOrders = max
+	c.Window = time.Minute
+	return c
+}
+
+// The counter is the whole of THROTTLE. What is checked here is that it counts, that a
+// replay does not spend the window twice, and that the window is a window.
+func TestAThrottleCountsWhatItAllowed(t *testing.T) {
+	store := control.NewStore(idemPool(t))
+	ctx := context.Background()
+	at := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_thr_%d", at.UnixNano())
+	id := fmt.Sprintf("ctl_thr_%d", at.UnixNano())
+
+	c := throttleFixture(tenant, id, at, 2)
+	if err := store.Save(ctx, c); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	for i := 1; i <= 2; i++ {
+		allowed, used, err := store.Consume(ctx, tenant, c, fmt.Sprintf("key_%d", i), at)
+		if err != nil {
+			t.Fatalf("consume %d: %v", i, err)
+		}
+		if !allowed || used != i {
+			t.Fatalf("order %d: allowed=%v used=%d", i, allowed, used)
+		}
+	}
+
+	allowed, used, err := store.Consume(ctx, tenant, c, "key_3", at)
+	if err != nil {
+		t.Fatalf("consume 3: %v", err)
+	}
+	if allowed {
+		t.Error("a third order passed a throttle of two per minute")
+	}
+	if used != 2 {
+		t.Errorf("the refusal counted %d orders, want 2", used)
+	}
+
+	// A replay holds the slot it already has. Counting it again would let a duplicate
+	// submission spend the window twice, which turns a throttle into a smaller one for
+	// anyone who retries.
+	allowed, _, err = store.Consume(ctx, tenant, c, "key_1", at)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if !allowed {
+		t.Error("a replayed submission was throttled on a slot it already holds")
+	}
+
+	// And the window moves. Same control, an hour later, empty again.
+	allowed, used, err = store.Consume(ctx, tenant, c, "key_later", at.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("later: %v", err)
+	}
+	if !allowed || used != 1 {
+		t.Errorf("after the window: allowed=%v used=%d, want true/1", allowed, used)
+	}
+}
+
+// Revoking releases the scope. A window that outlived its control would throttle a
+// scope nothing constrains any more.
+func TestRevokingAThrottleForgetsItsWindow(t *testing.T) {
+	store := control.NewStore(idemPool(t))
+	ctx := context.Background()
+	at := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_thrf_%d", at.UnixNano())
+	id := fmt.Sprintf("ctl_thrf_%d", at.UnixNano())
+
+	c := throttleFixture(tenant, id, at, 1)
+	if err := store.Save(ctx, c); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, _, err := store.Consume(ctx, tenant, c, "key_1", at); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if err := store.Forget(ctx, tenant, id); err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+
+	allowed, used, err := store.Consume(ctx, tenant, c, "key_2", at)
+	if err != nil {
+		t.Fatalf("after forget: %v", err)
+	}
+	if !allowed || used != 1 {
+		t.Errorf("the window survived the revocation: allowed=%v used=%d", allowed, used)
+	}
+}
+
+// A tenant cannot spend, or see, another tenant's window.
+func TestThrottleCountersAreTenantScoped(t *testing.T) {
+	store := control.NewStore(idemPool(t))
+	ctx := context.Background()
+	at := time.Now().UTC()
+	mine := fmt.Sprintf("tenant_thra_%d", at.UnixNano())
+	theirs := fmt.Sprintf("tenant_thrb_%d", at.UnixNano())
+	id := fmt.Sprintf("ctl_thriso_%d", at.UnixNano())
+
+	c := throttleFixture(mine, id, at, 1)
+	if err := store.Save(ctx, c); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if _, _, err := store.Consume(ctx, mine, c, "key_1", at); err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+
+	// The other tenant sees an empty window, which is the point: their orders are not
+	// rationed by a control that belongs to someone else.
+	allowed, used, err := store.Consume(ctx, theirs, c, "key_1", at)
+	if err != nil {
+		t.Fatalf("other tenant: %v", err)
+	}
+	if !allowed || used != 1 {
+		t.Errorf("another tenant saw this window: allowed=%v used=%d", allowed, used)
+	}
+}

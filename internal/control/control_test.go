@@ -98,17 +98,55 @@ func TestEachActionCarriesItsOwnCode(t *testing.T) {
 	}
 }
 
-// THROTTLE has no counter here, so it must not be storable. A control the platform
-// records and does not apply is exactly the shadow-mode confusion this package ends:
-// an operator would read the list, see the throttle, and believe it was throttling.
-func TestThrottleIsNotEnforceableInThisBuild(t *testing.T) {
-	if Enforceable(fleet.ControlThrottle) {
-		t.Fatal("THROTTLE claims an enforcement path")
-	}
+// Evaluate never decides a throttle: a rate cannot be judged from one request. It
+// passes, and the caller consumes a slot against each control Throttles returns.
+func TestEvaluateLeavesThrottlesToTheLimiter(t *testing.T) {
 	at := time.Now().UTC()
 	c := readOnly(at)
 	c.Action = fleet.ControlThrottle
+	c.MaxOrders, c.Window = 1, time.Minute
+
 	if d := Evaluate([]Control{c}, envelope(), at); !d.Allowed {
-		t.Error("THROTTLE refused an order through a path nothing implements")
+		t.Errorf("Evaluate refused a throttle on its own: %s", d.Code)
+	}
+	if got := Throttles([]Control{c}, envelope(), at); len(got) != 1 {
+		t.Errorf("Throttles returned %d controls, want 1", len(got))
+	}
+}
+
+// The same scoping and lifetime rules as everything else. A throttle nobody scoped to
+// this agent, or one that expired, must not reach the counter at all: consuming a slot
+// against it would rate-limit an agent no control applies to.
+func TestThrottlesRespectScopeAndLifetime(t *testing.T) {
+	at := time.Now().UTC()
+
+	elsewhere := readOnly(at)
+	elsewhere.Action = fleet.ControlThrottle
+	elsewhere.AgentID = "agent_other"
+	if got := Throttles([]Control{elsewhere}, envelope(), at); len(got) != 0 {
+		t.Error("a throttle scoped to another agent was returned for this one")
+	}
+
+	expired := readOnly(at.Add(-2 * time.Hour))
+	expired.Action = fleet.ControlThrottle
+	expired.ExpiresAt = at.Add(-time.Hour)
+	if got := Throttles([]Control{expired}, envelope(), at); len(got) != 0 {
+		t.Error("an expired throttle was returned")
+	}
+}
+
+// All four actions enforce now. THROTTLE was refused at authorization for as long as
+// nothing counted orders.
+func TestEveryControlActionIsEnforceable(t *testing.T) {
+	for _, a := range []fleet.ControlAction{
+		fleet.ControlThrottle, fleet.ControlReadOnly,
+		fleet.ControlIsolateCohort, fleet.ControlRequireApproval,
+	} {
+		if !Enforceable(a) {
+			t.Errorf("%s has no enforcement path", a)
+		}
+	}
+	if Enforceable(fleet.ControlAction("SOMETHING_ELSE")) {
+		t.Error("an unknown action claims an enforcement path")
 	}
 }

@@ -10,6 +10,8 @@
 package control
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -36,6 +38,12 @@ type Control struct {
 	// scope to be stated.
 	AgentID   string
 	AccountID string
+
+	// MaxOrders and Window are the rate a THROTTLE permits, and are zero for every
+	// other action. A throttle with no rate is not a lenient throttle, it is an
+	// absent one, so the API requires both and the table checks them.
+	MaxOrders int
+	Window    time.Duration
 
 	AuthorizedBy   string
 	PolicyBundleID string
@@ -82,10 +90,9 @@ var Allow = Decision{Allowed: true, Code: "NO_CONTROL_APPLIES"}
 // The first refusal wins and the rest are not consulted: an order refused twice is
 // refused, and reporting the first is what makes the code traceable to one control.
 //
-// THROTTLE is not enforced here and is refused at authorization time instead. A
-// control the platform records and does not apply is precisely the shadow-mode
-// confusion this package exists to end, and rate limiting an agent needs a counter
-// this stage does not have.
+// THROTTLE is not decided here, because a rate cannot be judged from the request
+// alone. Throttling returns the controls that apply, and the caller consumes a slot
+// against each: see Throttles and Limiter.
 func Evaluate(controls []Control, env *intent.AgentExecutionEnvelope, at time.Time) Decision {
 	if env == nil {
 		return Allow
@@ -101,6 +108,12 @@ func Evaluate(controls []Control, env *intent.AgentExecutionEnvelope, at time.Ti
 		case fleet.ControlIsolateCohort:
 			return refusal(c, "CONTROL_COHORT_ISOLATED",
 				"cohort "+c.CohortID+" is isolated: "+c.Reason)
+		case fleet.ControlThrottle:
+			// Decided by the limiter, not here. Left to fall through so a throttle
+			// never silently substitutes for the stronger control an operator might
+			// have expected: a scope with both a THROTTLE and a READ_ONLY is stopped
+			// by the READ_ONLY, whichever was authorized first.
+			continue
 		case fleet.ControlRequireApproval:
 			// Denied rather than parked. V0 has no approval queue, and an order held
 			// for an approval nobody can give is an order that silently never
@@ -116,10 +129,55 @@ func refusal(c Control, code, reason string) Decision {
 	return Decision{Code: code, Reason: reason, ControlID: c.ControlID}
 }
 
+// Throttles returns the THROTTLE controls in force that cover an envelope.
+//
+// Separate from Evaluate because a rate limit is not a property of the request: it is
+// a property of what this scope has already sent, which only the store knows.
+func Throttles(controls []Control, env *intent.AgentExecutionEnvelope, at time.Time) []Control {
+	if env == nil {
+		return nil
+	}
+	var out []Control
+	for _, c := range controls {
+		if c.Action == fleet.ControlThrottle && c.InForce(at) && c.covers(env) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Limiter consumes one slot in a throttle's window.
+//
+// Consuming and checking are one operation on purpose. Two callers that each read the
+// count, saw room, and then wrote would both pass, and a rate limit that is only
+// approximately a rate limit under load is one that fails exactly when it matters.
+type Limiter interface {
+	Consume(ctx context.Context, tenantID string, c Control, idempotencyKey string,
+		at time.Time) (allowed bool, used int, err error)
+}
+
+// Throttled is the refusal a spent window produces.
+func Throttled(c Control, used int) Decision {
+	return Decision{
+		Code: "CONTROL_THROTTLED",
+		Reason: fmt.Sprintf("this scope is throttled to %d orders per %s and has sent %d: %s",
+			c.MaxOrders, c.Window, used, c.Reason),
+		ControlID: c.ControlID,
+	}
+}
+
 // Enforceable reports whether an action has an enforcement path in this build.
-func Enforceable(a fleet.ControlAction) bool {
+//
+// All four now. THROTTLE was refused at authorization for as long as nothing counted
+// orders, which left an operator watching a cohort misbehave able to isolate it or
+// stop it dead and unable to simply slow it down — the proportionate response, and so
+// the one they would reach for first.
+func Enforceable(a fleet.ControlAction) bool { return validControl(a) }
+
+func validControl(a fleet.ControlAction) bool {
 	switch a {
-	case fleet.ControlReadOnly, fleet.ControlIsolateCohort, fleet.ControlRequireApproval:
+	case fleet.ControlThrottle, fleet.ControlRequireApproval,
+		fleet.ControlIsolateCohort, fleet.ControlReadOnly:
 		return true
 	}
 	return false
@@ -128,9 +186,7 @@ func Enforceable(a fleet.ControlAction) bool {
 // ParseAction reads a control action from a request.
 func ParseAction(raw string) (fleet.ControlAction, bool) {
 	a := fleet.ControlAction(strings.ToUpper(strings.TrimSpace(raw)))
-	switch a {
-	case fleet.ControlThrottle, fleet.ControlRequireApproval,
-		fleet.ControlIsolateCohort, fleet.ControlReadOnly:
+	if validControl(a) {
 		return a, true
 	}
 	return "", false

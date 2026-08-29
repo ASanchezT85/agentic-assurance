@@ -57,12 +57,13 @@ func (s *Store) Save(ctx context.Context, c Control) error {
 			INSERT INTO fleet_controls (
 				tenant_id, control_id, incident_id, action, agent_id, account_id,
 				cohort_id, authorized_by, policy_bundle_id, reason,
-				applied_at, expires_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+				applied_at, expires_at, max_orders, window_seconds)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			ON CONFLICT (tenant_id, control_id) DO NOTHING`,
 			c.TenantID, c.ControlID, c.IncidentID, string(c.Action),
 			nullable(c.AgentID), nullable(c.AccountID), c.CohortID,
-			c.AuthorizedBy, c.PolicyBundleID, c.Reason, c.AppliedAt, c.ExpiresAt)
+			c.AuthorizedBy, c.PolicyBundleID, c.Reason, c.AppliedAt, c.ExpiresAt,
+			nullableInt(c.MaxOrders), nullableInt(int(c.Window.Seconds())))
 		if err != nil {
 			return err
 		}
@@ -84,7 +85,8 @@ func (s *Store) InForce(ctx context.Context, tenantID string, at time.Time) ([]C
 		rows, err := tx.Query(ctx, `
 			SELECT control_id, tenant_id, incident_id, action,
 			       COALESCE(agent_id, ''), COALESCE(account_id, ''), cohort_id,
-			       authorized_by, policy_bundle_id, reason, applied_at, expires_at
+			       authorized_by, policy_bundle_id, reason, applied_at, expires_at,
+			       COALESCE(max_orders, 0), COALESCE(window_seconds, 0)
 			FROM fleet_controls
 			WHERE revoked_at IS NULL AND expires_at > $1
 			ORDER BY applied_at`, at.UTC())
@@ -96,12 +98,15 @@ func (s *Store) InForce(ctx context.Context, tenantID string, at time.Time) ([]C
 		for rows.Next() {
 			var c Control
 			var action string
+			var windowSeconds int
 			if err := rows.Scan(&c.ControlID, &c.TenantID, &c.IncidentID, &action,
 				&c.AgentID, &c.AccountID, &c.CohortID, &c.AuthorizedBy,
-				&c.PolicyBundleID, &c.Reason, &c.AppliedAt, &c.ExpiresAt); err != nil {
+				&c.PolicyBundleID, &c.Reason, &c.AppliedAt, &c.ExpiresAt,
+				&c.MaxOrders, &windowSeconds); err != nil {
 				return err
 			}
 			c.Action = fleet.ControlAction(action)
+			c.Window = time.Duration(windowSeconds) * time.Second
 			out = append(out, c)
 		}
 		return rows.Err()
@@ -164,7 +169,8 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]Control, error) {
 			SELECT control_id, tenant_id, incident_id, action,
 			       COALESCE(agent_id, ''), COALESCE(account_id, ''), cohort_id,
 			       authorized_by, policy_bundle_id, reason, applied_at, expires_at,
-			       revoked_at, COALESCE(revoked_by, '')
+			       revoked_at, COALESCE(revoked_by, ''),
+			       COALESCE(max_orders, 0), COALESCE(window_seconds, 0)
 			FROM fleet_controls
 			ORDER BY applied_at DESC`)
 		if err != nil {
@@ -175,16 +181,97 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]Control, error) {
 		for rows.Next() {
 			var c Control
 			var action string
+			var windowSeconds int
 			if err := rows.Scan(&c.ControlID, &c.TenantID, &c.IncidentID, &action,
 				&c.AgentID, &c.AccountID, &c.CohortID, &c.AuthorizedBy,
 				&c.PolicyBundleID, &c.Reason, &c.AppliedAt, &c.ExpiresAt,
-				&c.RevokedAt, &c.RevokedBy); err != nil {
+				&c.RevokedAt, &c.RevokedBy, &c.MaxOrders, &windowSeconds); err != nil {
 				return err
 			}
 			c.Action = fleet.ControlAction(action)
+			c.Window = time.Duration(windowSeconds) * time.Second
 			out = append(out, c)
 		}
 		return rows.Err()
 	})
 	return out, err
+}
+
+func nullableInt(n int) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
+}
+
+// Consume takes one slot in a throttle's window, or reports that there is none.
+//
+// Counting and writing happen inside one transaction behind an advisory lock keyed on
+// the control. Two callers that each read the count, saw room and then wrote would
+// both pass, and a rate limit that only approximately holds under load is one that
+// fails exactly when it matters — which for a containment control is during the event
+// it was authorized for.
+//
+// The lock is per control, so throttled scopes serialise against themselves and
+// against nothing else. Everything not throttled never reaches this code.
+func (s *Store) Consume(ctx context.Context, tenantID string, c Control,
+	idempotencyKey string, at time.Time) (allowed bool, used int, err error) {
+
+	err = s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if _, lockErr := tx.Exec(ctx,
+			"SELECT pg_advisory_xact_lock(hashtext($1))", tenantID+":"+c.ControlID); lockErr != nil {
+			return lockErr
+		}
+
+		// A replay already holds its slot. Counting it again would let a duplicate
+		// submission spend the window twice, which is how a throttle turns into a
+		// smaller throttle for anyone who retries.
+		var replay bool
+		if scanErr := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM fleet_control_usage
+				WHERE control_id = $1 AND idempotency_key = $2)`,
+			c.ControlID, idempotencyKey).Scan(&replay); scanErr != nil {
+			return scanErr
+		}
+
+		since := at.Add(-c.Window)
+		if scanErr := tx.QueryRow(ctx, `
+			SELECT count(*) FROM fleet_control_usage
+			WHERE control_id = $1 AND submitted_at > $2`,
+			c.ControlID, since).Scan(&used); scanErr != nil {
+			return scanErr
+		}
+
+		if replay {
+			allowed = true
+			return nil
+		}
+		if used >= c.MaxOrders {
+			allowed = false
+			return nil
+		}
+
+		if _, execErr := tx.Exec(ctx, `
+			INSERT INTO fleet_control_usage (tenant_id, control_id, idempotency_key, submitted_at)
+			VALUES ($1,$2,$3,$4)
+			ON CONFLICT DO NOTHING`,
+			tenantID, c.ControlID, idempotencyKey, at.UTC()); execErr != nil {
+			return execErr
+		}
+		allowed = true
+		used++
+		return nil
+	})
+	return allowed, used, err
+}
+
+// Forget drops a throttle's usage. Called when a control is revoked, so a scope that
+// was throttled and released does not carry a spent window into the next incident.
+func (s *Store) Forget(ctx context.Context, tenantID, controlID string) error {
+	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			"DELETE FROM fleet_control_usage WHERE control_id = $1", controlID)
+		return err
+	})
 }

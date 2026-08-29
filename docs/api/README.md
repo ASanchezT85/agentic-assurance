@@ -176,10 +176,21 @@ agent adjusting its own leash.
 | 503 | The incident evidence could not be read. Distinct from 404 on purpose: collapsing the two told an operator authorizing an emergency control during a database outage that the incident in front of them did not exist. |
 | 409 | A control with this id already exists. |
 
-**THROTTLE is refused rather than stored.** The other three actions deny on the hot
-path; throttling needs a counter this build does not have, and a control the platform
-records without applying is exactly the shadow-mode confusion this endpoint exists to
-end — an operator would read the list, see the throttle, and believe it was throttling.
+**THROTTLE takes `max_orders` and `window_seconds`**, both required for that action and
+refused on the others, where they would be numbers an operator believes are doing
+something. It was refused outright for as long as nothing counted orders, which left an
+operator watching a cohort misbehave able to isolate it or stop it dead and unable to
+simply slow it down — the proportionate response, and so the one they reach for first.
+
+A slot is taken inside one transaction behind an advisory lock on the control: two
+callers that each read the count, saw room and then wrote would both pass, and a rate
+limit that only approximately holds under load fails exactly when it matters. A replay
+keeps the slot it already holds, so a duplicate cannot spend the window twice.
+
+The slot is spent at the control stage, before policy. An order refused later still
+counted, which errs toward throttling more — for a control authorized during an
+incident, that is the direction to err in. Revoking a throttle forgets its window, so a
+released scope does not carry a spent minute into the next incident.
 
 Enforcement is a stage of the submission pipeline, between authority and policy, and it
 reads PostgreSQL rather than the fleet engine: cohort membership is computed by the
@@ -188,7 +199,10 @@ it would fail closed every time the analytical plane blinked (INV-005). The coho
 resolved to concrete agents and accounts at authorization time.
 
 A refused order is `403` with stage `CONTROL` and a code naming the action:
-`CONTROL_READ_ONLY`, `CONTROL_COHORT_ISOLATED` or `CONTROL_APPROVAL_REQUIRED`. The last
+`CONTROL_READ_ONLY`, `CONTROL_COHORT_ISOLATED`, `CONTROL_APPROVAL_REQUIRED` or
+`CONTROL_THROTTLED`, which says the rate and what it counted. A scope carrying both a
+throttle and a stop is told it is stopped: a stop decides first, whichever was
+authorized first. The last
 denies rather than parking the order — V0 has no approval queue, and an order held for
 an approval nobody can give is one that silently never happened.
 

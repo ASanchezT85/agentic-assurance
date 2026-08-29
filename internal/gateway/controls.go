@@ -64,6 +64,12 @@ type controlRequest struct {
 	Reason         string `json:"reason"`
 
 	ExpiresAt time.Time `json:"expires_at"`
+
+	// The rate a THROTTLE permits, required for that action and refused for the
+	// others: a limit on a control that does not rate-limit is a number an operator
+	// believes is doing something.
+	MaxOrders     int `json:"max_orders"`
+	WindowSeconds int `json:"window_seconds"`
 }
 
 func (c controlRequest) validate() []string {
@@ -100,13 +106,22 @@ func (c controlRequest) validate() []string {
 	}
 
 	action, ok := control.ParseAction(c.Action)
-	if !ok {
+	switch {
+	case !ok:
 		problems = append(problems, "action must be one of THROTTLE, REQUIRE_APPROVAL, "+
 			"ISOLATE_COHORT, READ_ONLY (spec section 16)")
-	} else if !control.Enforceable(action) {
-		problems = append(problems, string(action)+" has no enforcement path in this "+
-			"build and is refused rather than stored. A control the platform records "+
-			"and does not apply is the shadow-mode confusion this endpoint exists to end")
+	case action == fleet.ControlThrottle:
+		if c.MaxOrders <= 0 || c.WindowSeconds <= 0 {
+			problems = append(problems, "a THROTTLE needs max_orders and window_seconds, "+
+				"both positive; a throttle with no rate is not a lenient throttle, it is "+
+				"an absent one")
+		}
+	default:
+		if c.MaxOrders != 0 || c.WindowSeconds != 0 {
+			problems = append(problems, "max_orders and window_seconds belong to a "+
+				"THROTTLE; on "+string(action)+" they would be numbers an operator "+
+				"believes are doing something")
+		}
 	}
 	return problems
 }
@@ -224,6 +239,8 @@ func IssueControlHandler(controls ControlStore, recommendations RecommendationSo
 			Reason:         authorization.Reason,
 			AppliedAt:      authorized.AppliedAt,
 			ExpiresAt:      req.ExpiresAt.UTC(),
+			MaxOrders:      req.MaxOrders,
+			Window:         time.Duration(req.WindowSeconds) * time.Second,
 		}
 		if err := controls.Save(ctx, stored); err != nil {
 			if errors.Is(err, control.ErrControlExists) {
@@ -247,6 +264,8 @@ func IssueControlHandler(controls ControlStore, recommendations RecommendationSo
 			"agent_id":         stored.AgentID,
 			"account_id":       stored.AccountID,
 			"authorized_by":    stored.AuthorizedBy,
+			"max_orders":       stored.MaxOrders,
+			"window_seconds":   int(stored.Window.Seconds()),
 			"applied_at":       stored.AppliedAt,
 			"expires_at":       stored.ExpiresAt,
 			"enforced":         authorized.Enforced(),
