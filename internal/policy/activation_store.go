@@ -262,7 +262,19 @@ func (s *ActivationStore) Accept(ctx context.Context, a Authorization, b *Bundle
 			return ErrReplayed
 		}
 
+		// Two different serialisations, deliberately. evidence_events stores the
+		// payload column; the outbox carries the whole event, because the publisher
+		// unmarshals a row back into an Event and puts it on the bus.
+		//
+		// They were the same value here, so every activation event was queued as a bare
+		// payload, failed validation on "schema_version: required", and stayed in the
+		// queue forever. The events were recorded correctly and none of them ever
+		// reached the analytical plane.
 		payload, err := json.Marshal(event.Payload)
+		if err != nil {
+			return err
+		}
+		queued, err := json.Marshal(event)
 		if err != nil {
 			return err
 		}
@@ -287,7 +299,7 @@ func (s *ActivationStore) Accept(ctx context.Context, a Authorization, b *Bundle
 			INSERT INTO evidence_outbox (tenant_id, event_id, subject, payload)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (event_id) DO NOTHING`,
-			event.TenantID, event.EventID, event.Subject(), payload)
+			event.TenantID, event.EventID, event.Subject(), queued)
 		return err
 	})
 	if err != nil {

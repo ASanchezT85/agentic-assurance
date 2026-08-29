@@ -532,3 +532,54 @@ func TestAFailedTransitionLeavesTheOldPolicyEnforcing(t *testing.T) {
 			after)
 	}
 }
+
+// An activation event has to reach the bus, not merely the table.
+//
+// The transition wrote the event's payload into the outbox instead of the whole event,
+// so every activation queued as a bare payload, failed validation on
+// "schema_version: required", and stayed queued forever. The events were recorded
+// correctly and none of them ever reached the analytical plane — a producer that exists,
+// runs, and whose output nobody downstream can read.
+func TestAnActivationEventIsPublishable(t *testing.T) {
+	ctx := context.Background()
+	r := newActivationRig(t)
+
+	bundle := r.stageBundle(t, "bundle_publishable", activationPolicy, policy.StatusActive)
+	r.authorize(t, bundle, nil)
+	if _, err := r.bundles(t).Active(ctx, r.tenant); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+
+	// Read back the way the publisher reads: the queued row, unmarshalled into an event
+	// and validated. Checking that a row exists would have passed against the defect.
+	drainer := evidence.NewStore(outboxPool(t))
+	queued, err := drainer.Claim(ctx, 2000, "activation-test", time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	found := false
+	for _, entry := range queued {
+		if entry.TenantID != r.tenant {
+			continue
+		}
+		found = true
+		var event evidence.Event
+		if err := json.Unmarshal(entry.Payload, &event); err != nil {
+			t.Fatalf("the queued activation is not an event: %v", err)
+		}
+		if err := event.Validate(); err != nil {
+			t.Errorf("the queued activation would be rejected by the publisher: %v", err)
+		}
+		if event.EventName != evidence.PolicyBundleActivated {
+			t.Errorf("queued %s", event.EventName)
+		}
+		if event.Payload["actor"] != "ops@example.test" {
+			t.Errorf("the queued event lost its actor: %v", event.Payload)
+		}
+	}
+	if !found {
+		t.Error("the activation was recorded and never queued; the analytical plane " +
+			"would never learn that enforcement changed")
+	}
+}

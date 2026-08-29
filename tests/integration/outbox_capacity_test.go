@@ -96,6 +96,15 @@ func TestTheOutboxDrainsFasterThanEvidenceArrives(t *testing.T) {
 		totalEvents, arrivalElapsed.Round(time.Millisecond), arrivalRate, queued,
 		time.Since(oldest).Round(time.Millisecond))
 
+	// The service side, measured end to end: from the first arrival to an empty queue.
+	//
+	// Not this publisher's share. A gateway may be running against the same database and
+	// draining the same rows, and counting only what this process sent would report
+	// whatever fraction of the race it won — and if the other publisher keeps up, the
+	// queue is already empty when the measurement starts and the number is nonsense.
+	//
+	// What the acceptance property is about is whether the platform's evidence reaches
+	// the bus as fast as it is produced, however many publishers do the work.
 	publisher := &evidence.OutboxPublisher{
 		Store:     drainer,
 		Publisher: evidence.NewPublisher(js),
@@ -103,45 +112,47 @@ func TestTheOutboxDrainsFasterThanEvidenceArrives(t *testing.T) {
 		Owner:     "capacity-test",
 	}
 
-	// The service side, drained to empty.
-	serviceStart := time.Now()
-	drained := 0
-	for range 200 {
-		published := publisher.Drain(ctx)
-		drained += published
-		if published == 0 {
+	catchUpStart := time.Now()
+	var remaining int64
+	for range 600 {
+		publisher.Drain(ctx)
+		remaining, _, err = drainer.Depth(ctx, tenant)
+		if err != nil {
+			t.Fatalf("depth: %v", err)
+		}
+		if remaining == 0 {
 			break
 		}
 	}
-	serviceElapsed := time.Since(serviceStart)
-	serviceRate := float64(drained) / serviceElapsed.Seconds()
+	catchUp := time.Since(catchUpStart)
 
-	remaining, _, err := drainer.Depth(ctx, tenant)
-	if err != nil {
-		t.Fatalf("depth after: %v", err)
-	}
+	t.Logf("service: peak depth during arrival %d of %d events (%.1f%%); catch-up after "+
+		"the last arrival %s; depth after %d",
+		queued, totalEvents, 100*float64(queued)/float64(totalEvents),
+		catchUp.Round(time.Millisecond), remaining)
 
-	t.Logf("service: %d events in %s (%.0f/s); catch-up %s; queue depth after %d",
-		drained, serviceElapsed.Round(time.Millisecond), serviceRate,
-		serviceElapsed.Round(time.Millisecond), remaining)
-
-	if drained < totalEvents {
-		t.Errorf("drained %d of %d events", drained, totalEvents)
-	}
-	// This run's own rows, because a shared environment always has somebody else's in
-	// the queue and a measurement that counted those would be measuring the neighbours.
 	if remaining != 0 {
 		t.Errorf("this run's backlog did not converge to zero: %d rows remain", remaining)
 	}
 
-	// The acceptance property: steady service rate at least the steady arrival rate.
-	// Both are measured on the same machine against the same database, so this compares
-	// like with like rather than against a number from another run.
-	if serviceRate < arrivalRate {
-		t.Errorf("service rate %.0f/s is below arrival rate %.0f/s. A queue in that "+
-			"relationship diverges: evidence is never lost, and the analytical plane "+
-			"and the fleet engine fall progressively further behind the period an "+
-			"incident review needs to read.", serviceRate, arrivalRate)
+	// The acceptance property, stated as what can actually be measured.
+	//
+	// Not "service rate exceeds arrival rate" computed from the whole run: the queue
+	// cannot empty before the last event arrives, so that ratio is bounded by one no
+	// matter how fast the publisher is. What distinguishes a queue that keeps up from
+	// one that diverges is whether depth tracks arrivals — a diverging queue's depth
+	// grows with every event — and how long it takes to clear once arrivals stop.
+	//
+	// Before the fix, 131,346 events took about twenty minutes to clear.
+	if float64(queued) > 0.25*float64(totalEvents) {
+		t.Errorf("the queue reached %d of %d events in flight. Depth that tracks "+
+			"arrivals is a queue whose service rate does not respond to its depth, "+
+			"which is the shape that diverges.", queued, totalEvents)
+	}
+	if catchUp > 30*time.Second {
+		t.Errorf("the backlog took %s to clear after arrivals stopped; the analytical "+
+			"plane and the fleet engine are that far behind the period an incident "+
+			"review needs to read", catchUp.Round(time.Second))
 	}
 }
 
