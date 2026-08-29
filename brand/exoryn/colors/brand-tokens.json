@@ -1,0 +1,42 @@
+{
+  "brand": {
+    "name": "EXORYN",
+    "tagline": "Control before execution.",
+    "pronunciation": {
+      "es": "ek-so-rin",
+      "en": "EX-oh-rin"
+    }
+  },
+  "colors": {
+    "primary": {
+      "navy": "#071426",
+      "electricBlue": "#2563FF",
+      "signalCyan": "#12C7D8"
+    },
+    "neutral": {
+      "ink": "#111827",
+      "slate": "#5B6780",
+      "ice": "#EAF2FF",
+      "mist": "#F5F8FC",
+      "white": "#FFFFFF"
+    },
+    "semantic": {
+      "success": "#0EA56B",
+      "warning": "#F2A93B",
+      "danger": "#E5484D"
+    }
+  },
+  "radius": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20
+  },
+  "spacing": {
+    "xs": 4,
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "xl": 40,
+    "2xl": 64
+  }
+}
