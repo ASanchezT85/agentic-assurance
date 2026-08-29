@@ -18,6 +18,10 @@ import (
 // and goes to an operator, so the ability to resubmit is simply absent rather than
 // disabled by configuration someone could change at 3am.
 type Service struct {
+	// CrashAfterVenue is deterministic fault injection for the deployable recovery
+	// test. See submitOnce. Nil in every ordinary configuration.
+	CrashAfterVenue func(clientOrderID string)
+
 	Broker broker.Adapter
 	Store  Store
 
@@ -118,6 +122,20 @@ func (s *Service) resumeExisting(ctx context.Context, existing *Record) (Outcome
 // contains no loop.
 func (s *Service) submitOnce(ctx context.Context, env *intent.AgentExecutionEnvelope, req broker.OrderRequest) (Outcome, error) {
 	order, err := s.Broker.SubmitOrder(ctx, req)
+
+	// The crash window, made reachable on purpose.
+	//
+	// Between a venue accepting an order and the platform recording the outcome there
+	// is a moment where a process death leaves a live order with a PENDING record. It
+	// is the one failure where doing the obvious thing on restart — treating PENDING as
+	// "never sent" — buys a customer a second position. An in-process reconstruction can
+	// model it; only a real process being killed there proves the deployable recovers.
+	//
+	// The hook is nil unless a test wires it, and the binary refuses to wire it outside
+	// a development environment with a fake venue.
+	if s.CrashAfterVenue != nil {
+		s.CrashAfterVenue(req.ClientOrderID)
+	}
 
 	if err != nil {
 		if errors.Is(err, broker.ErrTimeout) {

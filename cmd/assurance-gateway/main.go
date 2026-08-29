@@ -297,6 +297,44 @@ func openOutboxPool(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
 	return pool
 }
 
+// crashPoint arms deterministic fault injection for the deployable recovery test.
+//
+// It exists because an in-process reconstruction of the crash window can model the
+// failure and cannot prove the deployable survives it: only a real process killed
+// between a venue's acceptance and the outcome write does that.
+//
+// Guarded twice. The variable must name the point exactly, and the process must be a
+// development one pointed at a fake venue — a production configuration cannot arm it by
+// accident, and a configuration that tries is refused loudly rather than ignored.
+func crashPoint(log *slog.Logger) func(string) {
+	point := os.Getenv("ASSURANCE_TEST_CRASH_POINT")
+	if point == "" {
+		return nil
+	}
+	if point != "after_broker_accept_before_outcome_commit" {
+		log.Error("unknown ASSURANCE_TEST_CRASH_POINT", "value", point)
+		os.Exit(2)
+	}
+	if os.Getenv("ASSURANCE_ENV") != "development" {
+		log.Error("ASSURANCE_TEST_CRASH_POINT requires ASSURANCE_ENV=development",
+			"consequence", "refusing to start rather than arming fault injection in a "+
+				"configuration that could be production")
+		os.Exit(2)
+	}
+
+	log.Warn("fault injection armed",
+		"point", point,
+		"consequence", "this process will exit without recording the outcome of the "+
+			"first order a venue accepts")
+
+	return func(clientOrderID string) {
+		log.Warn("crashing after venue acceptance", "client_order_id", clientOrderID)
+		// Not a panic and not a graceful shutdown: a kill, which is what the test is
+		// about. Deferred writes, flushes and shutdown hooks must not run.
+		os.Exit(9)
+	}
+}
+
 func openCredentials(log *slog.Logger) *identity.Credentials {
 	creds, err := identity.ParseCredentials(os.Getenv("GATEWAY_API_CREDENTIALS"))
 	if err != nil {
@@ -384,8 +422,9 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 		Reserve:  usage,
 		Keys:     identity.NewKeyStore(pool),
 		Execution: &execution.Service{
-			Broker: venue,
-			Store:  execution.NewPostgresStore(pool),
+			Broker:          venue,
+			Store:           execution.NewPostgresStore(pool),
+			CrashAfterVenue: crashPoint(log),
 		},
 		Controls:  control.NewStore(pool),
 		Symbols:   symbols,
