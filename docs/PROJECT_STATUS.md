@@ -217,20 +217,43 @@ to catch was made, the guard failed, the change was reverted.
 A Windows workstation running the dependencies in Docker Desktop. Absolute numbers
 describe this laptop; the ratios are what travel.
 
+**Current build.** Measured after the third remediation, against the running binary.
+
 | | Result |
 |---|---|
-| Enforcement computation (decode, validate, authority, policy) | p50 **12.5 µs**, p99 20.5 µs |
-| Accepted intent, end to end | **24.6 ms** (was 120 ms before evidence was batched) |
-| Refused at validation / at authority / duplicate | 0.9 ms / 12.5 ms / 9 ms |
-| 1,000 concurrent agents, 3,000 submissions | 3,000 decisions, no 5xx, **475/s** |
-| Sustained, 2 minutes, 50 workers | 51,419 decisions, **428/s**, latency flat |
-| `GET /v1/intents` against 917k events | **5–35 ms** (was 450–880 ms) |
+| 1,000 concurrent agents, 3,000 signed submissions | 3,000 accepted, **294/s**, p50 3.6 s end to end over HTTP |
+| Sustained, 2 minutes | 29,787 decisions, **248/s**, p50 189 ms p95 236 ms p99 277 ms |
+| Multi-tenant, two tenants under load | isolated; neither listed the other's intents |
+| Signature verification | p50 **76 µs** (batched; below this platform's clock resolution per call) |
+| Authority reservation | p50 **5.5 ms**, p99 7.9 ms |
+| Evidence receipt (6 events + outbox rows, one transaction) | p50 **9.8 ms**, p99 13.5 ms |
+| Idempotency claim | p50 **3.8 ms**, p99 6.5 ms |
+| Evidence outbox | arrival **931/s**, service **1,286/s**, backlog to zero |
+| Two gateway processes against one grant | ceiling held; ledger exact |
+
+**The end-to-end throughput fell, and it is not a mystery.** The earlier figures below
+were measured before envelope signatures were verified, before authority was reserved
+atomically, before the decision receipt was committed ahead of the venue, and before
+policy activation was authorized. Every one of those is work now done per submission,
+most of it a database round trip on a host where a round trip costs about 4 ms. The
+per-stage table above is where the time went.
+
+**Historical, and not comparable.** Kept because deleting a number that fell would be the
+more convenient kind of honesty.
+
+| | Result (superseded) |
+|---|---|
+| Enforcement computation (decode, validate, authority, policy) | p50 12.5 µs, p99 20.5 µs |
+| Accepted intent, end to end | 24.6 ms |
+| 1,000 concurrent agents | 475/s — no signature verification, no reservation, no receipt |
+| Sustained, 2 minutes, 50 workers | 428/s — as above |
+| `GET /v1/intents` against 917k events | 5–35 ms |
 | Intelligence API against 251k analytical rows | 9–33 ms |
-| Cross-replica simulation kill | slot returned in **860 ms** |
+| Cross-replica simulation kill | slot returned in 860 ms |
 
 The single-request latency is dominated by database round trips at roughly 4 ms each on
-this host — Docker Desktop on Windows. The enforcement work itself is three orders of
-magnitude smaller.
+this host — Docker Desktop on Windows. The enforcement computation itself remains three
+orders of magnitude smaller than the round trips around it.
 
 ---
 

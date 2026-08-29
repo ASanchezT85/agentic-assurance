@@ -23,16 +23,24 @@ import (
 // has to reconcile; deleting it would turn an unresolved order into an order nobody
 // remembers claiming (spec section 19, ADR-015).
 //
-// And pruning a resolved record reopens its key. A caller presenting that key again
-// afterwards gets a fresh execution rather than the earlier outcome, and the
-// IDEMPOTENCY_KEY_REUSED guard cannot see a record that is gone. That is the real cost
-// of the window: it is how long the platform can still recognise a retry.
+// And pruning a resolved record does not reopen its key (ADR-027). What is deleted is the
+// cached outcome and the ability to replay it; what the key means is held elsewhere and
+// permanently. authority_usage keeps one row per economic request and is not pruned, so a
+// key presented again — at any age, under any envelope — is refused as a reuse.
+//
+// This file used to say the opposite: that pruning reopened the key and a later caller
+// got a fresh execution. authority_usage disagreed and refused, so the platform stated
+// both "fresh again" and "permanently spent" and which one a caller met depended on which
+// layer answered first. The window bounds storage. It does not bound what the platform
+// remembers about a key.
 
 // DefaultRetention is how long a resolved record is kept.
 //
-// Thirty days rather than a day: retries happen in minutes, but reconciliation,
-// disputes and "what did this agent do last month" happen over weeks, and the guard
-// that refuses a key claimed by another envelope is only as long-sighted as this.
+// Thirty days rather than a day: retries happen in minutes, but reconciliation, disputes
+// and "what did this agent do last month" happen over weeks, and this is how long a
+// duplicate can still be answered with the outcome it originally got. Past it a repeated
+// key is refused rather than replayed — refused rather than re-executed, which is the
+// part that matters (ADR-027).
 const DefaultRetention = 30 * 24 * time.Hour
 
 // PruneBatch bounds one delete so a sweep never holds a long lock on the hot path's

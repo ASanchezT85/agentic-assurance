@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"agentic-assurance/internal/authority"
+	"agentic-assurance/internal/broker"
+	"agentic-assurance/internal/execution"
 	"agentic-assurance/internal/money"
 )
 
@@ -182,5 +184,78 @@ func TestTheLosingSideOfAnEnvelopeRaceHoldsNoCapacity(t *testing.T) {
 	if reserved > accepted {
 		t.Errorf("%d reservations are still held for %d accepted orders; the losing side "+
 			"of the race left capacity reserved for an order that does not exist", reserved, accepted)
+	}
+}
+
+// ADR-027: after retention prunes the record, the key is refused rather than reused.
+//
+// The two lifecycles disagreed. internal/execution/retention.go said pruning reopened the
+// key and a later caller got a fresh execution; authority_usage keeps its row forever and
+// refused. The platform stated both, and which one a caller met depended on which layer
+// answered first — a contract nobody can rely on.
+//
+// This drives the resolved contract end to end: the record is claimed, resolved, pruned,
+// and the key presented again.
+func TestAPrunedRecordDoesNotReopenItsKey(t *testing.T) {
+	ctx := context.Background()
+	pool := idemPool(t)
+	now := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_reopen_%d", now.UnixNano())
+	key := fmt.Sprintf("reopen-%d", now.UnixNano())
+
+	grant := reservationGrant(tenant, "grant_reopen", money.MustParse("10000"), now)
+	usage := authority.NewPostgresUsage(pool)
+	store := execution.NewPostgresStore(pool)
+
+	// The original request: capacity reserved and an execution record claimed.
+	who := authority.ReservationIdentity{
+		EnvelopeID: "env_original", PrincipalID: grant.PrincipalID, AccountID: grant.AccountID,
+	}
+	if d, err := usage.Reserve(ctx, grant, key, money.MustParse("1000"), who, now); err != nil || !d.Allowed {
+		t.Fatalf("reserve: %v %s", err, d.Code)
+	}
+	if _, claimed, err := store.Claim(ctx, execution.Record{
+		TenantID: tenant, IdempotencyKey: key, EnvelopeID: "env_original",
+		ClientOrderID: "coid_" + key, State: execution.RecordPending,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil || !claimed {
+		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+	}
+	if err := store.Resolve(ctx, tenant, key, execution.Outcome{
+		State: broker.StateFilled, BrokerOrderID: "b_" + key,
+	}, now); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	// Retention prunes it. The record is gone; the platform's memory of the key is not.
+	if _, err := pool.Exec(ctx, `SELECT set_config('app.tenant_id', $1, false)`, tenant); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM idempotency_records WHERE tenant_id = $1 AND idempotency_key = $2`,
+		tenant, key); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if _, err := store.Load(ctx, tenant, key); err == nil {
+		t.Fatal("the record survived the prune; this test is not exercising what it claims")
+	}
+
+	// The same key, later, for a different economic request.
+	later := authority.ReservationIdentity{
+		EnvelopeID: "env_later", PrincipalID: grant.PrincipalID, AccountID: grant.AccountID,
+	}
+	decision, err := usage.Reserve(ctx, grant, key, money.MustParse("9500"), later,
+		now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("reserve after prune: %v", err)
+	}
+	if decision.Allowed {
+		t.Errorf("a pruned record reopened its key: 9,500 was authorized under a key " +
+			"the platform had already spent. Retention bounds storage, not what the " +
+			"platform remembers about a key (ADR-027).")
+	}
+	if decision.Code != "RESERVATION_KEY_REUSED" {
+		t.Errorf("refused with %s; the reason should name the reuse so a caller knows to "+
+			"send a new key rather than retry", decision.Code)
 	}
 }

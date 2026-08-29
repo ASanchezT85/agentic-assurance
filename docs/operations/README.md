@@ -337,10 +337,17 @@ Two rules decide what may go, and the window is the less interesting one:
 - **A PENDING record is never pruned, at any age.** It says a submission was claimed and
   the platform does not know what the venue did — deleting it turns an unresolved order
   into an order nobody remembers claiming.
-- **Pruning a resolved record reopens its key.** A caller presenting it afterwards gets
-  a fresh execution rather than the earlier outcome, and IDEMPOTENCY_KEY_REUSED cannot
-  see a record that is gone. Thirty days is how long the platform can still recognise a
-  retry, and that is the number to argue with.
+- **Pruning a resolved record does not reopen its key** (ADR-027). What is deleted is the
+  cached outcome and the ability to replay it. `authority_usage` holds one row per
+  economic request and is never pruned, so a key presented again — at any age, under any
+  envelope — is refused as a reuse rather than executed afresh. Thirty days is how long a
+  duplicate can still be answered with the outcome it originally got; past it the answer
+  is a refusal.
+
+  This paragraph said the opposite for a release: that pruning reopened the key.
+  `authority_usage` disagreed and refused, so the platform stated both "fresh again" and
+  "permanently spent" and which one a caller met depended on which layer answered first.
+  The window bounds storage, not what the platform remembers about a key.
 
 Evidence is untouched: the idempotency record is control state, the chain is the
 account of what happened, and only one of them is append-only by design.
