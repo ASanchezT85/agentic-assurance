@@ -28,6 +28,7 @@ import (
 	"agentic-assurance/adapters/alpaca"
 	"agentic-assurance/internal/broker"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 func paperAdapter(t *testing.T) *alpaca.Adapter {
@@ -72,8 +73,8 @@ func TestAlpacaPaperAcceptsAndReconcilesAnOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	quantity := 1.0
-	limit := 1.00 // far below any real price for this symbol; it rests
+	quantity := money.MustParseQuantity("1")
+	limit := money.MustParse("1") // far below any real price for this symbol; it rests
 	clientOrderID := fmt.Sprintf("live-%d", time.Now().UnixNano())
 
 	order, err := adapter.SubmitOrder(ctx, broker.OrderRequest{
@@ -120,7 +121,7 @@ func TestAlpacaPaperAcceptsAndReconcilesAnOrder(t *testing.T) {
 // deciding which security a customer bought.
 func TestAlpacaPaperRefusesAnUnmappedInstrument(t *testing.T) {
 	adapter := paperAdapter(t)
-	quantity := 1.0
+	quantity := money.MustParseQuantity("1")
 
 	_, err := adapter.SubmitOrder(context.Background(), broker.OrderRequest{
 		ClientOrderID: fmt.Sprintf("live-unmapped-%d", time.Now().UnixNano()),

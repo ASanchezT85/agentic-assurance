@@ -250,15 +250,27 @@ func (s *Sink) InsertMeasurements(ctx context.Context, ms []Measurement) error {
 	return s.exec(ctx, "INSERT INTO assurance.fleet_measurements FORMAT JSONEachRow", body.Bytes())
 }
 
-// InsertEvidence writes one projected evidence event.
+// InsertEvidence writes projected evidence events.
 //
-// One row per call rather than a batch: the consumer already fetches in batches and
-// acknowledges per message, and buffering here would mean acknowledging events that
-// are not yet projected — the analytical copy silently missing what the stream says it
-// delivered.
-func (s *Sink) InsertEvidence(ctx context.Context, row string) error {
+// A batch per call. It was one row per call, so the projection's throughput was bounded
+// by a round trip to ClickHouse per event — a few hundred a second on this host — while
+// the outbox in front of it now delivers well over a thousand. The queue drained and the
+// consumer became the bottleneck: the same lag, one hop further along.
+//
+// The caller inserts before acknowledging, so a failed batch is redelivered rather than
+// silently missing. The table deduplicates by event id, so a redelivered batch overwrites
+// itself rather than counting twice (ADR-008).
+func (s *Sink) InsertEvidence(ctx context.Context, rows ...string) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	var body bytes.Buffer
+	for _, row := range rows {
+		body.WriteString(row)
+		body.WriteByte('\n')
+	}
 	return s.exec(ctx,
-		"INSERT INTO assurance.evidence_stream FORMAT JSONEachRow", []byte(row+"\n"))
+		"INSERT INTO assurance.evidence_stream FORMAT JSONEachRow", body.Bytes())
 }
 
 // Query runs a read-only statement and returns the raw response.
