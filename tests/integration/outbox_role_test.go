@@ -52,7 +52,6 @@ func TestOnlyThePublisherRoleReadsAcrossTenants(t *testing.T) {
 	theirs := fmt.Sprintf("tenant_outbox_theirs_%d", now.UnixNano())
 
 	app := evidence.NewStore(idemPool(t))
-	publisher := evidence.NewStore(outboxPool(t))
 
 	for _, tenant := range []string{mine, theirs} {
 		event := evidence.Event{
@@ -72,33 +71,43 @@ func TestOnlyThePublisherRoleReadsAcrossTenants(t *testing.T) {
 		}
 	}
 
-	// The publisher sees both, because draining every tenant's queue is its job.
-	queued, err := publisher.Unpublished(ctx, 500)
-	if err != nil {
-		t.Fatalf("the publisher role cannot read the outbox: %v", err)
-	}
-	seen := map[string]bool{}
-	for _, e := range queued {
-		seen[e.TenantID] = true
-	}
-	if !seen[mine] || !seen[theirs] {
-		t.Fatalf("the publisher did not see both tenants (mine=%v theirs=%v); it cannot "+
-			"drain a queue it cannot read", seen[mine], seen[theirs])
+	// Asked directly, by tenant, under each role.
+	//
+	// Not through Unpublished: that reads the head of the queue, and a queue with a
+	// backlog answers "how deep is this tenant's row" rather than "may this role see
+	// it". The property under test is what row level security permits, so the query is
+	// the narrowest one that expresses it.
+	visible := func(pool *pgxpool.Pool, role, tenant string) int {
+		t.Helper()
+		var count int
+		err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM evidence_outbox WHERE tenant_id = $1`, tenant).Scan(&count)
+		if err != nil {
+			// A refusal is also a correct answer for the application role.
+			t.Logf("%s reading %s: %v", role, tenant, err)
+			return 0
+		}
+		return count
 	}
 
-	// The application sees neither, because Unpublished sets no tenant and RLS answers
-	// with nothing rather than with everything. That is the point: a handler that reads
-	// this table by mistake gets an empty result, not another customer's evidence.
-	leaked, err := app.Unpublished(ctx, 500)
-	if err != nil {
-		// A refusal is also a correct answer here.
-		t.Logf("the application role was refused outright: %v", err)
-		return
+	publisherPool := outboxPool(t)
+	appPool := idemPool(t)
+
+	if visible(publisherPool, "publisher", mine) == 0 ||
+		visible(publisherPool, "publisher", theirs) == 0 {
+		t.Errorf("the publisher cannot see both tenants' rows; it cannot drain a queue " +
+			"it cannot read")
 	}
-	for _, e := range leaked {
-		if e.TenantID == mine || e.TenantID == theirs {
-			t.Errorf("the application role read outbox rows for %s; the cross-tenant "+
-				"exemption is still granted to it (migration 0025)", e.TenantID)
-		}
+
+	// The application sets no tenant here, and RLS answers with nothing rather than
+	// with everything. That is the point: a handler that reads this table by mistake
+	// gets an empty result, not another customer's evidence.
+	if n := visible(appPool, "application", theirs); n != 0 {
+		t.Errorf("the application role saw %d outbox rows for another tenant; the "+
+			"cross-tenant exemption is still granted to it (migration 0025)", n)
 	}
+	if n := visible(appPool, "application", mine); n != 0 {
+		t.Errorf("the application role saw %d outbox rows with no tenant set", n)
+	}
+
 }

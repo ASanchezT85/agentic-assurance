@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/policy"
 )
@@ -26,8 +25,36 @@ import (
 // did nothing until somebody restarted the process. Staged activation is an operational
 // act, and one that needs a restart is not one.
 
+// reloadAuthority is the activation key these tests sign authorizations with, plus the
+// store that holds the accepted transitions. Registered once per tenant.
+type reloadAuthority struct {
+	store *policy.ActivationStore
+	priv  ed25519.PrivateKey
+	keyID string
+}
+
+func newReloadAuthority(t *testing.T, tenant string) *reloadAuthority {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("activation keygen: %v", err)
+	}
+	store := policy.NewActivationStore(idemPool(t))
+	if err := store.RegisterKey(context.Background(), policy.ActivationKey{
+		TenantID: tenant, KeyID: "reload_key", PublicKey: pub,
+		Holder: "ops@example.test", Status: "ACTIVE",
+		ValidFrom: time.Now().UTC().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("register activation key: %v", err)
+	}
+	return &reloadAuthority{store: store, priv: priv, keyID: "reload_key"}
+}
+
+// writeBundle stages a signed bundle and, when an authority is supplied, the customer
+// authorization that lets it enforce. A bundle without one is staged but not activated,
+// which is the point of the second signature.
 func writeBundle(t *testing.T, dir, tenant, id string, priv ed25519.PrivateKey,
-	now time.Time, source string) {
+	now time.Time, source string, authority *reloadAuthority) {
 
 	t.Helper()
 
@@ -59,8 +86,36 @@ func writeBundle(t *testing.T, dir, tenant, id string, priv ed25519.PrivateKey,
 	}
 	// Modification times have coarse resolution on some filesystems; move it forward
 	// explicitly so the change is visible rather than depending on the clock.
-	stamp := now.Add(time.Duration(len(id)) * time.Second)
+	stamp := time.Now().Add(time.Duration(len(id)+len(raw)) * time.Millisecond)
 	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if authority == nil {
+		return
+	}
+	authorization := policy.Authorization{
+		SchemaVersion:     policy.AuthorizationSchemaVersion,
+		TenantID:          tenant,
+		BundleID:          bundle.BundleID,
+		BundleContentHash: bundle.ContentHash,
+		Action:            policy.ActionActivate,
+		Actor:             "reload-test",
+		AuthorizedAt:      time.Now().UTC(),
+		Nonce:             fmt.Sprintf("reload_%s_%d", id, time.Now().UnixNano()),
+	}
+	if err := authorization.Sign(authority.priv, authority.keyID); err != nil {
+		t.Fatalf("sign authorization: %v", err)
+	}
+	authRaw, err := json.MarshalIndent(authorization, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal authorization: %v", err)
+	}
+	authPath := filepath.Join(dir, tenant+".activation.json")
+	if err := os.WriteFile(authPath, authRaw, 0o600); err != nil {
+		t.Fatalf("write authorization: %v", err)
+	}
+	if err := os.Chtimes(authPath, stamp, stamp); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
 }
@@ -88,18 +143,20 @@ rules:
 func TestAReplacedBundleTakesEffectWithoutRestart(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().UTC()
-	tenant := "tenant_reload"
+	tenant := fmt.Sprintf("tenant_reload_%d", time.Now().UnixNano())
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
+	authority := newReloadAuthority(t, tenant)
 
-	writeBundle(t, dir, tenant, "bundle_v1", priv, now, allowOrdinaryOrders)
+	writeBundle(t, dir, tenant, "bundle_v1", priv, now, allowOrdinaryOrders, authority)
 	bundles, err := gateway.NewFileBundles(dir, hex.EncodeToString(pub))
 	if err != nil {
 		t.Fatalf("bundles: %v", err)
 	}
+	bundles.Activations = authority.store
 
 	first, err := bundles.Active(context.Background(), tenant)
 	if err != nil {
@@ -110,7 +167,7 @@ func TestAReplacedBundleTakesEffectWithoutRestart(t *testing.T) {
 	}
 
 	// The customer activates a stricter bundle. No restart.
-	writeBundle(t, dir, tenant, "bundle_v2", priv, now, denyEverything)
+	writeBundle(t, dir, tenant, "bundle_v2", priv, now, denyEverything, authority)
 
 	second, err := bundles.Active(context.Background(), tenant)
 	if err != nil {
@@ -123,7 +180,7 @@ func TestAReplacedBundleTakesEffectWithoutRestart(t *testing.T) {
 
 	// And rolling back is the same act in reverse, which is the half that matters
 	// during an incident.
-	writeBundle(t, dir, tenant, "bundle_v1", priv, now, allowOrdinaryOrders)
+	writeBundle(t, dir, tenant, "bundle_v1", priv, now, allowOrdinaryOrders, authority)
 	rolledBack, err := bundles.Active(context.Background(), tenant)
 	if err != nil {
 		t.Fatalf("active after rollback: %v", err)
@@ -137,18 +194,20 @@ func TestAReplacedBundleTakesEffectWithoutRestart(t *testing.T) {
 func TestAnUnverifiableReplacementLeavesTheActiveBundleInForce(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().UTC()
-	tenant := "tenant_reload_bad"
+	tenant := fmt.Sprintf("tenant_reload_bad_%d", time.Now().UnixNano())
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	writeBundle(t, dir, tenant, "bundle_good", priv, now, allowOrdinaryOrders)
+	authority := newReloadAuthority(t, tenant)
+	writeBundle(t, dir, tenant, "bundle_good", priv, now, allowOrdinaryOrders, authority)
 
 	bundles, err := gateway.NewFileBundles(dir, hex.EncodeToString(pub))
 	if err != nil {
 		t.Fatalf("bundles: %v", err)
 	}
+	bundles.Activations = authority.store
 	if _, err := bundles.Active(context.Background(), tenant); err != nil {
 		t.Fatalf("active: %v", err)
 	}
@@ -158,7 +217,7 @@ func TestAnUnverifiableReplacementLeavesTheActiveBundleInForce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	writeBundle(t, dir, tenant, "bundle_forged", attacker, now, denyEverything)
+	writeBundle(t, dir, tenant, "bundle_forged", attacker, now, denyEverything, authority)
 
 	active, err := bundles.Active(context.Background(), tenant)
 	if err != nil {
@@ -174,18 +233,20 @@ func TestAnUnverifiableReplacementLeavesTheActiveBundleInForce(t *testing.T) {
 func TestADeletedBundleKeepsTheOneInForce(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().UTC()
-	tenant := "tenant_reload_gone"
+	tenant := fmt.Sprintf("tenant_reload_gone_%d", time.Now().UnixNano())
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	writeBundle(t, dir, tenant, "bundle_only", priv, now, allowOrdinaryOrders)
+	authority := newReloadAuthority(t, tenant)
+	writeBundle(t, dir, tenant, "bundle_only", priv, now, allowOrdinaryOrders, authority)
 
 	bundles, err := gateway.NewFileBundles(dir, hex.EncodeToString(pub))
 	if err != nil {
 		t.Fatalf("bundles: %v", err)
 	}
+	bundles.Activations = authority.store
 	if _, err := bundles.Active(context.Background(), tenant); err != nil {
 		t.Fatalf("active: %v", err)
 	}
@@ -203,89 +264,57 @@ func TestADeletedBundleKeepsTheOneInForce(t *testing.T) {
 	}
 }
 
-// Enforcement changing is a fact about a customer's platform, so it is recorded.
+// writeRollback stages a bundle with an authorization that says ROLLBACK and names the
+// bundle currently in force.
 //
-// Reload took effect and left nothing behind. An incident review could see every
-// decision a bundle produced and not which bundle was in force when, who activated it,
-// or that a rollback had happened at all — while section 32 names
-// policy.bundle.activated.v1 and rolled_back.v1 and nothing produced either.
-func TestActivationAndRollbackAreRecorded(t *testing.T) {
-	dir := t.TempDir()
-	ctx := context.Background()
-	now := time.Now().UTC()
-	tenant := fmt.Sprintf("tenant_activation_%d", now.UnixNano())
+// A separate helper because a rollback is a separate act: the customer authorizes the
+// retreat and says what they are retreating from, rather than the platform inferring it
+// from whichever bundles this process has happened to see.
+func writeRollback(t *testing.T, dir, tenant, id string, priv ed25519.PrivateKey,
+	now time.Time, source string, authority *reloadAuthority, priorBundleID string) {
 
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	t.Helper()
+	writeBundle(t, dir, tenant, id, priv, now, source, nil)
+
+	parsed, err := policy.ParseSource([]byte(source))
 	if err != nil {
-		t.Fatalf("keygen: %v", err)
+		t.Fatalf("parse: %v", err)
 	}
-
-	store := evidence.NewStore(idemPool(t))
-	writeBundle(t, dir, tenant, "bundle_a", priv, now, allowOrdinaryOrders)
-
-	bundles, err := gateway.NewFileBundles(dir, hex.EncodeToString(pub))
+	bundle, err := policy.Compile(parsed, tenant, id, now)
 	if err != nil {
-		t.Fatalf("bundles: %v", err)
+		t.Fatalf("compile: %v", err)
 	}
-	bundles.Evidence = store
-
-	if _, err := bundles.Active(ctx, tenant); err != nil {
-		t.Fatalf("active: %v", err)
-	}
-	// A second read of an unchanged file is not an activation: the operators did
-	// nothing, and an event for it is noise in the customer's evidence.
-	if _, err := bundles.Active(ctx, tenant); err != nil {
-		t.Fatalf("active again: %v", err)
+	// Signed, because ContentHash is set by signing and an authorization that names no
+	// content hash authorizes whatever later takes the bundle's name.
+	if err := bundle.Sign(priv, "reload-test", now); err != nil {
+		t.Fatalf("sign: %v", err)
 	}
 
-	writeBundle(t, dir, tenant, "bundle_b", priv, now, denyEverything)
-	if _, err := bundles.Active(ctx, tenant); err != nil {
-		t.Fatalf("active after replace: %v", err)
+	authorization := policy.Authorization{
+		SchemaVersion:     policy.AuthorizationSchemaVersion,
+		TenantID:          tenant,
+		BundleID:          bundle.BundleID,
+		BundleContentHash: bundle.ContentHash,
+		PriorBundleID:     priorBundleID,
+		Action:            policy.ActionRollback,
+		Actor:             "reload-test",
+		Reason:            "restoring the previous bundle",
+		AuthorizedAt:      time.Now().UTC(),
+		Nonce:             fmt.Sprintf("rollback_%s_%d", id, time.Now().UnixNano()),
 	}
-
-	// The retreat: the bundle this gateway was already running goes back in force.
-	writeBundle(t, dir, tenant, "bundle_a", priv, now, allowOrdinaryOrders)
-	if _, err := bundles.Active(ctx, tenant); err != nil {
-		t.Fatalf("active after rollback: %v", err)
+	if err := authorization.Sign(authority.priv, authority.keyID); err != nil {
+		t.Fatalf("sign rollback: %v", err)
 	}
-
-	events, err := store.ByAggregate(ctx, tenant, "bundle_a")
+	raw, err := json.MarshalIndent(authorization, "", "  ")
 	if err != nil {
-		t.Fatalf("read evidence: %v", err)
+		t.Fatalf("marshal rollback: %v", err)
 	}
-	b, err := store.ByAggregate(ctx, tenant, "bundle_b")
-	if err != nil {
-		t.Fatalf("read evidence: %v", err)
+	path := filepath.Join(dir, tenant+".activation.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write rollback: %v", err)
 	}
-	events = append(events, b...)
-
-	var activated, rolledBack int
-	for _, e := range events {
-		switch e.EventName {
-		case evidence.PolicyBundleActivated:
-			activated++
-			if e.Payload["activated_by"] != "reload-test" {
-				t.Errorf("the activation names %v as its actor; a change to what the "+
-					"platform denies without a name attached is unattributable",
-					e.Payload["activated_by"])
-			}
-			if e.Payload["content_hash"] == nil || e.Payload["content_hash"] == "" {
-				t.Error("the activation does not say which content took effect")
-			}
-		case evidence.PolicyBundleRolledBack:
-			rolledBack++
-		}
-	}
-
-	// Two activations, bundle_a then bundle_b, and one rollback. Not three
-	// activations: an unchanged file was read twice and a bundle already in force
-	// came back, and a review that reads a retreat as a release is reading the
-	// incident backwards.
-	if activated != 2 {
-		t.Errorf("activated = %d, want 2; got %d events", activated, len(events))
-	}
-	if rolledBack != 1 {
-		t.Errorf("rolled back = %d, want 1; restoring the previous bundle during an "+
-			"incident is not the same act as shipping a new one", rolledBack)
+	stamp := time.Now().Add(time.Duration(len(raw)) * time.Millisecond)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatalf("chtimes: %v", err)
 	}
 }

@@ -39,6 +39,7 @@ import (
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
 	"agentic-assurance/internal/pg"
+	"agentic-assurance/internal/policy"
 )
 
 const component = "assurance-gateway"
@@ -332,10 +333,19 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 	if err != nil {
 		return missing("POLICY_PUBLIC_KEY", "an unverified policy bundle is not policy")
 	}
-	// A reload changes what the enforcement plane denies. Recorded, or an incident
-	// review can see every decision a bundle produced and not which bundle was in force
-	// when, who activated it, or that a rollback happened at all.
-	bundles.Evidence = evidence.NewStore(pool)
+	// A bundle enforces only when the customer has authorized the activation itself,
+	// and the transition is recorded in the same transaction that accepts it. Without
+	// this store no policy change can be attributed, so none is applied and whatever is
+	// already in force stays in force.
+	bundles.Activations = policy.NewActivationStore(pool)
+	bundles.Report = func(tenantID string, err error) {
+		// A refused activation leaves the previous policy enforcing, which is the safe
+		// outcome and an invisible one. Said out loud, or an operator finds out days
+		// later that what they staged never took effect.
+		log.Warn("policy activation refused",
+			"tenant", tenantID, "err", err.Error(),
+			"consequence", "the previously authorized bundle stays in force")
+	}
 
 	symbols, err := gateway.LoadSymbols(envOr("INSTRUMENT_SYMBOLS", "/etc/assurance/instruments.json"))
 	if err != nil {
@@ -562,8 +572,15 @@ func main() {
 				publisher := &evidence.OutboxPublisher{
 					Store:     evidence.NewStore(pool),
 					Publisher: evidence.NewPublisher(js),
-					Every:     time.Duration(envInt("OUTBOX_INTERVAL_MS", 1000)) * time.Millisecond,
-					Batch:     envInt("OUTBOX_BATCH", 100),
+					// The interval is now how long to wait when the queue is empty
+					// rather than how often to publish: the publisher drains while a
+					// backlog exists. A batch of 100 per one-second tick made the
+					// service rate a constant of about 100/s regardless of depth, and
+					// evidence arrives an order of magnitude faster than that under
+					// load.
+					Every: time.Duration(envInt("OUTBOX_INTERVAL_MS", 250)) * time.Millisecond,
+					Batch: envInt("OUTBOX_BATCH", 500),
+					Owner: envOr("HOSTNAME", "assurance-gateway"),
 					Report: func(published, failed int, err error) {
 						// The publisher reports and this logs, because INV-013 keeps a
 						// logger out of the evidence package: a package that can write

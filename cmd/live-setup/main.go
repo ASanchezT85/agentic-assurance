@@ -93,6 +93,16 @@ func run(dir string, fleet, tenantCount int) error {
 	if err != nil {
 		return err
 	}
+	// The activation key is a third key, deliberately.
+	//
+	// It authorizes putting a policy into production, which is an operator's act. The
+	// bundle key signs rules and the agent key signs orders; neither may promote a
+	// policy, or an agent's compromised key could decide what constrains it.
+	activationPub, activationPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	activations := policy.NewActivationStore(pool)
 
 	if err := os.MkdirAll(filepath.Join(dir, "policy"), 0o700); err != nil {
 		return err
@@ -182,6 +192,37 @@ func run(dir string, fleet, tenantCount int) error {
 			return err
 		}
 		if err := os.WriteFile(filepath.Join(dir, "policy", name+".json"), raw, 0o600); err != nil {
+			return err
+		}
+
+		// The customer's authorization to activate it, and the key it is signed with.
+		if err := activations.RegisterKey(ctx, policy.ActivationKey{
+			TenantID: name, KeyID: "act_live", PublicKey: activationPub,
+			Holder: "live-setup", Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),
+		}); err != nil {
+			return fmt.Errorf("register the activation key for %s: %w", name, err)
+		}
+
+		authorization := policy.Authorization{
+			SchemaVersion:     policy.AuthorizationSchemaVersion,
+			TenantID:          name,
+			BundleID:          bundle.BundleID,
+			BundleContentHash: bundle.ContentHash,
+			Action:            policy.ActionActivate,
+			Actor:             "live-setup",
+			Reason:            "local development bootstrap",
+			AuthorizedAt:      now,
+			Nonce:             fmt.Sprintf("live_%s_%d", name, now.UnixNano()),
+		}
+		if err := authorization.Sign(activationPriv, "act_live"); err != nil {
+			return err
+		}
+		authRaw, err := json.MarshalIndent(authorization, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, "policy", name+".activation.json"),
+			authRaw, 0o600); err != nil {
 			return err
 		}
 	}

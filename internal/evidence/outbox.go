@@ -42,16 +42,52 @@ type OutboxEntry struct {
 // committed events on their way to a bus whose subjects carry the tenant, decides
 // nothing, and returns nothing to a caller.
 func (s *Store) Unpublished(ctx context.Context, limit int) ([]OutboxEntry, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-
-	rows, err := s.pool.Query(ctx, `
+	return s.read(ctx, limit, `
 		SELECT outbox_id, tenant_id, event_id, subject, payload, attempt_count
 		  FROM evidence_outbox
 		 WHERE published_at IS NULL
 		 ORDER BY created_at
-		 LIMIT $1`, limit)
+		 LIMIT $1`)
+}
+
+// Claim takes a batch of unpublished rows and leases them.
+//
+// FOR UPDATE SKIP LOCKED, so two publishers draining the same queue take different work
+// instead of the same work twice. Under a backlog that difference is the whole point:
+// duplicate publication is harmless for correctness — delivery is at-least-once and the
+// consumer deduplicates by event id — and it consumes exactly the capacity the backlog
+// needs to clear.
+//
+// The lease expires. A publisher that dies mid-batch must not strand its rows, so a claim
+// older than reclaimAfter is available again. Re-publishing what it may have already sent
+// is the safe side of that trade.
+func (s *Store) Claim(ctx context.Context, limit int, owner string, at time.Time,
+	reclaimAfter time.Duration) ([]OutboxEntry, error) {
+
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	return s.read(ctx, limit, `
+		UPDATE evidence_outbox
+		   SET claimed_at = $2, claimed_by = $3
+		 WHERE outbox_id IN (
+			 SELECT outbox_id
+			   FROM evidence_outbox
+			  WHERE published_at IS NULL
+			    AND (claimed_at IS NULL OR claimed_at < $4)
+			  ORDER BY created_at
+			  LIMIT $1
+			  FOR UPDATE SKIP LOCKED
+		 )
+		 RETURNING outbox_id, tenant_id, event_id, subject, payload, attempt_count`,
+		at.UTC(), owner, at.Add(-reclaimAfter).UTC())
+}
+
+func (s *Store) read(ctx context.Context, limit int, sql string, args ...any) ([]OutboxEntry, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	rows, err := s.pool.Query(ctx, sql, append([]any{limit}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +103,47 @@ func (s *Store) Unpublished(ctx context.Context, limit int) ([]OutboxEntry, erro
 		out = append(out, entry)
 	}
 	return out, rows.Err()
+}
+
+// Depth is what an operator needs to see: how much is queued and how old the oldest is.
+//
+// Queue depth alone says nothing — a thousand rows a second old is healthy and ten rows
+// an hour old is a stall. Both numbers together are the signal.
+// An empty tenant means the whole queue, which is what an operator watches; a named one
+// is what a measurement of a single workload needs, because a shared environment always
+// has somebody else's rows in it.
+func (s *Store) Depth(ctx context.Context, tenantID string) (queued int64, oldest time.Time, err error) {
+	var oldestAt *time.Time
+	err = s.pool.QueryRow(ctx, `
+		SELECT count(*), min(created_at)
+		  FROM evidence_outbox
+		 WHERE published_at IS NULL
+		   AND ($1 = '' OR tenant_id = $1)`, tenantID).Scan(&queued, &oldestAt)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	if oldestAt != nil {
+		oldest = *oldestAt
+	}
+	return queued, oldest, nil
+}
+
+// MarkPublishedBatch marks a whole drained batch in one statement.
+//
+// One round trip for a batch rather than one transaction per event. Marking was two
+// round trips per event — publish, then a transaction to record it — which put the
+// service rate an order of magnitude below the arrival rate all by itself.
+//
+// The publisher role's policy permits this across tenants, which is what a queue drained
+// by one process requires; the application role still sees only its own tenant.
+func (s *Store) MarkPublishedBatch(ctx context.Context, ids []int64, at time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE evidence_outbox SET published_at = $2 WHERE outbox_id = ANY($1)`,
+		ids, at.UTC())
+	return err
 }
 
 // MarkPublished records that an entry reached the bus.
@@ -137,6 +214,14 @@ type OutboxPublisher struct {
 	Batch     int
 	Now       func() time.Time
 
+	// Owner identifies this publisher in a claimed row, so an operator reading a
+	// stalled queue can see which instance holds it.
+	Owner string
+
+	// ReclaimAfter is how long a claim survives its publisher. A process that dies
+	// mid-batch must not strand its rows; two minutes by default.
+	ReclaimAfter time.Duration
+
 	// Report is called after each pass with what happened. The caller owns the log.
 	Report func(published, failed int, err error)
 }
@@ -160,35 +245,56 @@ func (o *OutboxPublisher) Run(ctx context.Context) {
 	if o.Every <= 0 {
 		o.Every = time.Second
 	}
-
-	ticker := time.NewTicker(o.Every)
-	defer ticker.Stop()
+	if o.Batch <= 0 {
+		o.Batch = 500
+	}
 
 	for {
+		// Drain while there is a backlog, and wait only when there is not.
+		//
+		// It used to publish one batch per tick, so the service rate was a constant —
+		// batch divided by interval — regardless of how much had arrived. A queue whose
+		// service rate does not respond to its depth diverges the moment arrivals
+		// exceed it, and this one did: 2,200 events per second in and 100 to 200 out.
+		published := o.Drain(ctx)
+		if published > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				continue
+			}
+		}
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			o.Drain(ctx)
+		case <-time.After(o.Every):
 		}
 	}
 }
 
-// Drain publishes one batch and reports how many made it.
+// Drain claims one batch, publishes it, and marks what made it.
 func (o *OutboxPublisher) Drain(ctx context.Context) int {
-	entries, err := o.Store.Unpublished(ctx, o.Batch)
+	batch := o.Batch
+	if batch <= 0 {
+		batch = 500
+	}
+	entries, err := o.Store.Claim(ctx, batch, o.owner(), o.now(), o.reclaimAfter())
 	if err != nil {
 		o.report(0, 0, err)
 		return 0
 	}
 
-	published, failed := 0, 0
+	published := make([]int64, 0, len(entries))
+	failed := 0
 	for _, entry := range entries {
 		var event Event
 		if err := json.Unmarshal(entry.Payload, &event); err != nil {
 			// Unpublishable rather than transient. Retrying forever would hide it, so
 			// it is counted and named and the queue moves on.
-			_ = o.Store.MarkFailed(ctx, entry.TenantID, entry.OutboxID, "payload is not an event: "+err.Error())
+			_ = o.Store.MarkFailed(ctx, entry.TenantID, entry.OutboxID,
+				"payload is not an event: "+err.Error())
 			failed++
 			continue
 		}
@@ -197,17 +303,33 @@ func (o *OutboxPublisher) Drain(ctx context.Context) int {
 			failed++
 			continue
 		}
-		if err := o.Store.MarkPublished(ctx, entry.TenantID, entry.OutboxID, o.now()); err != nil {
-			// Published and not marked: the consumer will see it twice. That is the
-			// side to err on — at-least-once is the contract (ADR-008), and a
-			// consumer that cannot tolerate a duplicate is the defect.
-			failed++
-			continue
-		}
-		published++
+		published = append(published, entry.OutboxID)
 	}
-	o.report(published, failed, nil)
-	return published
+
+	if err := o.Store.MarkPublishedBatch(ctx, published, o.now()); err != nil {
+		// Published and not marked: the consumer will see them again. That is the side
+		// to err on — at-least-once is the contract (ADR-008), and a consumer that
+		// cannot tolerate a duplicate is the defect.
+		o.report(0, len(published)+failed, err)
+		return 0
+	}
+
+	o.report(len(published), failed, nil)
+	return len(published)
+}
+
+func (o *OutboxPublisher) owner() string {
+	if o.Owner != "" {
+		return o.Owner
+	}
+	return "assurance-gateway"
+}
+
+func (o *OutboxPublisher) reclaimAfter() time.Duration {
+	if o.ReclaimAfter > 0 {
+		return o.ReclaimAfter
+	}
+	return 2 * time.Minute
 }
 
 func (o *OutboxPublisher) report(published, failed int, err error) {

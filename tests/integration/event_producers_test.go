@@ -80,23 +80,30 @@ func TestMandatoryEventsHaveProducersThatRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}
-	_ = pub
 	policyTenant := rig.tenant
-	writeBundle(t, dir, policyTenant, "bundle_prod_a", priv, now, allowOrdinaryOrders)
+	authority := newReloadAuthority(t, policyTenant)
+	writeBundle(t, dir, policyTenant, "bundle_prod_a", priv, now, allowOrdinaryOrders, authority)
 
 	bundles, err := gateway.NewFileBundles(dir, hex.EncodeToString(pub))
 	if err != nil {
 		t.Fatalf("bundles: %v", err)
 	}
-	bundles.Evidence = rig.evidence
+	bundles.Activations = authority.store
+	// A refused activation leaves the previous policy in force and returns no error, so
+	// without this a staging mistake in the fixture would look like a missing producer.
+	bundles.Report = func(tenant string, err error) { t.Fatalf("activation refused: %v", err) }
 	if _, err := bundles.Active(ctx, policyTenant); err != nil {
 		t.Fatalf("activate: %v", err)
 	}
-	writeBundle(t, dir, policyTenant, "bundle_prod_b", priv, now, denyEverything)
+	writeBundle(t, dir, policyTenant, "bundle_prod_b", priv, now, denyEverything, authority)
 	if _, err := bundles.Active(ctx, policyTenant); err != nil {
 		t.Fatalf("activate the replacement: %v", err)
 	}
-	writeBundle(t, dir, policyTenant, "bundle_prod_a", priv, now, allowOrdinaryOrders)
+	// The retreat, authorized as a rollback: the customer names both sides of the
+	// transition rather than the platform inferring one from what it happens to
+	// remember.
+	writeRollback(t, dir, policyTenant, "bundle_prod_a", priv, now, allowOrdinaryOrders,
+		authority, "bundle_prod_b")
 	if _, err := bundles.Active(ctx, policyTenant); err != nil {
 		t.Fatalf("roll back: %v", err)
 	}

@@ -183,35 +183,60 @@ func (g StoreGrants) Load(ctx context.Context, tenantID, grantID string) (*autho
 	return grant, nil
 }
 
-// FileBundles serves signed policy bundles from a directory, one JSON file per tenant.
+// FileBundles serves customer-authorized policy bundles from a directory, one JSON file
+// per tenant plus one authorization file beside it.
 //
-// There is no policy bundle store: Phase 4 built the lifecycle and nothing persists
-// it. This is enough to run the enforcement plane and honest about what it is.
+// Two signatures, over two different facts.
 //
-// It verifies the signature rather than trusting the file, and it will not activate a
-// bundle itself. A gateway that signed or activated its own policy would be deciding
-// what constrains it, which is the shape INV-009 exists to forbid.
+// The bundle's signature covers its rules and deliberately excludes its activation
+// block, because policy content must keep a stable identity across promotion. That left
+// promotion unauthorized: anyone who could edit the file could take a correctly signed
+// SHADOW bundle, change one word to ACTIVE, and put it into force without the customer's
+// key. The signature still verified, because the rules had not changed.
+//
+// So a second signed document says the customer authorized *this* bundle, named by
+// content hash, to enforce. Content identity and activation authority are different facts
+// and are signed separately. The gateway verifies both and activates neither: a platform
+// that authorizes its own policy is deciding what constrains it (INV-009, ADR-010).
 type FileBundles struct {
 	Dir       string
 	PublicKey ed25519.PublicKey
 
-	// Evidence records what took effect and when.
+	// Activations holds the keys that may authorize an activation and the transitions
+	// that were accepted.
 	//
-	// A reload changes what the enforcement plane denies, and it used to leave nothing
-	// behind: an incident review could see every decision a bundle produced and not
-	// which bundle was in force when, who activated it, or that a rollback had happened
-	// at all. Section 32 names policy.bundle.activated.v1 and rolled_back.v1 and nothing
-	// produced either.
+	// Nil means no bundle can be activated at all. That is deliberate and it is the
+	// fail-safe direction: without it the gateway cannot tell an authorized promotion
+	// from an edited file, and enforcing a policy it cannot attribute is worse than
+	// refusing to change the one already in force.
+	Activations *policy.ActivationStore
+
+	Now func() time.Time
+
+	// Report is how a refused reload becomes visible.
 	//
-	// Nil is allowed and means no recording, the way every other optional dependency in
-	// this package works. It never blocks a reload: a bundle the customer activated is
-	// in force whether or not the record of it committed, and the alternative — refusing
-	// to enforce a verified policy because an event could not be written — fails open.
-	Evidence *evidence.Store
-	Now      func() time.Time
+	// A candidate that does not verify leaves the previous policy in force and returns
+	// no error, because failing live submissions over a badly staged file would be a
+	// worse outcome than continuing to enforce what the customer last authorized. That
+	// makes the refusal silent, and a silent refusal is how an operator discovers three
+	// days later that the policy they thought they shipped never took effect.
+	//
+	// A callback rather than a logger, because INV-013 keeps a logger out of packages
+	// that handle evidence: the binary logs, this reports.
+	Report func(tenantID string, err error)
 
 	mu     sync.RWMutex
 	cached map[string]*policy.Bundle
+
+	// reload serializes the slow path.
+	//
+	// Under load, a thousand concurrent submissions all saw the same changed stamp and
+	// all tried to accept the same activation. One won and the rest were refused as
+	// replays — of their own authorization — so a correctly staged policy produced
+	// POLICY_UNAVAILABLE for a fifth of the traffic. The fast path still takes only a
+	// read lock; this is held while a file is verified, which happens a few times a
+	// year rather than a few thousand times a second.
+	reload sync.Mutex
 
 	// stamps is the file each cached bundle was read from, as size and modification
 	// time. It is what makes activation and rollback take effect: the bundle used to
@@ -219,18 +244,6 @@ type FileBundles struct {
 	// the previous one during an incident — did nothing until somebody restarted the
 	// gateway. An activation that needs a restart is not an activation.
 	stamps map[string]string
-
-	// seen is every bundle id this process has had in force, per tenant. It is what
-	// separates an activation from a rollback: shipping a new bundle activates one
-	// nobody has enforced before, and restoring the previous one during an incident
-	// puts back a bundle this gateway was already running. The version number cannot
-	// tell them apart — a customer rolling back to bundle_v1 is not publishing a lower
-	// version, they are republishing the same one.
-	//
-	// It is per process, so the first activation after a restart is recorded as an
-	// activation even when an operator considers it a rollback. That is the honest
-	// limit of what the gateway knows: it did not witness the earlier activation.
-	seen map[string]map[string]bool
 }
 
 func NewFileBundles(dir, publicKeyHex string) (*FileBundles, error) {
@@ -239,20 +252,21 @@ func NewFileBundles(dir, publicKeyHex string) (*FileBundles, error) {
 		return nil, fmt.Errorf("POLICY_PUBLIC_KEY must be a hex-encoded ed25519 public key")
 	}
 	return &FileBundles{Dir: dir, PublicKey: key,
-		cached: map[string]*policy.Bundle{}, stamps: map[string]string{},
-		seen: map[string]map[string]bool{}}, nil
+		cached: map[string]*policy.Bundle{}, stamps: map[string]string{}}, nil
 }
 
-// Active returns the tenant's enforcing bundle, re-reading the file when it changed.
+// Active returns the tenant's enforcing bundle, re-reading the files when they change.
 //
-// The check is one stat per submission rather than a re-read: verification and
-// compilation happen when the file changes, and an unchanged file returns the cached
-// bundle exactly as before.
+// The check is one stat per submission rather than a re-read: verification happens when
+// a file changes, and unchanged files return the cached bundle exactly as before.
 //
-// What it will not do is activate anything itself. The file is signed by the customer
-// and staged by the customer; this reads what they made active. A gateway that promoted
-// its own bundle would be deciding what constrains it (INV-009, ADR-010).
-func (f *FileBundles) Active(_ context.Context, tenantID string) (*policy.Bundle, error) {
+// A bundle becomes enforceable only when all of these hold: its own signature verifies,
+// it belongs to this tenant, it is ACTIVE, a customer authorization names it by content
+// hash and verifies against a registered activation key that is neither revoked nor
+// expired, that authorization has not been seen before, and the transition committed to
+// PostgreSQL together with its evidence. Any of those failing leaves whatever was already
+// in force exactly as it was.
+func (f *FileBundles) Active(ctx context.Context, tenantID string) (*policy.Bundle, error) {
 	// The tenant id is a path element here, so it is checked rather than trusted.
 	// Traversal and separators are refused; an ordinary dot is not, because a tenant
 	// id shaped like a domain is plausible and would otherwise become a silent
@@ -263,26 +277,41 @@ func (f *FileBundles) Active(_ context.Context, tenantID string) (*policy.Bundle
 	}
 
 	path := filepath.Join(f.Dir, tenantID+".json")
-	stamp, statErr := bundleStamp(path)
+	authPath := filepath.Join(f.Dir, tenantID+".activation.json")
+	stamp := bundleStamp(path) + "|" + bundleStamp(authPath)
 
 	f.mu.RLock()
 	cached, isCached := f.cached[tenantID]
 	cachedStamp := f.stamps[tenantID]
 	f.mu.RUnlock()
 
-	if isCached && statErr == nil && stamp == cachedStamp {
+	if isCached && stamp == cachedStamp {
 		return cached, nil
 	}
-	if isCached && statErr != nil {
-		// The file went away or cannot be read. The bundle that was verified and
-		// activated stays in force: a policy that vanishes must not become no policy,
-		// and dropping enforcement because a file is missing is the loudest possible
-		// way to fail open.
+
+	f.reload.Lock()
+	defer f.reload.Unlock()
+
+	// Re-read under the lock. Whoever held it may have done this exact reload while
+	// this goroutine waited, and repeating it would present an authorization that has
+	// just been accepted.
+	f.mu.RLock()
+	cached, isCached = f.cached[tenantID]
+	cachedStamp = f.stamps[tenantID]
+	f.mu.RUnlock()
+	if isCached && stamp == cachedStamp {
 		return cached, nil
 	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
+		if isCached {
+			// The file went away or cannot be read. What was verified and authorized
+			// stays in force: a policy that vanishes must not become no policy, and
+			// dropping enforcement because a file is missing is the loudest possible
+			// way to fail open.
+			return cached, nil
+		}
 		return nil, fmt.Errorf("no policy bundle for this tenant: %w", err)
 	}
 
@@ -300,95 +329,175 @@ func (f *FileBundles) Active(_ context.Context, tenantID string) (*policy.Bundle
 			fmt.Errorf("policy bundle belongs to another tenant"))
 	}
 	if !bundle.Enforcing() {
-		// SHADOW and CANARY are not production enforcement, and a gateway that
-		// promoted one would be activating its own policy.
+		// SHADOW and CANARY are not production enforcement.
 		return f.keepOnFailedReload(tenantID, isCached, cached,
 			fmt.Errorf("policy bundle is %s, not ACTIVE", bundle.Activation.Status))
 	}
 
-	f.mu.Lock()
-	previous := f.cached[tenantID]
-	if f.seen[tenantID] == nil {
-		f.seen[tenantID] = map[string]bool{}
+	// Already in force under an accepted transition. Re-reading a file whose content is
+	// unchanged is not a new activation, and requiring a fresh authorization for it
+	// would mean a restart could not load the policy the customer already authorized.
+	if current, err := f.currentTransition(ctx, tenantID); err == nil &&
+		current.BundleContentHash == bundle.ContentHash {
+		f.remember(tenantID, &bundle, stamp)
+		return &bundle, nil
 	}
-	returning := f.seen[tenantID][bundle.BundleID]
-	f.seen[tenantID][bundle.BundleID] = true
-	f.cached[tenantID] = &bundle
-	f.stamps[tenantID] = stamp
-	f.mu.Unlock()
 
-	f.recordActivation(context.Background(), previous, &bundle, returning)
-	return &bundle, nil
+	authorized, err := f.authorize(ctx, tenantID, authPath, &bundle)
+	if err != nil {
+		return f.keepOnFailedReload(tenantID, isCached, cached, err)
+	}
+	f.remember(tenantID, authorized, stamp)
+	return authorized, nil
 }
 
-// recordActivation writes down that enforcement changed.
+// authorize verifies the customer's activation and commits the transition.
 //
-// Only when the bundle actually changed. A file rewritten with identical content, or a
-// process starting up and reading the bundle that was already in force, is not an
-// activation, and recording one would put an event in the customer's evidence for
-// something their operators did not do.
-//
-// Activated or rolled back is decided by whether this gateway has had the bundle in
-// force before. A customer restoring the previous bundle during an incident is doing
-// something different from shipping a new one, and an incident review that cannot tell
-// them apart reads a sequence of activations where there was a retreat.
-func (f *FileBundles) recordActivation(ctx context.Context, previous, current *policy.Bundle,
-	returning bool) {
-	if f.Evidence == nil || current == nil {
-		return
-	}
-	if previous != nil && previous.BundleID == current.BundleID &&
-		previous.ContentHash == current.ContentHash {
-		return
+// Nothing here changes what is enforced. The caller switches only on a nil error, so a
+// failure to record the transition leaves the previous policy in force rather than
+// enforcing a change nobody can attribute. The evidence and the transition are one
+// commit: the old code appended evidence after switching and discarded the error, which
+// allowed a state where a new policy was enforcing and no activation record existed.
+func (f *FileBundles) authorize(ctx context.Context, tenantID, authPath string,
+	bundle *policy.Bundle) (*policy.Bundle, error) {
+
+	if f.Activations == nil {
+		return nil, fmt.Errorf("no activation store is configured, so no policy change "+
+			"can be attributed to a customer; %s stays out of force", bundle.BundleID)
 	}
 
-	now := time.Now().UTC
-	if f.Now != nil {
-		now = f.Now
+	rawAuth, err := os.ReadFile(authPath)
+	if err != nil {
+		return nil, fmt.Errorf("bundle %s carries no activation authorization: %w",
+			bundle.BundleID, err)
 	}
-	at := now().UTC()
+	var authorization policy.Authorization
+	if err := json.Unmarshal(rawAuth, &authorization); err != nil {
+		return nil, fmt.Errorf("the activation authorization is unreadable: %w", err)
+	}
+	if err := authorization.Validate(); err != nil {
+		return nil, err
+	}
+	if authorization.TenantID != tenantID {
+		return nil, fmt.Errorf("the activation authorization belongs to another tenant")
+	}
+	if err := authorization.Authorizes(bundle); err != nil {
+		return nil, err
+	}
+
+	key, err := f.Activations.Key(ctx, tenantID, authorization.Signature.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	at := f.now()
+	if err := key.Usable(at); err != nil {
+		return nil, err
+	}
+	if err := authorization.Verify(key.PublicKey); err != nil {
+		return nil, err
+	}
+
+	prior, err := f.Activations.Current(ctx, tenantID)
+	if err != nil && !errors.Is(err, policy.ErrNoTransition) {
+		return nil, fmt.Errorf("the current policy transition could not be read: %w", err)
+	}
+	if authorization.Action == policy.ActionRollback && prior != nil &&
+		authorization.PriorBundleID != prior.BundleID {
+		// A rollback names both sides. One that names a predecessor other than what is
+		// actually in force is describing a transition that is not the one about to
+		// happen, and an audit trail built from it would be fiction.
+		return nil, fmt.Errorf("the rollback names %s as the bundle in force and %s is",
+			authorization.PriorBundleID, prior.BundleID)
+	}
+
+	event := f.activationEvent(authorization, bundle, prior, at)
+	if _, err := f.Activations.Accept(ctx, authorization, bundle, prior, event, at); err != nil {
+		if errors.Is(err, policy.ErrReplayed) {
+			// The nonce is recorded. Either another process accepted this very
+			// authorization — in which case the bundle it names is in force and this
+			// is not a replay at all — or it is a genuinely old authorization being
+			// presented again. The accepted record decides which.
+			if current, currentErr := f.Activations.Current(ctx, tenantID); currentErr == nil &&
+				current.BundleContentHash == bundle.ContentHash {
+				return bundle, nil
+			}
+			return nil, fmt.Errorf("this activation authorization (nonce %s) has already "+
+				"been accepted for a different bundle; a captured authorization cannot "+
+				"be presented twice", authorization.Nonce)
+		}
+		return nil, fmt.Errorf("the policy transition could not be recorded, so it was "+
+			"not applied: %w", err)
+	}
+	return bundle, nil
+}
+
+// activationEvent is the append-only record of the change.
+//
+// Activated or rolled back is what the customer's authorization says, not what this
+// process happens to have witnessed. It used to be inferred from a process-local set of
+// bundles this gateway had seen, which made a restart record an activation the customer
+// never performed and let two replicas disagree about one tenant's history.
+func (f *FileBundles) activationEvent(a policy.Authorization, b *policy.Bundle,
+	prior *policy.Transition, at time.Time) evidence.Event {
 
 	name := evidence.PolicyBundleActivated
-	actor := current.Activation.ActivatedBy
-	payload := map[string]any{
-		"bundle_id":    current.BundleID,
-		"policy":       current.Policy,
-		"version":      current.Version,
-		"content_hash": current.ContentHash,
-		"signed_by":    current.SignedBy,
-		// Who, from the bundle the customer signed and activated. The gateway does not
-		// activate policy and so is never the actor here (INV-009, ADR-010); an empty
-		// value is a bundle whose activation named nobody, and it is written as empty
-		// rather than filled in with the process that noticed.
-		"activated_by": actor,
-		"activated_at": current.Activation.ActivatedAt,
-		"rules":        len(current.Rules),
-	}
-	if previous != nil {
-		payload["previous_bundle_id"] = previous.BundleID
-		payload["previous_version"] = previous.Version
-	}
-	if returning {
+	if a.Action == policy.ActionRollback {
 		name = evidence.PolicyBundleRolledBack
-		payload["rollback_reason"] = current.Activation.RollbackReason
-		if by := current.Activation.RolledBackBy; by != "" {
-			payload["activated_by"] = by
-		}
 	}
 
-	_, _ = f.Evidence.Append(ctx, evidence.Event{
+	payload := map[string]any{
+		"bundle_id":     b.BundleID,
+		"policy":        b.Policy,
+		"version":       b.Version,
+		"content_hash":  b.ContentHash,
+		"signed_by":     b.SignedBy,
+		"action":        string(a.Action),
+		"actor":         a.Actor,
+		"reason":        a.Reason,
+		"key_id":        a.Signature.KeyID,
+		"nonce":         a.Nonce,
+		"authorized_at": a.AuthorizedAt.UTC().Format(time.RFC3339),
+		"rules":         len(b.Rules),
+	}
+	if prior != nil {
+		payload["previous_bundle_id"] = prior.BundleID
+		payload["previous_content_hash"] = prior.BundleContentHash
+	}
+
+	return evidence.Event{
 		SchemaVersion: evidence.SchemaVersion,
-		EventID:       fmt.Sprintf("%s_%s_%d", current.BundleID, name, at.UnixNano()),
+		EventID:       fmt.Sprintf("%s_%s", b.TenantID, a.Nonce),
 		EventName:     name,
-		TenantID:      current.TenantID,
-		AggregateID:   current.BundleID,
-		CorrelationID: current.BundleID,
+		TenantID:      b.TenantID,
+		AggregateID:   b.BundleID,
+		CorrelationID: b.BundleID,
 		OccurredAt:    at,
 		ProducedAt:    at,
 		Producer:      "assurance-gateway",
 		Sequence:      nextSequence(),
 		Payload:       payload,
-	})
+	}
+}
+
+func (f *FileBundles) currentTransition(ctx context.Context, tenantID string) (*policy.Transition, error) {
+	if f.Activations == nil {
+		return nil, policy.ErrNoTransition
+	}
+	return f.Activations.Current(ctx, tenantID)
+}
+
+func (f *FileBundles) remember(tenantID string, bundle *policy.Bundle, stamp string) {
+	f.mu.Lock()
+	f.cached[tenantID] = bundle
+	f.stamps[tenantID] = stamp
+	f.mu.Unlock()
+}
+
+func (f *FileBundles) now() time.Time {
+	if f.Now != nil {
+		return f.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // keepOnFailedReload keeps the bundle that is already enforcing when a candidate does
@@ -402,6 +511,9 @@ func (f *FileBundles) recordActivation(ctx context.Context, previous, current *p
 func (f *FileBundles) keepOnFailedReload(tenantID string, isCached bool,
 	cached *policy.Bundle, err error) (*policy.Bundle, error) {
 
+	if f.Report != nil {
+		f.Report(tenantID, err)
+	}
 	if !isCached {
 		return nil, err
 	}
@@ -413,12 +525,18 @@ func (f *FileBundles) keepOnFailedReload(tenantID string, isCached bool,
 // Not a hash. Hashing every bundle on every submission would put a file read on the hot
 // path to detect a change that happens a few times a year, and a changed file is
 // verified in full before it is trusted — the stamp only decides whether to look.
-func bundleStamp(path string) (string, error) {
+// bundleStamp is the file's size and modification time, or "absent".
+//
+// A missing file gets a stamp of its own rather than an error, because "the
+// authorization file is not there" is a state the caller has to notice changing: a
+// bundle staged before its authorization must be reconsidered once the authorization
+// appears.
+func bundleStamp(path string) string {
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", err
+		return "absent"
 	}
-	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano()), nil
+	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
 }
 
 // StaticSymbols maps canonical instrument identity to venue symbols.

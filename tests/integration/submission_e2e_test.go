@@ -88,6 +88,9 @@ func (r *e2eRig) replica(t *testing.T) *e2eRig {
 	if err != nil {
 		t.Fatalf("replica bundles: %v", err)
 	}
+	// The replica reads the same accepted transitions from the same database, which is
+	// what makes two processes agree about which policy is in force.
+	bundles.Activations = policy.NewActivationStore(pool)
 	symbols, err := gateway.LoadSymbols(r.symbolPath)
 	if err != nil {
 		t.Fatalf("replica symbols: %v", err)
@@ -161,13 +164,17 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		t.Fatalf("save grant: %v", err)
 	}
 
-	// A signed, ACTIVE bundle on disk, verified by the provider rather than trusted.
+	// A signed, ACTIVE bundle on disk plus the customer's signed authorization to
+	// activate it. Verified by the provider rather than trusted, and the bundle alone
+	// is not enough: promotion is a separate act with its own signature.
 	dir := t.TempDir()
-	pub := writeSignedBundle(t, dir, tenant, now)
+	activations := newReloadAuthority(t, tenant)
+	pub := writeSignedBundle(t, dir, tenant, now, activations)
 	bundles, err := gateway.NewFileBundles(dir, hex.EncodeToString(pub))
 	if err != nil {
 		t.Fatalf("bundles: %v", err)
 	}
+	bundles.Activations = activations.store
 
 	// Instrument reference data through the real loader, not a map literal.
 	symbolPath := filepath.Join(dir, "instruments.json")
@@ -234,7 +241,8 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		now:        func() time.Time { return now }}
 }
 
-func writeSignedBundle(t *testing.T, dir, tenant string, now time.Time) ed25519.PublicKey {
+func writeSignedBundle(t *testing.T, dir, tenant string, now time.Time,
+	authority *reloadAuthority) ed25519.PublicKey {
 	t.Helper()
 	src, err := policy.ParseSource([]byte(`
 version: 1
@@ -270,6 +278,24 @@ rules:
 	raw, _ := json.Marshal(bundle)
 	if err := os.WriteFile(filepath.Join(dir, tenant+".json"), raw, 0o600); err != nil {
 		t.Fatalf("write bundle: %v", err)
+	}
+
+	authorization := policy.Authorization{
+		SchemaVersion:     policy.AuthorizationSchemaVersion,
+		TenantID:          tenant,
+		BundleID:          bundle.BundleID,
+		BundleContentHash: bundle.ContentHash,
+		Action:            policy.ActionActivate,
+		Actor:             "e2e-setup",
+		AuthorizedAt:      now,
+		Nonce:             fmt.Sprintf("e2e_%s_%d", tenant, time.Now().UnixNano()),
+	}
+	if err := authorization.Sign(authority.priv, authority.keyID); err != nil {
+		t.Fatalf("sign authorization: %v", err)
+	}
+	authRaw, _ := json.Marshal(authorization)
+	if err := os.WriteFile(filepath.Join(dir, tenant+".activation.json"), authRaw, 0o600); err != nil {
+		t.Fatalf("write authorization: %v", err)
 	}
 	return pub
 }
