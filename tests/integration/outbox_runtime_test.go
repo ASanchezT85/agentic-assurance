@@ -53,6 +53,10 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 
 	store := evidence.NewStore(pool)
 
+	// The publisher half runs on the publisher role. The application role can no longer
+	// read another tenant's queue (migration 0025), and draining is exactly that read.
+	drainer := evidence.NewStore(outboxPool(t))
+
 	// Committed the way the pipeline commits: a batch, in one transaction, which is
 	// also where the outbox row is written.
 	event := evidence.Event{
@@ -73,7 +77,7 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 
 	// The row exists because the decision committed, not because a publisher was
 	// running: that is what makes publication safe rather than best effort.
-	entries, err := store.Unpublished(ctx, 100)
+	entries, err := drainer.Unpublished(ctx, 100)
 	if err != nil {
 		t.Fatalf("unpublished: %v", err)
 	}
@@ -93,7 +97,7 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 	}
 
 	publisher := &evidence.OutboxPublisher{
-		Store:     store,
+		Store:     drainer,
 		Publisher: evidence.NewPublisher(js),
 		Batch:     100,
 		Report: func(published, failed int, err error) {
@@ -105,7 +109,7 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 	}
 
 	// Marked, so a restart does not republish everything.
-	after, err := store.Unpublished(ctx, 100)
+	after, err := drainer.Unpublished(ctx, 100)
 	if err != nil {
 		t.Fatalf("unpublished after drain: %v", err)
 	}

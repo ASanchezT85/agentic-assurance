@@ -404,6 +404,7 @@ answering anyway:
 | Variable | Without it |
 |----------|-----------|
 | `POSTGRES_APP_DSN` | Idempotency and consumed usage have nowhere authoritative to live. |
+| `POSTGRES_OUTBOX_DSN` | Committed evidence stays in the outbox: nothing publishes it to the event stream, and the analytical plane goes quiet while the hot path keeps deciding. Must be the `assurance_outbox` role — on the application role RLS returns an empty queue, which reads exactly like a drained one. |
 | `GATEWAY_API_CREDENTIALS` | Nothing authenticates a caller. `identity@tenant=token,identity@tenant=token`; a credential without a tenant and tokens under 32 characters are refused at startup (ADR-025). |
 | `POLICY_PUBLIC_KEY` | A policy bundle cannot be verified, and an unverified bundle is not policy. Hex-encoded ed25519 public key. |
 | `POLICY_BUNDLE_DIR` | Where signed bundles live, one JSON file per tenant. Default `/etc/assurance/policy`. |
@@ -441,6 +442,7 @@ enforcing half a rolling limit enforce no rolling limit at all.
 ```
 make up && make migrate
 export POSTGRES_APP_DSN=postgres://assurance_app:assurance_app_dev_only@localhost:5432/assurance?sslmode=disable
+export POSTGRES_OUTBOX_DSN=postgres://assurance_outbox:assurance_outbox_dev_only@localhost:5432/assurance?sslmode=disable
 export GATEWAY_API_CREDENTIALS='svc_local=<a token of at least 32 characters>'
 export POLICY_PUBLIC_KEY=<hex ed25519 public key>
 export POLICY_BUNDLE_DIR=./local/policy INSTRUMENT_SYMBOLS=./local/instruments.json

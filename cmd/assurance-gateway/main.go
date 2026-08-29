@@ -276,6 +276,26 @@ func openPool(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
 	return pool
 }
 
+// openOutboxPool connects as the publisher role, or returns nil and says why.
+func openOutboxPool(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
+	dsn := os.Getenv("POSTGRES_OUTBOX_DSN")
+	if dsn == "" {
+		if os.Getenv("POSTGRES_APP_DSN") != "" {
+			log.Warn("no POSTGRES_OUTBOX_DSN; the evidence outbox is not published",
+				"consequence", "committed evidence stays in the outbox and the event "+
+					"stream is empty",
+				"fix", "set POSTGRES_OUTBOX_DSN for the assurance_outbox role")
+		}
+		return nil
+	}
+	pool, err := pg.Open(ctx, dsn)
+	if err != nil {
+		log.Error("outbox database unavailable", "err", err)
+		return nil
+	}
+	return pool
+}
+
 func openCredentials(log *slog.Logger) *identity.Credentials {
 	creds, err := identity.ParseCredentials(os.Getenv("GATEWAY_API_CREDENTIALS"))
 	if err != nil {
@@ -520,7 +540,14 @@ func main() {
 	// Off the critical path by construction: the publisher drains what is already
 	// committed. A bus that is down delays the analytical plane and decides nothing
 	// (INV-005).
-	if pool := openPool(ctx, log); pool != nil {
+	// The publisher connects as its own role.
+	//
+	// It reads across tenants, which is its job and nothing else's: granting that to
+	// assurance_app would hand the exemption to every request handler that connects as
+	// the same role (migration 0025). No POSTGRES_OUTBOX_DSN means no publisher — the
+	// alternative is starting one on the application role, where RLS returns an empty
+	// queue and a drained outbox is indistinguishable from a stalled one.
+	if pool := openOutboxPool(ctx, log); pool != nil {
 		if url := os.Getenv("NATS_URL"); url != "" {
 			if conn, err := nats.Connect(url); err != nil {
 				log.Warn("no event backbone", "err", err,
