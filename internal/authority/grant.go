@@ -42,15 +42,6 @@ type Limits struct {
 	MaxOpenOrders     int          `json:"max_open_orders"`
 }
 
-// Capabilities are permissions V0 records but does not yet enforce, because
-// enforcing them needs position data the platform does not have until Phase 5.
-// They are carried rather than dropped so the grant round-trips faithfully, and
-// EnforcedCapabilities documents exactly which ones are live.
-type Capabilities struct {
-	MarginAllowed   bool `json:"margin_allowed"`
-	ShortingAllowed bool `json:"shorting_allowed"`
-}
-
 // Grant is the authority record (spec section 14.2).
 type Grant struct {
 	GrantID     string `json:"grant_id"`
@@ -71,8 +62,7 @@ type Grant struct {
 	AllowedInstruments []string `json:"allowed_instruments"`
 	DeniedInstruments  []string `json:"denied_instruments"`
 
-	Limits       Limits       `json:"limits"`
-	Capabilities Capabilities `json:"capabilities"`
+	Limits Limits `json:"limits"`
 
 	Status    Status     `json:"status"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
@@ -81,9 +71,17 @@ type Grant struct {
 	RevocationReason string `json:"revocation_reason,omitempty"`
 }
 
-// EnforcedCapabilities lists what is actually checked today. It exists so the gap
-// between "recorded" and "enforced" is a fact in the code rather than folklore.
-func EnforcedCapabilities() []string { return nil }
+// V0 has no capability switches.
+//
+// margin_allowed and shorting_allowed used to live on this record. Neither was ever
+// checked: detecting margin use or a short needs position data the platform does not
+// hold, so a grant could carry shorting_allowed=false and the platform would authorize
+// a short. A permission that does not deny anything is worse than an absent one,
+// because a customer reads it as a control and sizes their risk against it.
+//
+// They are out of the executable contract until there is a position model behind them
+// (ADR-026). What V0 enforces is what this file contains: windows, operations, asset
+// classes, instruments and the ceilings in Limits.
 
 // Revoke marks a grant revoked. Revocation is not deletion: the record stays, so
 // decisions taken under it remain explainable (ADR-009).

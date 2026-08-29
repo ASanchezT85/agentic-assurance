@@ -3,6 +3,8 @@ package security
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -218,26 +220,25 @@ func TestAuthorityIsAnAllowList(t *testing.T) {
 	})
 }
 
-// Capabilities are recorded but not enforced in V0, and the code says so out loud
-// rather than leaving a field that looks enforced and is not.
-func TestUnenforcedCapabilitiesAreDeclaredAsSuch(t *testing.T) {
-	if got := authority.EnforcedCapabilities(); len(got) != 0 {
-		t.Fatalf("EnforcedCapabilities returned %v; if a capability is now enforced, "+
-			"this test and the grant documentation both need updating", got)
-	}
-
-	g := grantFor("tenant_acme")
-	g.Capabilities = authority.Capabilities{MarginAllowed: false, ShortingAllowed: false}
-
-	// A SELL under a grant that forbids shorting is still allowed today, because
-	// detecting a short needs position data the platform does not have until
-	// Phase 5. The test asserts the honest current behavior so that turning it on
-	// is a deliberate change with a failing test to guide it.
-	g.AllowedOperations = []intent.Side{intent.SideBuy, intent.SideSell}
-	env := envelopeFor("tenant_acme")
-	env.Intent.Side = intent.SideSell
-
-	if got := authority.Evaluate(context.Background(), env, g, usageOf{}, evalAt); !got.Allowed {
-		t.Fatalf("unexpected denial %s; capability enforcement was not supposed to be live yet", got.Code)
+// Authority has no switch that switches nothing.
+//
+// margin_allowed and shorting_allowed were recorded on every grant and read by nothing:
+// a grant could carry shorting_allowed=false while the platform authorized a short,
+// because deciding whether a SELL is a short needs position data V0 does not hold. A
+// customer reads a permission as a control and sizes their risk against it, so an
+// unenforced one is worse than an absent one.
+//
+// They are out of the contract (ADR-026). This asserts they have not come back as a
+// field the grant carries and evaluation ignores.
+func TestAuthorityCarriesNoUnenforcedPermission(t *testing.T) {
+	fields := reflect.VisibleFields(reflect.TypeOf(authority.Grant{}))
+	for _, f := range fields {
+		tag := f.Tag.Get("json")
+		for _, banned := range []string{"margin_allowed", "shorting_allowed", "capabilities"} {
+			if strings.HasPrefix(tag, banned) {
+				t.Errorf("Grant carries %s again; a permission belongs on the grant only "+
+					"once evaluation denies something because of it (ADR-026)", tag)
+			}
+		}
 	}
 }

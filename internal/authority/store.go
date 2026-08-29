@@ -61,7 +61,6 @@ const grantColumns = `grant_id, tenant_id, principal_id, account_id, agent_id,
 	issued_at, valid_from, valid_until,
 	allowed_operations, allowed_asset_classes, allowed_instruments, denied_instruments,
 	per_order_notional, rolling_1h_notional, daily_notional, max_open_orders,
-	margin_allowed, shorting_allowed,
 	status, revoked_at, revocation_reason`
 
 // Load fetches one grant within a tenant.
@@ -100,8 +99,6 @@ func (s *Store) Save(ctx context.Context, g *Grant) error {
 				rolling_1h_notional = EXCLUDED.rolling_1h_notional,
 				daily_notional = EXCLUDED.daily_notional,
 				max_open_orders = EXCLUDED.max_open_orders,
-				margin_allowed = EXCLUDED.margin_allowed,
-				shorting_allowed = EXCLUDED.shorting_allowed,
 				status = EXCLUDED.status,
 				revoked_at = EXCLUDED.revoked_at,
 				revocation_reason = EXCLUDED.revocation_reason`,
@@ -111,7 +108,6 @@ func (s *Store) Save(ctx context.Context, g *Grant) error {
 			emptyIfNil(g.AllowedInstruments), emptyIfNil(g.DeniedInstruments),
 			g.Limits.PerOrderNotional, g.Limits.Rolling1hNotional,
 			g.Limits.DailyNotional, g.Limits.MaxOpenOrders,
-			g.Capabilities.MarginAllowed, g.Capabilities.ShortingAllowed,
 			string(g.Status), g.RevokedAt, nullIfEmpty(g.RevocationReason))
 		return err
 	})
@@ -156,7 +152,6 @@ func scanGrant(row pgx.Row) (*Grant, error) {
 		&ops, &classes, &g.AllowedInstruments, &g.DeniedInstruments,
 		&g.Limits.PerOrderNotional, &g.Limits.Rolling1hNotional,
 		&g.Limits.DailyNotional, &g.Limits.MaxOpenOrders,
-		&g.Capabilities.MarginAllowed, &g.Capabilities.ShortingAllowed,
 		&status, &revokedAt, &revReason,
 	)
 	if err != nil {

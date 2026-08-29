@@ -859,14 +859,17 @@ Natural-language prompts MUST NOT serve as enforceable authority.
     "max_open_orders": 10
   },
 
-  "capabilities": {
-    "margin_allowed": false,
-    "shorting_allowed": false
-  },
-
   "status": "ACTIVE"
 }
 ```
+
+> **V0 divergence (ADR-026).** This record used to carry
+> `capabilities.margin_allowed` and `capabilities.shorting_allowed`. Neither was ever
+> enforced — deciding whether a SELL is a short needs position data the platform does
+> not hold — so a grant could state `shorting_allowed: false` while the platform
+> authorized the short. `POST /v1/authority-grants` now refuses a request carrying
+> either field rather than accepting a control it does not apply. They return, with
+> enforcement written first, when there is a position model behind them.
 
 ## 14.3 Mandatory decisions
 

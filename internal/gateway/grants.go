@@ -62,8 +62,15 @@ type grantRequest struct {
 	DailyNotional     money.Amount `json:"daily_notional"`
 	MaxOpenOrders     int          `json:"max_open_orders"`
 
-	MarginAllowed   bool `json:"margin_allowed"`
-	ShortingAllowed bool `json:"shorting_allowed"`
+	// Refused rather than accepted or ignored.
+	//
+	// Both were recorded and never checked, so a grant could say shorting_allowed=false
+	// while the platform authorized a short. Silently dropping them now would leave the
+	// same customer with the same false belief and no way to find out; a client that
+	// sends one is relying on a control that does not exist and has to hear so
+	// (ADR-026). Pointers, so "absent" and "false" are different requests.
+	MarginAllowed   *bool `json:"margin_allowed"`
+	ShortingAllowed *bool `json:"shorting_allowed"`
 }
 
 // validate refuses a grant that would not constrain anything.
@@ -105,6 +112,16 @@ func (g grantRequest) validate() []string {
 		problems = append(problems, "per_order_notional must be positive; a grant "+
 			"with no per-order ceiling is an absent ceiling rather than a generous one")
 	}
+	if g.MarginAllowed != nil {
+		problems = append(problems, "margin_allowed is not part of V0 authority: it was "+
+			"never enforced, so accepting it would return a control the platform does "+
+			"not apply (ADR-026)")
+	}
+	if g.ShortingAllowed != nil {
+		problems = append(problems, "shorting_allowed is not part of V0 authority: "+
+			"detecting a short needs position data the platform does not hold, so a "+
+			"grant carrying it would authorize the short anyway (ADR-026)")
+	}
 	return problems
 }
 
@@ -141,10 +158,6 @@ func (g grantRequest) toGrant(tenantID string, at time.Time) *authority.Grant {
 			Rolling1hNotional: g.Rolling1hNotional,
 			DailyNotional:     g.DailyNotional,
 			MaxOpenOrders:     g.MaxOpenOrders,
-		},
-		Capabilities: authority.Capabilities{
-			MarginAllowed:   g.MarginAllowed,
-			ShortingAllowed: g.ShortingAllowed,
 		},
 		Status: authority.StatusActive,
 	}

@@ -1,0 +1,1 @@
+ALTER TABLE authority_grants DROP CONSTRAINT IF EXISTS authority_grants_no_capabilities;
