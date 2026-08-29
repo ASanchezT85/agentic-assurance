@@ -41,6 +41,7 @@
         "broker.order.filled.v1",
         "broker.order.cancelled.v1",
         "broker.order.reconciled.v1",
+        "broker.order.expired.v1",
         "fleet.metric.updated.v1",
         "fleet.cohort.created.v1",
         "fleet.anomaly.detected.v1",

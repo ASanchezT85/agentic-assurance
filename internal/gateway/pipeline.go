@@ -689,9 +689,10 @@ func (p *Pipeline) settle(ctx context.Context, env *intent.AgentExecutionEnvelop
 		state = authority.StateReleased
 	}
 
-	terminal := outcome.State == broker.StateFilled ||
-		outcome.State == broker.StateRejected ||
-		outcome.State == broker.StateCancelled
+	// The canonical definition, not a second list of it. This was three states
+	// enumerated by hand, so an expired order stayed open forever in the usage ledger
+	// and could permanently consume max_open_orders.
+	terminal := outcome.State.Terminal()
 
 	if err := p.Reserve.Settle(ctx, env.TenantID, env.IdempotencyKey, state, !terminal, at); err != nil {
 		// The capacity stays reserved, which errs toward refusing later orders rather
@@ -703,6 +704,12 @@ func (p *Pipeline) settle(ctx context.Context, env *intent.AgentExecutionEnvelop
 	}
 }
 
+// outcomeEvent names what the venue did.
+//
+// Every state is listed. The default branch used to answer "accepted", so a state
+// nobody had enumerated — EXPIRED — was recorded as an order the venue took, which is
+// evidence that is wrong rather than evidence that is missing. A new broker state now
+// fails TestEveryExecutionStateIsMapped until somebody decides what it means.
 func outcomeEvent(state broker.ExecutionState) evidence.EventName {
 	switch state {
 	case broker.StateFilled:
@@ -711,10 +718,16 @@ func outcomeEvent(state broker.ExecutionState) evidence.EventName {
 		return evidence.OrderRejected
 	case broker.StateCancelled:
 		return evidence.OrderCancelled
+	case broker.StateExpired:
+		return evidence.OrderExpired
 	case broker.StateUnknown:
 		return evidence.OrderUnknown
-	default:
+	case broker.StateAccepted, broker.StatePartiallyFilled:
 		return evidence.OrderAccepted
+	default:
+		// Not reachable while the guard passes, and deliberately not "accepted": an
+		// unmapped state is unknown, which is a state an operator resolves.
+		return evidence.OrderUnknown
 	}
 }
 

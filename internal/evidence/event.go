@@ -44,6 +44,12 @@ const (
 	OrderCancelled  EventName = "broker.order.cancelled.v1"
 	OrderReconciled EventName = "broker.order.reconciled.v1"
 
+	// OrderExpired is not in the section 32 catalog. It is added because an expired
+	// order was reported as accepted: the event mapping ended in a default branch, so
+	// every state nobody had enumerated became "accepted". Evidence that says an
+	// expired order was accepted is evidence that is wrong.
+	OrderExpired EventName = "broker.order.expired.v1"
+
 	FleetMetricUpdated   EventName = "fleet.metric.updated.v1"
 	FleetCohortCreated   EventName = "fleet.cohort.created.v1"
 	FleetAnomalyDetected EventName = "fleet.anomaly.detected.v1"
@@ -97,6 +103,7 @@ var catalog = map[EventName]bool{
 	PolicyEvaluated: true, IntentParentLinked: true,
 	OrderSubmitted: true, OrderUnknown: true, OrderAccepted: true, OrderRejected: true,
 	OrderFilled: true, OrderCancelled: true, OrderReconciled: true,
+	OrderExpired:       true,
 	FleetMetricUpdated: true, FleetCohortCreated: true, FleetAnomalyDetected: true,
 	IncidentCreated: true, IncidentUpdated: true, IncidentEscalated: true, IncidentClosed: true,
 	ControlRecommended: true, ControlApplied: true, ControlRevoked: true,

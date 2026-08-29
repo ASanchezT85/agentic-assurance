@@ -16,10 +16,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"agentic-assurance/internal/evidence"
+	"agentic-assurance/internal/intent"
 )
 
 // Class is what a policy is written against.
@@ -129,27 +131,118 @@ type Manifest struct {
 	VerifiedBy string
 }
 
-// ChainHash folds one event into a hash chain.
+// ContentHash is the hash of one whole immutable event.
 //
-// Over the fields that make an event what it is rather than over its stored bytes: a
-// re-export must produce the same chain, and a JSON encoder that reorders keys between
-// versions would otherwise look like tampering.
-func ChainHash(previous string, e evidence.Event) string {
+// Over every field that makes the record what it is, and over the payload above all.
+// The first version hashed only the identity fields — event id, name, tenant,
+// aggregate, correlation, causation, sequence, timestamp — which meant an archived
+// authority decision could be edited from
+//
+//	{"allowed": true}  ->  {"allowed": false}
+//
+// and the chain still verified. An audit found it by reading what the hash covered
+// rather than by trusting the test, which tampered with an identity field and therefore
+// proved only that identity tampering is caught.
+//
+// The payload is canonicalized with the same algorithm that signs an envelope: keys
+// sorted, minified, number literals verbatim. Key order must not look like tampering,
+// and a float that re-encodes differently between library versions must not either.
+func ContentHash(e evidence.Event) (string, error) {
+	payload, err := canonicalPayload(e.Payload)
+	if err != nil {
+		return "", err
+	}
+
 	sum := sha256.New()
-	fmt.Fprintf(sum, "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%d\n%s\n",
-		previous, e.EventID, string(e.EventName), e.TenantID, e.AggregateID,
-		e.CorrelationID, e.CausationID, e.Sequence,
-		e.OccurredAt.UTC().Format(time.RFC3339Nano))
-	return hex.EncodeToString(sum.Sum(nil))
+	// Length-prefixed. Without it, two different events could produce the same byte
+	// stream by moving a delimiter into a field — "a|b" and "a" + "|b" hash alike.
+	for _, field := range []string{
+		e.SchemaVersion,
+		e.EventID,
+		string(e.EventName),
+		e.TenantID,
+		e.AggregateID,
+		e.CorrelationID,
+		e.CausationID,
+		e.Producer,
+		e.CorrectsEventID,
+		e.OccurredAt.UTC().Format(time.RFC3339Nano),
+		e.ProducedAt.UTC().Format(time.RFC3339Nano),
+		fmt.Sprintf("%d", e.Sequence),
+		string(payload),
+	} {
+		fmt.Fprintf(sum, "%d:%s", len(field), field)
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
+}
+
+// canonicalPayload serialises a payload deterministically.
+//
+// Through the envelope's canonical form, because the property needed here is the same
+// one signing needs: the same content must produce the same bytes, and a reordered map
+// must not look like an edit.
+func canonicalPayload(payload map[string]any) ([]byte, error) {
+	if len(payload) == 0 {
+		return []byte("{}"), nil
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("payload is not serialisable: %w", err)
+	}
+	return intent.Canonical(raw)
+}
+
+// ChainHash folds one event's content hash into the chain.
+//
+//	chain = SHA-256(previous_chain || content_hash)
+//
+// Two hashes rather than one so an archive can carry each event's content hash beside
+// it: a reader with one event and its hash can check that event without replaying the
+// whole month, and the chain still proves that nothing was inserted, removed or
+// reordered around it.
+func ChainHash(previous string, e evidence.Event) (string, error) {
+	content, err := ContentHash(e)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.New()
+	fmt.Fprintf(sum, "%d:%s%d:%s", len(previous), previous, len(content), content)
+	return hex.EncodeToString(sum.Sum(nil)), nil
 }
 
 // ChainOver computes the head hash for a sequence of events.
-func ChainOver(events []evidence.Event) string {
+func ChainOver(events []evidence.Event) (string, error) {
 	head := ""
 	for _, e := range events {
-		head = ChainHash(head, e)
+		next, err := ChainHash(head, e)
+		if err != nil {
+			return "", err
+		}
+		head = next
 	}
-	return head
+	return head, nil
+}
+
+// Verify recomputes a chain and reports where it stopped matching.
+//
+// The index matters: "this archive was edited" is a fact, and "the third event of
+// 40,000 was edited" is an investigation. An archive that verifies is one nobody
+// rewrote; one that does not says where it stopped being true.
+func Verify(events []evidence.Event, expectedHead string) (int, error) {
+	head := ""
+	for i, e := range events {
+		next, err := ChainHash(head, e)
+		if err != nil {
+			return i, err
+		}
+		head = next
+	}
+	if head != expectedHead {
+		return len(events), fmt.Errorf(
+			"the archive does not match its manifest: recomputed %s, manifest says %s",
+			head, expectedHead)
+	}
+	return -1, nil
 }
 
 // Plan is what a retention pass would do, and why.
