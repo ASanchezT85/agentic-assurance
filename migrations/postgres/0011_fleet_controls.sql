@@ -24,8 +24,9 @@ CREATE TABLE IF NOT EXISTS fleet_controls (
     -- The scope, concrete and local. Cohort membership is computed by the
     -- intelligence plane from a rolling window, and an enforcement check that had to
     -- ask the fleet engine who is in a cohort would fail closed every time the
-    -- analytical plane blinked (INV-005). The cohort is resolved to agents and
-    -- accounts at authorization time; NULL means every agent or account in the tenant.
+    -- analytical plane blinked (INV-005). NULL means every agent or account in the
+    -- tenant. See 0014: the members are named by the operator, not expanded from the
+    -- cohort predicate, and this comment used to claim otherwise.
     agent_id         text,
     account_id       text,
     cohort_id        text        NOT NULL,

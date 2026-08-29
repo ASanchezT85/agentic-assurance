@@ -57,13 +57,14 @@ func (s *Store) Save(ctx context.Context, c Control) error {
 			INSERT INTO fleet_controls (
 				tenant_id, control_id, incident_id, action, agent_id, account_id,
 				cohort_id, authorized_by, policy_bundle_id, reason,
-				applied_at, expires_at, max_orders, window_seconds)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+				applied_at, expires_at, max_orders, window_seconds, agent_ids)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			ON CONFLICT (tenant_id, control_id) DO NOTHING`,
 			c.TenantID, c.ControlID, c.IncidentID, string(c.Action),
 			nullable(c.AgentID), nullable(c.AccountID), c.CohortID,
 			c.AuthorizedBy, c.PolicyBundleID, c.Reason, c.AppliedAt, c.ExpiresAt,
-			nullableInt(c.MaxOrders), nullableInt(int(c.Window.Seconds())))
+			nullableInt(c.MaxOrders), nullableInt(int(c.Window.Seconds())),
+			nullableList(c.AgentIDs))
 		if err != nil {
 			return err
 		}
@@ -86,7 +87,8 @@ func (s *Store) InForce(ctx context.Context, tenantID string, at time.Time) ([]C
 			SELECT control_id, tenant_id, incident_id, action,
 			       COALESCE(agent_id, ''), COALESCE(account_id, ''), cohort_id,
 			       authorized_by, policy_bundle_id, reason, applied_at, expires_at,
-			       COALESCE(max_orders, 0), COALESCE(window_seconds, 0)
+			       COALESCE(max_orders, 0), COALESCE(window_seconds, 0),
+			       COALESCE(agent_ids, ARRAY[]::text[])
 			FROM fleet_controls
 			WHERE revoked_at IS NULL AND expires_at > $1
 			ORDER BY applied_at`, at.UTC())
@@ -102,7 +104,7 @@ func (s *Store) InForce(ctx context.Context, tenantID string, at time.Time) ([]C
 			if err := rows.Scan(&c.ControlID, &c.TenantID, &c.IncidentID, &action,
 				&c.AgentID, &c.AccountID, &c.CohortID, &c.AuthorizedBy,
 				&c.PolicyBundleID, &c.Reason, &c.AppliedAt, &c.ExpiresAt,
-				&c.MaxOrders, &windowSeconds); err != nil {
+				&c.MaxOrders, &windowSeconds, &c.AgentIDs); err != nil {
 				return err
 			}
 			c.Action = fleet.ControlAction(action)
@@ -170,7 +172,8 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]Control, error) {
 			       COALESCE(agent_id, ''), COALESCE(account_id, ''), cohort_id,
 			       authorized_by, policy_bundle_id, reason, applied_at, expires_at,
 			       revoked_at, COALESCE(revoked_by, ''),
-			       COALESCE(max_orders, 0), COALESCE(window_seconds, 0)
+			       COALESCE(max_orders, 0), COALESCE(window_seconds, 0),
+			       COALESCE(agent_ids, ARRAY[]::text[])
 			FROM fleet_controls
 			ORDER BY applied_at DESC`)
 		if err != nil {
@@ -185,7 +188,8 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]Control, error) {
 			if err := rows.Scan(&c.ControlID, &c.TenantID, &c.IncidentID, &action,
 				&c.AgentID, &c.AccountID, &c.CohortID, &c.AuthorizedBy,
 				&c.PolicyBundleID, &c.Reason, &c.AppliedAt, &c.ExpiresAt,
-				&c.RevokedAt, &c.RevokedBy, &c.MaxOrders, &windowSeconds); err != nil {
+				&c.RevokedAt, &c.RevokedBy, &c.MaxOrders, &windowSeconds,
+				&c.AgentIDs); err != nil {
 				return err
 			}
 			c.Action = fleet.ControlAction(action)
@@ -195,6 +199,13 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]Control, error) {
 		return rows.Err()
 	})
 	return out, err
+}
+
+func nullableList(v []string) any {
+	if len(v) == 0 {
+		return nil
+	}
+	return v
 }
 
 func nullableInt(n int) any {
@@ -257,6 +268,24 @@ func (s *Store) Consume(ctx context.Context, tenantID string, c Control,
 			VALUES ($1,$2,$3,$4)
 			ON CONFLICT DO NOTHING`,
 			tenantID, c.ControlID, idempotencyKey, at.UTC()); execErr != nil {
+			return execErr
+		}
+
+		// And forget what the window has already left behind.
+		//
+		// One row per order a throttle allows, kept forever, is a table that grows with
+		// traffic and is only ever read for the last few minutes of it. A throttle on a
+		// busy tenant would leave millions of rows nobody queries, and the count that
+		// enforces the limit would get slower as the control aged.
+		//
+		// Here rather than in a scheduled job: the lock is already held, the rows are
+		// this control's, and a retention job is one more thing that can silently stop
+		// running. Two windows back rather than one, so a clock that steps backwards
+		// slightly does not delete a slot still being counted.
+		if _, execErr := tx.Exec(ctx, `
+			DELETE FROM fleet_control_usage
+			WHERE control_id = $1 AND submitted_at < $2`,
+			c.ControlID, at.Add(-2*c.Window).UTC()); execErr != nil {
 			return execErr
 		}
 		allowed = true

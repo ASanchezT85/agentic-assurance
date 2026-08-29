@@ -285,6 +285,25 @@ func build(root string, routes []string) (map[string]any, error) {
 		return nil, err
 	}
 
+	// A description for a route nobody serves any more.
+	//
+	// The generator already refuses an undescribed route. The reverse is quieter and
+	// just as wrong: an entry left behind after an endpoint is deleted keeps appearing
+	// in the document, and a customer builds against a path that answers 404. Checked
+	// here rather than left for a reader to notice, because nobody rereads a map of
+	// nineteen entries.
+	served := map[string]bool{}
+	for _, r := range routes {
+		served[r] = true
+	}
+	for r := range described {
+		if !served[r] {
+			return nil, fmt.Errorf("%s is described in cmd/openapi-gen and no binary "+
+				"registers it; delete the entry rather than publishing a path that "+
+				"answers 404", r)
+		}
+	}
+
 	paths := map[string]any{}
 	for _, r := range routes {
 		method, path, _ := strings.Cut(r, " ")

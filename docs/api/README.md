@@ -163,10 +163,20 @@ recommendation would let an operator apply a control nothing suggested and leave
 record saying the platform proposed it. An incident with no `control.recommended.v1`
 is `404`.
 
-`scope` is stated: `tenant`, `agent` or `account`. An omitted scope would read as the
-whole tenant, which is the widest control there is and never something to arrive at by
-leaving two fields blank. `expires_at` is required — a control nobody has to renew is
-one that throttles an agent forever because of an incident last spring.
+`scope` is stated: `tenant`, `agent`, `agents` (with `agent_ids`) or `account`, and one
+kind only — a control naming an agent and an account at once reads as "both" or
+"either" depending on the reader, and those differ by an outage. An omitted scope would
+read as the whole tenant, which is the widest control there is and never something to
+arrive at by leaving fields blank. `expires_at` is required: a control nobody has to
+renew is one that throttles an agent forever because of an incident last spring.
+
+**The platform does not expand a cohort into its members.** Four comments and this file
+used to say the scope was "resolved to concrete agents and accounts at authorization
+time"; nothing resolved anything, and ISOLATE_COHORT was an action whose name was a
+lie — the choices were one agent or the whole customer. `agent_ids` is why the scope
+exists at all now. The expansion stays manual on purpose: who is in a cohort is
+measured over a rolling window, and an enforcement scope that changed as measurements
+arrived would be a control nobody authorized.
 
 Authorizing requires the same privilege as issuing authority (`GATEWAY_GRANT_ISSUERS`).
 A credential that could both submit orders and authorize the controls over them is an
@@ -198,10 +208,9 @@ incident, that is the direction to err in. Revoking a throttle forgets its windo
 released scope does not carry a spent minute into the next incident.
 
 Enforcement is a stage of the submission pipeline, between authority and policy, and it
-reads PostgreSQL rather than the fleet engine: cohort membership is computed by the
-intelligence plane from a rolling window, and an enforcement check that had to ask for
-it would fail closed every time the analytical plane blinked (INV-005). The cohort is
-resolved to concrete agents and accounts at authorization time.
+reads PostgreSQL rather than the fleet engine: an enforcement check that had to ask the
+intelligence plane who is in a cohort would fail closed every time the analytical plane
+blinked (INV-005).
 
 A refused order is `403` with stage `CONTROL` and a code naming the action:
 `CONTROL_READ_ONLY`, `CONTROL_COHORT_ISOLATED`, `CONTROL_APPROVAL_REQUIRED` or

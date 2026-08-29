@@ -264,3 +264,52 @@ func TestThrottleCountersAreTenantScoped(t *testing.T) {
 		t.Errorf("another tenant saw this window: allowed=%v used=%d", allowed, used)
 	}
 }
+
+// The counter does not grow forever.
+//
+// One row per order a throttle allows, kept for good, is a table that grows with
+// traffic and is only ever read for the last few minutes of it: a throttle on a busy
+// tenant would leave millions of rows nobody queries and make its own count slower as
+// it aged. Consuming prunes what is two windows old.
+func TestAThrottleForgetsWhatFellOutOfItsWindow(t *testing.T) {
+	pool := idemPool(t)
+	store := control.NewStore(pool)
+	ctx := context.Background()
+	at := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_prune_%d", at.UnixNano())
+	id := fmt.Sprintf("ctl_prune_%d", at.UnixNano())
+
+	c := throttleFixture(tenant, id, at, 5)
+	if err := store.Save(ctx, c); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Two orders long ago, one now.
+	for i, when := range []time.Time{at.Add(-2 * time.Hour), at.Add(-time.Hour), at} {
+		if _, _, err := store.Consume(ctx, tenant, c, fmt.Sprintf("key_%d", i), when); err != nil {
+			t.Fatalf("consume %d: %v", i, err)
+		}
+	}
+
+	// Counted inside a transaction that sets the tenant. Row level security answers
+	// zero rows to a connection that never named one, which reads exactly like
+	// "pruned" — this test passed against a store that pruned nothing until the
+	// setting was there.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.tenant_id', $1, true)", tenant); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+
+	var rows int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM fleet_control_usage WHERE control_id = $1`, id).Scan(&rows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("%d usage rows remain, want 1; the window is not being pruned", rows)
+	}
+}

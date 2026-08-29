@@ -150,3 +150,21 @@ func TestEveryControlActionIsEnforceable(t *testing.T) {
 		t.Error("an unknown action claims an enforcement path")
 	}
 }
+
+// A cohort's members, named. ISOLATE_COHORT was an action whose name was a lie: a
+// cohort is a predicate and the only scopes were one agent or the whole tenant, so
+// answering a cohort incident meant stopping everyone or authorizing one control each.
+func TestAControlCanNameSeveralAgents(t *testing.T) {
+	at := time.Now().UTC()
+	c := readOnly(at)
+	c.AgentIDs = []string{"agent_2", "agent_1", "agent_3"}
+
+	if d := Evaluate([]Control{c}, envelope(), at); d.Allowed {
+		t.Error("an agent named in the list was not covered")
+	}
+
+	c.AgentIDs = []string{"agent_2", "agent_3"}
+	if d := Evaluate([]Control{c}, envelope(), at); !d.Allowed {
+		t.Errorf("an agent not in the list was refused: %s", d.Code)
+	}
+}

@@ -25,7 +25,10 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
     - read from PostgreSQL, never from the fleet engine: an enforcement check that
       had to ask the intelligence plane who is in a cohort would fail closed every
       time the analytical plane blinked (INV-005)
-    - scope is resolved to concrete agents and accounts when the control is authorized
+    - the scope is concrete agents and accounts, named when the control is authorized;
+      the platform does not expand a cohort predicate into members, because membership
+      is measured over a rolling window and a scope that moved with it would be a
+      control nobody authorized
     - expired or revoked controls do not bind; an unreadable store denies
  7. parent-intent state update (deterministic clustering)  §20
  8. hard policy evaluation against the active bundle       §15.2

@@ -51,8 +51,9 @@ type controlRequest struct {
 	IncidentID string `json:"incident_id"`
 	Action     string `json:"action"`
 
-	AgentID   string `json:"agent_id"`
-	AccountID string `json:"account_id"`
+	AgentID   string   `json:"agent_id"`
+	AgentIDs  []string `json:"agent_ids"`
+	AccountID string   `json:"account_id"`
 
 	// Scope is stated rather than inferred. An empty agent and account means the
 	// whole tenant, which is a real thing to authorize and a terrible default, so the
@@ -92,17 +93,45 @@ func (c controlRequest) validate() []string {
 
 	switch strings.ToLower(strings.TrimSpace(c.Scope)) {
 	case "tenant":
-		if c.AgentID != "" || c.AccountID != "" {
+		if c.AgentID != "" || c.AccountID != "" || len(c.AgentIDs) > 0 {
 			problems = append(problems, `scope "tenant" names no agent or account`)
 		}
 	case "agent":
 		require(c.AgentID, "agent_id")
+	case "agents":
+		// The scope that makes ISOLATE_COHORT usable. The platform does not expand a
+		// cohort predicate into members: who is in a cohort is measured over a rolling
+		// window, and a scope that changed as measurements arrived would be a control
+		// nobody authorized. The operator names them, and the record says whom it bound.
+		if len(c.AgentIDs) == 0 {
+			problems = append(problems, `scope "agents" requires agent_ids; a cohort is `+
+				"a predicate and the platform does not expand it into members")
+		}
+		for _, id := range c.AgentIDs {
+			if strings.TrimSpace(id) == "" {
+				problems = append(problems, "agent_ids contains an empty id")
+				break
+			}
+		}
 	case "account":
 		require(c.AccountID, "account_id")
 	default:
-		problems = append(problems, `scope must be "tenant", "agent" or "account"; `+
-			"an omitted scope would read as the whole tenant, which is the widest "+
-			"control there is and never something to arrive at by leaving a field out")
+		problems = append(problems, `scope must be "tenant", "agent", "agents" or `+
+			`"account"; an omitted scope would read as the whole tenant, which is the `+
+			"widest control there is and never something to arrive at by leaving a field out")
+	}
+
+	// One kind of scope. A control naming an agent and an account at once reads as
+	// "both" or "either" depending on the reader, and those differ by an outage.
+	named := 0
+	for _, set := range []bool{c.AgentID != "", c.AccountID != "", len(c.AgentIDs) > 0} {
+		if set {
+			named++
+		}
+	}
+	if named > 1 {
+		problems = append(problems, "a control names one kind of scope: agent_id, "+
+			"agent_ids or account_id, never more than one")
 	}
 
 	action, ok := control.ParseAction(c.Action)
@@ -233,6 +262,7 @@ func IssueControlHandler(controls ControlStore, recommendations RecommendationSo
 			Action:         action,
 			CohortID:       authorized.Recommendation.CohortID,
 			AgentID:        strings.TrimSpace(req.AgentID),
+			AgentIDs:       trimmed(req.AgentIDs),
 			AccountID:      strings.TrimSpace(req.AccountID),
 			AuthorizedBy:   authorization.AuthorizedBy,
 			PolicyBundleID: authorization.PolicyBundleID,
@@ -262,6 +292,7 @@ func IssueControlHandler(controls ControlStore, recommendations RecommendationSo
 			"action":           string(stored.Action),
 			"cohort_id":        stored.CohortID,
 			"agent_id":         stored.AgentID,
+			"agent_ids":        stored.AgentIDs,
 			"account_id":       stored.AccountID,
 			"authorized_by":    stored.AuthorizedBy,
 			"max_orders":       stored.MaxOrders,
@@ -341,4 +372,15 @@ func recordControl(ctx context.Context, store *evidence.Store, c control.Control
 			"enforced":         true,
 		},
 	})
+}
+
+func trimmed(v []string) []string {
+	if len(v) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(v))
+	for _, item := range v {
+		out = append(out, strings.TrimSpace(item))
+	}
+	return out
 }

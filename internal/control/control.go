@@ -23,8 +23,13 @@ import (
 //
 // It is not fleet.Control: that type carries the recommendation and the authorization
 // as they were at the moment of authorizing, which is the audit record. This is the
-// enforcement projection of it — the scope resolved to concrete agents and accounts,
-// because the hot path cannot ask the intelligence plane who is in a cohort (INV-005).
+// enforcement projection of it — a scope of concrete agents and accounts, because the
+// hot path cannot ask the intelligence plane who is in a cohort (INV-005).
+//
+// The platform does not expand the cohort predicate into that scope, and four comments
+// used to say it did. Membership is measured over a rolling window, and an enforcement
+// scope that changed as measurements arrived would be a control nobody authorized. The
+// operator names the members; CohortID records which finding it answered.
 type Control struct {
 	ControlID  string
 	TenantID   string
@@ -32,11 +37,16 @@ type Control struct {
 	Action     fleet.ControlAction
 	CohortID   string
 
-	// AgentID and AccountID scope the control. Empty means every agent or account in
-	// the tenant, which is the ISOLATE_COHORT and READ_ONLY case a customer chose
-	// deliberately, never a default that widened by accident: the API requires the
-	// scope to be stated.
+	// AgentID, AgentIDs and AccountID scope the control, and at most one of them is
+	// set. All empty means every agent and account in the tenant, which is a scope a
+	// customer chooses deliberately and never one reached by leaving fields out: the
+	// API requires the scope to be named.
+	//
+	// AgentIDs is what makes ISOLATE_COHORT usable. A cohort is a predicate, and
+	// before this the only scopes were one agent or the whole customer — so answering
+	// a cohort incident meant stopping everyone or authorizing one control per agent.
 	AgentID   string
+	AgentIDs  []string
 	AccountID string
 
 	// MaxOrders and Window are the rate a THROTTLE permits, and are zero for every
@@ -65,10 +75,22 @@ func (c Control) covers(env *intent.AgentExecutionEnvelope) bool {
 	if c.AgentID != "" && c.AgentID != env.Agent.AgentID {
 		return false
 	}
+	if len(c.AgentIDs) > 0 && !contains(c.AgentIDs, env.Agent.AgentID) {
+		return false
+	}
 	if c.AccountID != "" && c.AccountID != env.Principal.AccountID {
 		return false
 	}
 	return true
+}
+
+func contains(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Decision is what the control stage concluded.
