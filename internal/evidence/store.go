@@ -113,6 +113,47 @@ func (s *Store) ByAggregate(ctx context.Context, tenantID, aggregateID string) (
 		tenantID, aggregateID)
 }
 
+// RecentAggregates returns every event of the most recently active aggregates for a
+// tenant, newest aggregate first and each one's events in order.
+//
+// Two steps rather than one, and the reason is what the endpoint above it means: the
+// inner query picks which envelopes to show by when they were last touched, and the
+// outer one returns those envelopes whole. Selecting events by time and grouping
+// afterwards would return a page of fragments — an authority decision here, a broker
+// result there — and a caller could not tell a refusal from a half-read chain.
+func (s *Store) RecentAggregates(ctx context.Context, tenantID string, since time.Time,
+	limit int) ([]Event, error) {
+
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return s.query(ctx, tenantID, `
+		WITH envelopes AS (
+		    -- Aggregates that are intents. Everything else writes evidence too — a
+		    -- revoked control, an incident — and a list of "intents" that included
+		    -- them would be a list of aggregates wearing the wrong name.
+		    SELECT DISTINCT aggregate_id
+		      FROM evidence_events
+		     WHERE tenant_id = $1 AND occurred_at >= $2 AND event_name = $4
+		), recent AS (
+		    SELECT e.aggregate_id, max(e.occurred_at) AS last_at
+		      FROM evidence_events e
+		      JOIN envelopes v ON v.aggregate_id = e.aggregate_id
+		     WHERE e.tenant_id = $1
+		     GROUP BY e.aggregate_id
+		     ORDER BY last_at DESC
+		     LIMIT $3
+		)
+		SELECT e.event_id, e.schema_version, e.event_name, e.tenant_id, e.aggregate_id,
+		       e.correlation_id, e.causation_id, e.occurred_at, e.produced_at, e.producer,
+		       e.sequence, e.corrects_event_id, e.payload
+		  FROM evidence_events e
+		  JOIN recent r ON r.aggregate_id = e.aggregate_id
+		 WHERE e.tenant_id = $1
+		 ORDER BY r.last_at DESC, e.occurred_at ASC, e.sequence ASC, e.event_id ASC`,
+		tenantID, since.UTC(), limit, string(IntentReceived))
+}
+
 func (s *Store) query(ctx context.Context, tenantID, sql string, args ...any) ([]Event, error) {
 	var out []Event
 	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {

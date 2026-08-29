@@ -5,6 +5,7 @@ evidence endpoints added by ADR-023.
 
 ```text
 POST /v1/intents                        DONE (internal/gateway, ADR-025)
+GET  /v1/intents                        DONE (internal/gateway)
 GET  /v1/intents/{id}                   DONE (internal/gateway)
 GET  /v1/intents/{id}/evidence          Phase 6   DONE (ADR-023)
 GET  /v1/evidence?correlation_id={id}   Phase 6   DONE (ADR-023)
@@ -323,6 +324,27 @@ cancelling a run to free capacity for a different one needs to know whether the 
 free now or shortly. Measured against two live replicas: the slot came back **860 ms**
 after a cancellation that landed on the wrong one, on a run with twenty-seven seconds
 left to go.
+
+## GET /v1/intents
+
+```sh
+curl -H "Authorization: Bearer $GATEWAY_TOKEN"   'http://localhost:8080/v1/intents?hours=24&limit=50'
+```
+
+A tenant's recent intents, newest activity first, built from evidence rather than from
+the idempotency table. That choice is the endpoint: the idempotency table holds intents
+that reached a venue, so a list built from it would show what was accepted and silently
+omit every refusal — the half of the record an assurance platform exists to keep.
+
+Each entry carries the events its envelope produced and the fields those events
+recorded: the authority code, the policy action, the control that refused, the broker
+order id. Nothing is folded into a verdict of this endpoint's own, for the reason
+`GET /v1/intents/{id}` reports a chain rather than a summary.
+
+`since` and `as_of` are in the response. The window defaults to 24 hours and the page
+to 50 envelopes, and both are stated rather than implied: a list that quietly covered
+"some of the past" reads as "everything", which is what makes an empty page look like a
+quiet fleet.
 
 ## GET /v1/intents/{id}
 

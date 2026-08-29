@@ -1,5 +1,5 @@
 import { Surface, Unavailable } from "@/components/Surface";
-import { evidenceFor } from "@/lib/api";
+import { evidenceFor, recentIntents } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -42,15 +42,58 @@ export default async function FlowPage({
       </form>
 
       {correlationId === "" ? (
-        <p>
-          Enter a correlation id. There is no list of live intents because{" "}
-          <code>GET /v1/intents</code> does not exist yet: the submission path is not
-          wired, so listing it would mean inventing rows.
-        </p>
+        <RecentIntents />
       ) : (
         <FlowChain correlationId={correlationId} />
       )}
     </Surface>
+  );
+}
+
+async function RecentIntents() {
+  const result = await recentIntents();
+  if (!result.available) {
+    return <Unavailable reason={result.reason} />;
+  }
+  if (result.rows.length === 0) {
+    return <p>No intent has been submitted in this tenant in the last day.</p>;
+  }
+
+  return (
+    <table style={{ borderCollapse: "collapse", width: "100%" }}>
+      <thead>
+        <tr style={{ textAlign: "left" }}>
+          <th>Envelope</th>
+          <th>Intent</th>
+          <th>Last event</th>
+          <th>Outcome</th>
+          <th>Chain</th>
+        </tr>
+      </thead>
+      <tbody>
+        {result.rows.map((i) => (
+          <tr key={i.envelope_id} style={{ borderTop: "1px solid currentColor" }}>
+            <td>
+              <code>{i.envelope_id}</code>
+              <div style={{ opacity: 0.75 }}>{i.received_at}</div>
+            </td>
+            <td>
+              {i.side} {i.instrument_id}
+            </td>
+            <td>{i.last_event}</td>
+            {/* The code as recorded, never a verdict computed here. A refusal shown
+                as anything other than what the enforcement plane wrote is a second
+                account of the same event, and the two can disagree. */}
+            <td>{i.control ?? i.code ?? i.action ?? ""}</td>
+            <td>
+              <a href={`/flow?correlation_id=${encodeURIComponent(i.correlation_id)}`}>
+                show
+              </a>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

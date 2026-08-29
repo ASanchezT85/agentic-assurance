@@ -225,6 +225,7 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 			elsewhere := map[string]string{
 				"submit":        "../../internal/gateway/http.go:SubmitHandler",
 				"status":        "../../internal/gateway/intents.go:IntentStatusHandler",
+				"list":          "../../internal/gateway/intent_list.go:IntentListHandler",
 				"revoke":        "../../internal/gateway/intents.go:RevokeGrantHandler",
 				"issue":         "../../internal/gateway/grants.go:IssueGrantHandler",
 				"applyControl":  "../../internal/gateway/controls.go:IssueControlHandler",

@@ -202,6 +202,26 @@ export type SimulationRow = {
 export const simulations = () =>
   read<SimulationRow>(`${FLEET_ENGINE_URL}/v1/simulations`, "Simulations", "runs");
 
+export type IntentRow = {
+  envelope_id: string;
+  correlation_id: string;
+  received_at: string;
+  last_event: string;
+  last_at: string;
+  events: string[];
+  side?: string;
+  instrument_id?: string;
+  code?: string;
+  action?: string;
+  control?: string;
+  broker_order_id?: string;
+};
+
+/** A tenant's recent intents, refusals included. Built from evidence, not from the
+ *  idempotency table, which holds only what reached a venue. */
+export const recentIntents = () =>
+  read<IntentRow>(`${GATEWAY_URL}/v1/intents?limit=50`, "Intents", "intents");
+
 export const evidenceFor = (correlationId: string) =>
   read<EvidenceEvent>(
     `${GATEWAY_URL}/v1/evidence?correlation_id=${encodeURIComponent(correlationId)}`,
