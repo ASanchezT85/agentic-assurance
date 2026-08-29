@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -66,6 +67,27 @@ func (c *Credentials) AllowIssuers(raw string) {
 			c.byToken[token] = caller
 		}
 	}
+}
+
+// Tenants returns every tenant this registry serves, once each.
+//
+// Used by housekeeping that has to run per tenant because row level security is per
+// tenant. A tenant removed from the registry stops being swept, which is the honest
+// consequence of having no other list of who exists.
+func (c *Credentials) Tenants() []string {
+	if c == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(c.byToken))
+	for _, caller := range c.byToken {
+		if !seen[caller.TenantID] {
+			seen[caller.TenantID] = true
+			out = append(out, caller.TenantID)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ParseCredentials reads "identity@tenant=token,identity@tenant=token".

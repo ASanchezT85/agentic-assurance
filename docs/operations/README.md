@@ -278,6 +278,38 @@ refused" and looks exactly like a platform that stopped deciding; sockets are ca
 Application Control on this host blocks freshly built test binaries under
 `AppData\Local\Temp`.
 
+### Idempotency retention, and a check that could not fail
+
+Spec section 19 lists bounded retention beside a unique envelope id and deterministic
+duplicate handling, and nothing implemented it: the table grew with every intent the
+platform ever decided (94,478 rows and 46 MB of test traffic alone).
+
+The gateway sweeps hourly, in the process that owns the table rather than as a job that
+can be forgotten in one environment. `IDEMPOTENCY_RETENTION_DAYS` defaults to **30** and
+`IDEMPOTENCY_SWEEP_MINUTES` to 60.
+
+Two rules decide what may go, and the window is the less interesting one:
+
+- **A PENDING record is never pruned, at any age.** It says a submission was claimed and
+  the platform does not know what the venue did — deleting it turns an unresolved order
+  into an order nobody remembers claiming.
+- **Pruning a resolved record reopens its key.** A caller presenting it afterwards gets
+  a fresh execution rather than the earlier outcome, and IDEMPOTENCY_KEY_REUSED cannot
+  see a record that is gone. Thirty days is how long the platform can still recognise a
+  retry, and that is the number to argue with.
+
+Evidence is untouched: the idempotency record is control state, the chain is the
+account of what happened, and only one of them is append-only by design.
+
+**Two defects came out of building it.** The application role had no DELETE on the
+table, so the first sweep deleted nothing and said so in a warning nobody was reading —
+the integration test failed on it, which is the only reason it was found the same day.
+
+And a trap worth remembering: the `assurance` role used in `docker exec psql` spot
+checks is a **superuser, so it bypasses row level security entirely**. Every isolation
+check run that way proved nothing. The isolation evidence is the Go tests, which connect
+as `assurance_app` and are subject to the policies.
+
 ### The listing query, measured against a day of traffic
 
 `GET /v1/intents` ranked envelopes by last activity, which meant summarising the window

@@ -113,3 +113,32 @@ func consoleSources(t *testing.T) []string {
 	}
 	return files
 }
+
+// Retention is only bounded if something runs the sweeper.
+//
+// The store's rules are covered against real PostgreSQL — resolved rows past the window
+// go, a PENDING row never does, one tenant's sweep never touches another's. What no
+// test could see is whether the gateway actually starts it, and a retention policy
+// nothing runs is the same as none: spec section 19 asks for bounded retention, and the
+// table grew for as long as it went unimplemented precisely because nobody was looking
+// at whether it ran.
+func TestTheGatewayRunsTheRetentionSweeper(t *testing.T) {
+	source := readSource(t, repoRoot+"/cmd/assurance-gateway/main.go")
+
+	for _, needed := range []string{
+		"execution.Sweeper{",
+		"sweeper.Run(ctx)",
+		"IDEMPOTENCY_RETENTION_DAYS",
+	} {
+		if !strings.Contains(source, needed) {
+			t.Errorf("cmd/assurance-gateway does not %q; idempotency records would grow "+
+				"without bound (spec section 19)", needed)
+		}
+	}
+
+	// Started in the background. A sweep on the request path would make housekeeping
+	// something a caller waits for.
+	if !strings.Contains(source, "go sweeper.Run(ctx)") {
+		t.Error("the sweeper is not started in its own goroutine")
+	}
+}

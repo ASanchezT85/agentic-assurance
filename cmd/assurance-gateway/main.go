@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -484,6 +485,28 @@ func main() {
 				"POST /v1/authority-grants/{id}/revoke, GET|POST /v1/controls, "+
 				"POST /v1/controls/{id}/revoke")
 	}
+	// Bounded retention for idempotency records (spec section 19), which the section
+	// asks for beside a unique envelope id and deterministic duplicate handling and
+	// which nothing implemented: the table grew with every intent ever decided.
+	//
+	// In this process rather than as a separate job, because this is the process that
+	// owns the table and a retention job deployed on its own is one that can be
+	// forgotten in an environment and quietly stop bounding anything.
+	if pool := openPool(ctx, log); pool != nil && creds != nil {
+		sweeper := &execution.Sweeper{
+			Store:  execution.NewPostgresStore(pool),
+			Every:  time.Duration(envInt("IDEMPOTENCY_SWEEP_MINUTES", 60)) * time.Minute,
+			Keep:   time.Duration(envInt("IDEMPOTENCY_RETENTION_DAYS", 30)) * 24 * time.Hour,
+			Log:    log,
+			Tenant: creds.Tenants,
+		}
+		log.Info("idempotency retention",
+			"keep", sweeper.Keep.String(), "every", sweeper.Every.String(),
+			"tenants", len(creds.Tenants()),
+			"note", "PENDING records are never pruned; evidence is untouched")
+		go sweeper.Run(ctx)
+	}
+
 	var submit http.HandlerFunc
 	if pipeline != nil {
 		submit = gateway.SubmitHandler(pipeline, creds)
@@ -512,4 +535,11 @@ func main() {
 		log.Error("shutdown failed", "err", err)
 	}
 	log.Info("stopped")
+}
+
+func envInt(key string, fallback int) int {
+	if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v > 0 {
+		return v
+	}
+	return fallback
 }
