@@ -187,9 +187,16 @@ func TestAnUncountableThrottleDenies(t *testing.T) {
 // stopped, so "did the control work" had no answer short of reading evidence one chain
 // at a time.
 func TestTelemetryRecordsWhichControlRefused(t *testing.T) {
-	var written []byte
+	// Handed over a channel rather than a shared variable: the flush runs on its own
+	// goroutine and the handler on another, and a test that reads what they wrote
+	// without synchronising is a data race the race detector will find — as it did.
+	written := make(chan []byte, 1)
 	clickhouse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		written, _ = io.ReadAll(r.Body)
+		body, _ := io.ReadAll(r.Body)
+		select {
+		case written <- body:
+		default:
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer clickhouse.Close()
@@ -208,11 +215,10 @@ func TestTelemetryRecordsWhichControlRefused(t *testing.T) {
 		t.Fatalf("code = %s, want CONTROL_READ_ONLY", result.Code)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for len(written) == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if len(written) == 0 {
+	var body []byte
+	select {
+	case body = <-written:
+	case <-time.After(5 * time.Second):
 		t.Fatal("nothing reached the analytical plane")
 	}
 
@@ -221,7 +227,7 @@ func TestTelemetryRecordsWhichControlRefused(t *testing.T) {
 		ControlID       string `json:"control_id"`
 		PolicyAction    string `json:"policy_action"`
 	}
-	firstRow, _, _ := strings.Cut(string(written), "\n")
+	firstRow, _, _ := strings.Cut(string(body), "\n")
 	if err := json.Unmarshal([]byte(firstRow), &row); err != nil {
 		t.Fatalf("the row is not JSON: %v", err)
 	}
