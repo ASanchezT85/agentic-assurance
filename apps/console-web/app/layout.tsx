@@ -1,10 +1,25 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
+import "./globals.css";
+
+/**
+ * EXORYN is the commercial name; the technical names underneath it are unchanged.
+ *
+ * The brand authority is explicit that a commercial identity does not rename services,
+ * packages, database objects, APIs or event names, and none of those moved. What changed
+ * is what a customer reads at the top of a browser tab.
+ *
+ * The descriptor is the approved one, and the disclaimer stays. This product governs
+ * order flow; it does not advise on it, and a console that let anyone forget that would
+ * be the first step toward a claim nobody may make.
+ */
 export const metadata: Metadata = {
-  title: "Agentic Order-Flow Assurance",
+  title: "EXORYN Console",
   description:
-    "Infrastructure for governing AI-generated financial order flow. Not an investment product.",
+    "Assurance infrastructure for autonomous finance. Read-only operator console. " +
+    "Not an investment product.",
+  icons: { icon: "/favicon.svg" },
 };
 
 export const viewport: Viewport = {
@@ -15,16 +30,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body
-        style={{
-          margin: 0,
-          padding: "3rem 1.5rem",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          lineHeight: 1.6,
-        }}
-      >
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

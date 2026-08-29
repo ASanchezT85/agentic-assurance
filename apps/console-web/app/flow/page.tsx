@@ -25,6 +25,7 @@ export default async function FlowPage({
 
   return (
     <Surface
+      current="/flow"
       title="Flow"
       summary="The evidence chain for one correlation id, exactly as recorded."
     >

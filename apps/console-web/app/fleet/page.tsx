@@ -16,6 +16,7 @@ export default async function FleetPage() {
 
   return (
     <Surface
+      current="/fleet"
       title="Fleet"
       summary="Measurements per cohort per window, as they were computed. Nothing here is recalculated on read."
     >

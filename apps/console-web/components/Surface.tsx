@@ -6,7 +6,8 @@ import type { ReactNode } from "react";
  * Spec section 48 fixes six principal surfaces and says not to add more without a
  * defined acceptance requirement. The navigation is therefore a constant, not a
  * configurable list: adding a seventh means editing this array and having that show
- * up in review.
+ * up in review. The design authority repeats the rule, so it now has two places to be
+ * caught in and none to be added quietly.
  */
 export const SURFACES = [
   { href: "/fleet", label: "Fleet" },
@@ -20,25 +21,50 @@ export const SURFACES = [
 export function Surface({
   title,
   summary,
+  current,
   children,
 }: {
   title: string;
   summary: string;
+  /** The surface's own href, so the navigation can mark where the reader is. */
+  current?: string;
   children: ReactNode;
 }) {
   return (
-    <main style={{ maxWidth: "68rem" }}>
-      <nav style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "2rem" }}>
+    <div className="x-shell">
+      <header className="x-masthead">
+        <span className="x-wordmark">
+          {/* eslint-disable-next-line @next/next/no-img-element -- a 2 KB SVG master;
+              next/image would put a raster optimizer in front of a vector. */}
+          {/* Artwork, placed as artwork. The wordmark is never re-typed in a display
+              font — the one thing the brand authority is most explicit about. */}
+          <img src="/exoryn-primary-horizontal.svg" alt="EXORYN" />
+        </span>
+        {/* Stated, not implied. The Console observes; it never becomes the thing that
+            executes, and an operator should be able to read that from the page rather
+            than infer it from the absence of buttons. */}
+        <span className="x-readonly">read-only</span>
+      </header>
+
+      <nav className="x-nav" aria-label="Console surfaces">
         {SURFACES.map((s) => (
-          <a key={s.href} href={s.href} style={{ textDecoration: "none" }}>
+          <a key={s.href} href={s.href} aria-current={s.href === current ? "page" : undefined}>
             {s.label}
           </a>
         ))}
       </nav>
-      <h1 style={{ fontSize: "1.25rem", marginBottom: "0.25rem" }}>{title}</h1>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>{summary}</p>
-      {children}
-    </main>
+
+      <main>
+        <h1 className="x-surface-title">{title}</h1>
+        <p className="x-surface-summary">{summary}</p>
+        {children}
+      </main>
+
+      <footer className="x-footnote">
+        EXORYN — assurance infrastructure for autonomous finance. This console reads the
+        platform&apos;s own record; it does not authorize, submit or cancel anything.
+      </footer>
+    </div>
   );
 }
 
@@ -48,24 +74,52 @@ export function Surface({
  * It says why, and it never renders zeros. An empty fleet and an unreachable fleet
  * engine look identical on a dashboard that shows "0" for both, and only one of them
  * means the fleet is quiet.
+ *
+ * Styled with the warning palette rather than the danger palette: an unreadable source is
+ * a degradation, not an incident, and reserving red for incidents is what keeps red
+ * meaning something.
  */
 export function Unavailable({ reason }: { reason: string }) {
   return (
-    <div
-      style={{
-        border: "1px solid currentColor",
-        borderRadius: "4px",
-        padding: "1rem",
-        opacity: 0.85,
-      }}
-    >
+    <div className="x-unavailable" role="status">
       <strong>Not available.</strong> {reason}
-      <p style={{ marginBottom: 0 }}>
+      <p>
         This is not an empty result. Nothing is being displayed because nothing could
         be read, and a zero here would be a different claim.
       </p>
     </div>
   );
+}
+
+/** A panel groups one region of a surface. */
+export function Panel({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <section className="x-panel">
+      {title ? <h3>{title}</h3> : null}
+      {children}
+    </section>
+  );
+}
+
+/**
+ * A status pill.
+ *
+ * The tone is chosen by the caller from a closed set, because the data language assigns
+ * meanings to these colours — verified, declared, unknown, and the three severities — and
+ * a surface picking its own would be inventing a meaning. The label is always readable
+ * text: colour-only status is forbidden by the accessibility foundation, and it is also
+ * simply worse, because an operator reading a screenshot in a ticket has no legend.
+ */
+export type PillTone =
+  | "verified"
+  | "declared"
+  | "unknown"
+  | "success"
+  | "warning"
+  | "danger";
+
+export function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
+  return <span className={`x-pill x-pill--${tone}`}>{children}</span>;
 }
 
 /** A plain table. No charts: a chart of two data points is decoration. */
@@ -74,20 +128,22 @@ export function Table({
   rows,
 }: {
   columns: readonly string[];
-  rows: readonly (readonly (string | number)[])[];
+  rows: readonly (readonly (string | number | ReactNode)[])[];
 }) {
   if (rows.length === 0) {
-    return <p>No rows in this window. The source answered; it had nothing to report.</p>;
+    return (
+      <p className="x-empty">
+        No rows in this window. The source answered; it had nothing to report.
+      </p>
+    );
   }
   return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.85rem" }}>
+    <div className="x-table-wrap">
+      <table className="x-table">
         <thead>
           <tr>
             {columns.map((c) => (
-              <th key={c} style={{ textAlign: "left", padding: "0.4rem 0.6rem", borderBottom: "1px solid currentColor" }}>
-                {c}
-              </th>
+              <th key={c}>{c}</th>
             ))}
           </tr>
         </thead>
@@ -95,9 +151,7 @@ export function Table({
           {rows.map((row, i) => (
             <tr key={i}>
               {row.map((cell, j) => (
-                <td key={j} style={{ padding: "0.4rem 0.6rem", borderBottom: "1px solid rgba(128,128,128,0.3)" }}>
-                  {cell}
-                </td>
+                <td key={j}>{cell}</td>
               ))}
             </tr>
           ))}

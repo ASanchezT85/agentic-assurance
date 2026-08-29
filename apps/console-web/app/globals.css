@@ -1,0 +1,329 @@
+@import "./tokens.css";
+
+/*
+ * The Console's base layer.
+ *
+ * Built on the design tokens rather than beside them: every colour, space and radius here
+ * is a var(--x-*), so a value that is not in the design system cannot appear by
+ * convenience. That is the rule the brand authority states — product code consumes
+ * approved tokens rather than inventing a parallel palette — and the only way to keep it
+ * is to leave no literal to reach for.
+ *
+ * What has not changed: this is a read-only surface. Nothing here styles a control that
+ * writes, because there is none to style.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--x-surface-canvas);
+  color: var(--x-text-primary);
+  font-family: var(--x-font-body);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* Identifiers, hashes and event names are monospace by rule, not by taste: they are read
+   character by character and compared by eye, and a proportional font makes two different
+   hashes look alike. */
+code,
+kbd,
+pre,
+samp,
+.x-mono {
+  font-family: var(--x-font-mono);
+  font-size: 12px;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--x-font-display);
+  color: var(--x-text-primary);
+  margin: 0;
+}
+
+h1 {
+  font-size: 30px;
+  line-height: 38px;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 24px;
+  line-height: 32px;
+}
+
+h3 {
+  font-size: 18px;
+  line-height: 26px;
+}
+
+a {
+  color: var(--x-text-link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--x-border-focus);
+  outline-offset: 2px;
+}
+
+/* --- shell ------------------------------------------------------------------ */
+
+.x-shell {
+  max-width: 82rem;
+  margin: 0 auto;
+  padding: var(--x-space-8) var(--x-space-6) var(--x-space-16);
+}
+
+.x-masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--x-space-4);
+  flex-wrap: wrap;
+  padding-bottom: var(--x-space-4);
+  border-bottom: 1px solid var(--x-border-subtle);
+}
+
+.x-wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-3);
+}
+
+/* The logo is artwork, placed as artwork. It is never re-typed as text in a display
+   font, which is the one thing the brand authority is most explicit about. */
+.x-wordmark img {
+  height: 22px;
+  width: auto;
+  display: block;
+}
+
+.x-readonly {
+  font-family: var(--x-font-mono);
+  font-size: 12px;
+  color: var(--x-text-secondary);
+  background: var(--x-semantic-bg-unknown);
+  border: 1px solid var(--x-border-subtle);
+  border-radius: var(--x-radius-pill);
+  padding: 2px var(--x-space-3);
+}
+
+/* --- navigation ------------------------------------------------------------- */
+
+.x-nav {
+  display: flex;
+  gap: var(--x-space-1);
+  flex-wrap: wrap;
+  margin: var(--x-space-4) 0 var(--x-space-8);
+}
+
+.x-nav a {
+  font-size: 14px;
+  color: var(--x-text-secondary);
+  padding: var(--x-space-2) var(--x-space-3);
+  border-radius: var(--x-radius-sm);
+  border: 1px solid transparent;
+}
+
+.x-nav a:hover {
+  text-decoration: none;
+  background: var(--x-surface-panelSubtle);
+  color: var(--x-text-primary);
+}
+
+.x-nav a[aria-current="page"] {
+  background: var(--x-surface-selected);
+  border-color: var(--x-border-subtle);
+  color: var(--x-text-link);
+  font-weight: 600;
+}
+
+/* --- surface header --------------------------------------------------------- */
+
+.x-surface-title {
+  margin-bottom: var(--x-space-1);
+}
+
+.x-surface-summary {
+  margin: 0 0 var(--x-space-6);
+  color: var(--x-text-secondary);
+  font-size: 16px;
+  line-height: 24px;
+  max-width: 62ch;
+}
+
+/* --- panels ----------------------------------------------------------------- */
+
+.x-panel {
+  background: var(--x-surface-panel);
+  border: 1px solid var(--x-border-subtle);
+  border-radius: var(--x-radius-md);
+  padding: var(--x-space-4) var(--x-space-6);
+  margin-bottom: var(--x-space-6);
+}
+
+.x-panel h3 {
+  margin-bottom: var(--x-space-3);
+}
+
+/* --- unavailable ------------------------------------------------------------ */
+
+/*
+ * Unavailable is a state of its own, and it is styled as one.
+ *
+ * The warning palette rather than the danger palette: an unreadable source is a
+ * degradation, not an incident, and reserving red for incidents is what makes red mean
+ * something. What it must never look like is an empty result — an unreachable fleet
+ * engine and a quiet fleet are different facts and a "0" would state the wrong one.
+ */
+.x-unavailable {
+  background: var(--x-semantic-bg-warning);
+  border: 1px solid var(--x-brand-warning);
+  border-left-width: 3px;
+  border-radius: var(--x-radius-sm);
+  padding: var(--x-space-4);
+  color: var(--x-semantic-text-warning);
+}
+
+.x-unavailable strong {
+  color: var(--x-semantic-text-warning);
+}
+
+.x-unavailable p {
+  margin: var(--x-space-2) 0 0;
+  color: var(--x-text-secondary);
+}
+
+.x-empty {
+  color: var(--x-text-secondary);
+}
+
+/* --- tables ----------------------------------------------------------------- */
+
+/*
+ * Tables stay. The design system says exact inspection must remain available even where
+ * a summary visualisation is added, and nothing here is dense enough to need one: a chart
+ * of two data points is decoration.
+ */
+.x-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--x-border-subtle);
+  border-radius: var(--x-radius-md);
+  background: var(--x-surface-panel);
+}
+
+.x-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  /* Tabular figures, so a column of numbers lines up and two similar values are
+     distinguishable at a glance. */
+  font-variant-numeric: tabular-nums;
+}
+
+.x-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--x-text-muted);
+  background: var(--x-surface-panelSubtle);
+  padding: var(--x-space-3) var(--x-space-4);
+  border-bottom: 1px solid var(--x-border-subtle);
+  white-space: nowrap;
+}
+
+.x-table td {
+  padding: var(--x-space-3) var(--x-space-4);
+  border-bottom: 1px solid var(--x-border-subtle);
+  vertical-align: top;
+}
+
+.x-table tr:last-child td {
+  border-bottom: none;
+}
+
+.x-table tbody tr:hover {
+  background: var(--x-surface-panelSubtle);
+}
+
+/* --- status pills ----------------------------------------------------------- */
+
+/*
+ * A pill carries its meaning in its text as well as its colour. Colour-only status is
+ * forbidden by the accessibility foundation, and it is also simply worse: an operator
+ * reading a screenshot in a ticket has no legend.
+ */
+.x-pill {
+  display: inline-block;
+  font-family: var(--x-font-mono);
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 var(--x-space-2);
+  border-radius: var(--x-radius-sm);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.x-pill--verified {
+  background: var(--x-semantic-bg-verified);
+  color: var(--x-semantic-text-info);
+  border-color: var(--x-brand-cyan);
+}
+
+.x-pill--declared {
+  background: var(--x-semantic-bg-declared);
+  color: var(--x-semantic-text-declared);
+  border-color: var(--x-semantic-text-declared);
+}
+
+.x-pill--unknown {
+  background: var(--x-semantic-bg-unknown);
+  color: var(--x-semantic-text-unknown);
+  border-color: var(--x-border-strong);
+}
+
+.x-pill--success {
+  background: var(--x-semantic-bg-success);
+  color: var(--x-semantic-text-success);
+  border-color: var(--x-semantic-text-success);
+}
+
+.x-pill--warning {
+  background: var(--x-semantic-bg-warning);
+  color: var(--x-semantic-text-warning);
+  border-color: var(--x-semantic-text-warning);
+}
+
+.x-pill--danger {
+  background: var(--x-semantic-bg-danger);
+  color: var(--x-semantic-text-danger);
+  border-color: var(--x-semantic-text-danger);
+}
+
+/* --- footer ----------------------------------------------------------------- */
+
+.x-footnote {
+  margin-top: var(--x-space-10);
+  padding-top: var(--x-space-4);
+  border-top: 1px solid var(--x-border-subtle);
+  color: var(--x-text-muted);
+  font-size: 12px;
+}

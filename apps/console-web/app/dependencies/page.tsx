@@ -16,6 +16,7 @@ export default async function DependenciesPage() {
 
   return (
     <Surface
+      current="/dependencies"
       title="Dependencies"
       summary="What the fleet declared it depends on, and how well sourced each declaration is."
     >

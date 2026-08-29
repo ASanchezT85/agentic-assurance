@@ -22,6 +22,7 @@ export const dynamic = "force-dynamic";
 export default function ControlsPage() {
   return (
     <Surface
+      current="/controls"
       title="Controls"
       summary="What is currently enforcing, and what shadow mode would have done."
     >

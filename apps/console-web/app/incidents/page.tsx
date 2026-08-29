@@ -25,6 +25,7 @@ export default async function IncidentsPage({
 
   return (
     <Surface
+      current="/incidents"
       title="Incidents"
       summary="Timelines rebuilt from the append-only record. If this disagrees with anything, this is right."
     >
