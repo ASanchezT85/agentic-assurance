@@ -1,4 +1,5 @@
-import { Surface } from "@/components/Surface";
+import { Surface, Unavailable } from "@/components/Surface";
+import { controls } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +14,10 @@ export const dynamic = "force-dynamic";
  * plane exists to avoid: the customer's gateway has to be able to stop things with
  * this service down and our cloud gone.
  *
- * So this page reads. Applying a control needs POST /v1/controls, which section 46
- * lists and no phase has built, and when it is built it belongs in the
- * customer-controlled plane rather than here.
+ * So this page reads. It used to say there was nothing to read, because controls lived
+ * in memory and no endpoint exposed them — and it kept saying so after POST/GET
+ * /v1/controls landed, which is the stale-caveat failure the API docs already made
+ * twice: prose describing a system nobody is running.
  */
 export default function ControlsPage() {
   return (
@@ -23,14 +25,7 @@ export default function ControlsPage() {
       title="Controls"
       summary="What is currently enforcing, and what shadow mode would have done."
     >
-      <div style={{ border: "1px solid currentColor", borderRadius: "4px", padding: "1rem" }}>
-        <strong>Not available from the console.</strong> The active policy bundle, the
-        grant state and the shadow ledger all live in memory in the gateway and the
-        fleet engine. None is persisted or exposed, so there is nothing to read.
-        <p style={{ marginBottom: 0 }}>
-          <code>POST /v1/controls</code> is not built here, and will not be.
-        </p>
-      </div>
+      <ControlList />
 
       <h2 style={{ fontSize: "1rem", marginTop: "2rem" }}>Why there are no buttons</h2>
       <p>
@@ -40,18 +35,66 @@ export default function ControlsPage() {
         would run through a service the architecture treats as optional.
       </p>
       <p>
-        Fleet-level controls are shadow by default, and a customer authorizes
-        enforcement rather than this system (INV-009). Whatever eventually applies a
-        control belongs in the customer-controlled enforcement plane, behind an
-        authorization that names its author and the policy bundle permitting it.
+        Authorizing and lifting a control are <code>POST /v1/controls</code> and{" "}
+        <code>POST /v1/controls/&#123;id&#125;/revoke</code> on the gateway, in the
+        customer-controlled enforcement plane, behind a credential that may not also
+        submit orders. They are not built here and will not be.
       </p>
 
       <h2 style={{ fontSize: "1rem", marginTop: "2rem" }}>The distinction this page keeps</h2>
       <p style={{ opacity: 0.75 }}>
         A recommendation is not an action. Shadow mode records what would have
-        happened; only a customer authorization turns one into a control that binds.
-        When this surface has data, those will be two columns and never one.
+        happened; only a customer authorization turns one into a control that binds
+        (INV-009). What is listed above bound something.
       </p>
     </Surface>
+  );
+}
+
+async function ControlList() {
+  const result = await controls();
+  if (!result.available) {
+    return <Unavailable reason={result.reason} />;
+  }
+  if (result.rows.length === 0) {
+    return (
+      <p>
+        No fleet control has been authorized in this tenant. That is the default state:
+        fleet intelligence recommends and nothing binds until a customer authorizes it.
+      </p>
+    );
+  }
+
+  return (
+    <table style={{ borderCollapse: "collapse", width: "100%" }}>
+      <thead>
+        <tr style={{ textAlign: "left" }}>
+          <th>Control</th>
+          <th>Action</th>
+          <th>Scope</th>
+          <th>Authorized by</th>
+          <th>Until</th>
+          <th>State</th>
+        </tr>
+      </thead>
+      <tbody>
+        {result.rows.map((c) => (
+          <tr key={c.control_id} style={{ borderTop: "1px solid currentColor" }}>
+            <td>
+              <code>{c.control_id}</code>
+              <div style={{ opacity: 0.75 }}>{c.reason}</div>
+            </td>
+            <td>{c.action}</td>
+            <td>{c.agent_id || c.account_id || "whole tenant"}</td>
+            <td>{c.authorized_by}</td>
+            <td>{c.expires_at}</td>
+            {/* in_force comes from the gateway rather than from a comparison here: a
+                reader must never have to check an expiry against their own clock to
+                know whether orders are being refused right now. */}
+            <td>{c.in_force ? "enforcing" : c.revoked_at ? `revoked by ${c.revoked_by}` : "expired"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

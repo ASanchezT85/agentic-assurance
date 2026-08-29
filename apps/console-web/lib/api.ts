@@ -45,7 +45,7 @@ export type Available<T> = {
 
 export type Result<T> = Available<T> | Unavailable;
 
-async function read<T>(url: string, what: string): Promise<Result<T>> {
+async function read<T>(url: string, what: string, key = "rows"): Promise<Result<T>> {
   try {
     if (API_TOKEN === "") {
       return {
@@ -76,8 +76,13 @@ async function read<T>(url: string, what: string): Promise<Result<T>> {
       return { available: false, reason: `${what} returned ${response.status}` };
     }
 
-    const body = (await response.json()) as { rows?: T[]; count?: number };
-    return { available: true, rows: body.rows ?? [], count: body.count ?? 0 };
+    // The collection key varies by endpoint (rows, incidents, controls) and is named
+    // by the caller. Defaulting to the endpoint's own noun keeps the payloads
+    // readable; guessing would turn a renamed field into an empty screen that looks
+    // like a quiet fleet.
+    const body = (await response.json()) as Record<string, unknown>;
+    const rows = (body[key] as T[] | undefined) ?? [];
+    return { available: true, rows, count: (body.count as number | undefined) ?? rows.length };
   } catch {
     // The service is down. That is a fact worth showing rather than an error to
     // swallow: an operator needs to know the difference between "quiet fleet" and
@@ -142,6 +147,43 @@ export const cohorts = () => read<CohortRow>(`${FLEET_ENGINE_URL}/v1/cohorts`, "
 
 export const dependencies = () =>
   read<DependencyRow>(`${FLEET_ENGINE_URL}/v1/dependencies`, "Dependencies");
+
+export type ControlRow = {
+  control_id: string;
+  incident_id: string;
+  action: string;
+  cohort_id: string;
+  agent_id: string;
+  account_id: string;
+  authorized_by: string;
+  reason: string;
+  applied_at: string;
+  expires_at: string;
+  in_force: boolean;
+  revoked_at?: string;
+  revoked_by?: string;
+};
+
+export type IncidentRow = {
+  incident_id: string;
+  correlation_id: string;
+  severity: string;
+  severity_rule: string;
+  status: string;
+  anomaly_rules: string[];
+  shared_dependencies: string[];
+  recommended: string;
+  window_start: string;
+  window_end: string;
+  opened_at: string;
+};
+
+/** Authorized fleet controls, in force or not. Read-only, like everything here. */
+export const controls = () =>
+  read<ControlRow>(`${GATEWAY_URL}/v1/controls`, "Controls", "controls");
+
+export const incidents = () =>
+  read<IncidentRow>(`${FLEET_ENGINE_URL}/v1/incidents`, "Incidents", "incidents");
 
 export const evidenceFor = (correlationId: string) =>
   read<EvidenceEvent>(

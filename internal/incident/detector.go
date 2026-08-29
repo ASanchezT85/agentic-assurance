@@ -101,31 +101,24 @@ func (d *Detector) record(ctx context.Context, inc Incident, at time.Time) {
 		return
 	}
 
-	names := make([]string, 0, len(inc.Anomalies))
-	for _, a := range inc.Anomalies {
-		names = append(names, a.Rule)
+	// Through EventsFor, which is the incident's own rendering of itself.
+	//
+	// This used to build one incident.created.v1 by hand, and the hand-built payload
+	// was not the one anything reads. It carried cohort_id where the timeline reads
+	// cohort, and anomalies as a list of rule names where the timeline reads objects
+	// with an observation — so a timeline reconstructed from a real incident lost the
+	// cohort and every reason, while the tests passed because they fed it EventsFor.
+	//
+	// Worse, it never emitted control.recommended.v1 at all. The recommendation lived
+	// in a payload field of the creation event, so POST /v1/controls answered "this
+	// incident recommended nothing" for every incident the platform actually detected:
+	// the authorization path worked only against evidence written by hand.
+	//
+	// One producer, so there is nothing for the two to disagree about.
+	for _, e := range inc.EventsFor("fleet-engine", 1) {
+		if _, err := d.Evidence.Append(ctx, e); err != nil {
+			d.log().Error("incident evidence not recorded",
+				"incident_id", inc.IncidentID, "event", string(e.EventName), "err", err)
+		}
 	}
-
-	_, _ = d.Evidence.Append(ctx, evidence.Event{
-		SchemaVersion: evidence.SchemaVersion,
-		EventID:       inc.IncidentID + "_opened",
-		EventName:     evidence.IncidentCreated,
-		TenantID:      inc.TenantID,
-		AggregateID:   inc.IncidentID,
-		CorrelationID: inc.CorrelationID,
-		OccurredAt:    at,
-		ProducedAt:    at,
-		Producer:      "fleet-engine",
-		Sequence:      1,
-		Payload: map[string]any{
-			"cohort_id":           inc.Cohort.ID(),
-			"severity":            string(inc.Severity),
-			"severity_rule":       inc.SeverityRule,
-			"anomalies":           names,
-			"shared_dependencies": inc.SharedDependencies,
-			"recommended":         inc.Recommended,
-			"window_start":        inc.Window.Start.UTC(),
-			"window_end":          inc.Window.End.UTC(),
-		},
-	})
 }

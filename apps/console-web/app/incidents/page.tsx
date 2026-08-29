@@ -1,14 +1,15 @@
 import { Surface, Unavailable } from "@/components/Surface";
-import { evidenceFor } from "@/lib/api";
+import { evidenceFor, incidents } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Incidents (spec section 48.4).
  *
- * An incident is reconstructed from evidence, not read from an incident table. There
- * is no incident table on purpose: a second copy of the record can disagree with the
- * record, and when it does the evidence is right.
+ * A timeline is reconstructed from evidence, never from the incidents table. There is
+ * one now, and it is a projection: a second copy of the record can disagree with the
+ * record, and when it does the evidence is right. The list below is that projection,
+ * and every timeline under it is rebuilt from the chain.
  *
  * The two lines that matter are kept apart throughout: what the system recommended,
  * and what a person did. Spec section 49 ends on exactly that distinction, and a
@@ -41,16 +42,60 @@ export default async function IncidentsPage({
       </form>
 
       {correlationId === "" ? (
-        <p>
-          Enter a correlation id. There is no incident list because incidents are not
-          stored as rows: <code>GET /v1/incidents</code> from spec section 46 needs a
-          projection over the evidence store that no phase has built, and listing
-          fabricated summaries would be worse than asking for an id.
-        </p>
+        <OpenIncidents />
       ) : (
         <Timeline correlationId={correlationId} />
       )}
     </Surface>
+  );
+}
+
+async function OpenIncidents() {
+  const result = await incidents();
+  if (!result.available) {
+    return <Unavailable reason={result.reason} />;
+  }
+  if (result.rows.length === 0) {
+    return (
+      <p>
+        No incident has been opened in this tenant. Enter a correlation id above to
+        rebuild a timeline from evidence anyway — the chain outlives the projection.
+      </p>
+    );
+  }
+
+  return (
+    <table style={{ borderCollapse: "collapse", width: "100%" }}>
+      <thead>
+        <tr style={{ textAlign: "left" }}>
+          <th>Opened</th>
+          <th>Severity</th>
+          <th>Why</th>
+          <th>Recommended</th>
+          <th>Timeline</th>
+        </tr>
+      </thead>
+      <tbody>
+        {result.rows.map((i) => (
+          <tr key={i.incident_id} style={{ borderTop: "1px solid currentColor" }}>
+            <td>{i.opened_at}</td>
+            <td>
+              {i.severity}
+              <div style={{ opacity: 0.75 }}>{i.severity_rule}</div>
+            </td>
+            <td>{i.anomaly_rules.join(", ")}</td>
+            {/* Recommended, never "applied". The platform recommends and a customer
+                authorizes (INV-009); the Controls surface lists what actually binds. */}
+            <td style={{ opacity: 0.75 }}>{i.recommended}</td>
+            <td>
+              <a href={`/incidents?correlation_id=${encodeURIComponent(i.correlation_id)}`}>
+                rebuild
+              </a>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
