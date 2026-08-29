@@ -133,13 +133,20 @@ func (s *Store) AppendBatch(ctx context.Context, events []Event) error {
 				ON CONFLICT (event_id) DO NOTHING`, row...)
 		}
 		results := tx.SendBatch(ctx, batch)
-		defer results.Close()
 		for range rows {
 			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
 				return err
 			}
 		}
-		return results.Close()
+		if err := results.Close(); err != nil {
+			return err
+		}
+
+		// The outbox, in the same transaction. A committed decision always owes the
+		// bus a message, and a message never exists for a decision that did not
+		// commit — which is what publishing from the pipeline could not promise.
+		return enqueue(ctx, tx, events)
 	})
 }
 

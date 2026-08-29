@@ -54,7 +54,8 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
 10. control action returned to the caller
 11. broker submission through BrokerAdapter, if ALLOW      ADR-012
 --- synchronous boundary ends here ---
-12. telemetry and evidence emitted to NATS JetStream       asynchronous
+12. evidence committed to PostgreSQL with an outbox row    one transaction
+13. outbox publisher -> NATS JetStream -> consumers        asynchronous
 ```
 
 Steps 1 through 11 are the hot path. Step 12 and everything downstream of it are not.

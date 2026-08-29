@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nats-io/nats.go"
 
 	"agentic-assurance/adapters/alpaca"
 	"agentic-assurance/adapters/fakebroker"
@@ -506,6 +507,56 @@ func main() {
 			"tenants", len(creds.Tenants()),
 			"note", "PENDING records are never pruned; evidence is untouched")
 		go sweeper.Run(ctx)
+	}
+
+	// The event backbone, wired into the running process at last.
+	//
+	// EnsureStream, Publisher and Consumer have existed since Phase 6 with passing
+	// tests and no binary ever constructed them: evidence went straight to PostgreSQL
+	// while the documentation called JetStream the backbone. An outside audit read the
+	// source rather than the docs and named it — the project's own recurring defect,
+	// a component whose tests pass while the producer never calls it.
+	//
+	// Off the critical path by construction: the publisher drains what is already
+	// committed. A bus that is down delays the analytical plane and decides nothing
+	// (INV-005).
+	if pool := openPool(ctx, log); pool != nil {
+		if url := os.Getenv("NATS_URL"); url != "" {
+			if conn, err := nats.Connect(url); err != nil {
+				log.Warn("no event backbone", "err", err,
+					"consequence", "evidence is committed and stays in the outbox until NATS returns")
+			} else if js, err := evidence.EnsureStream(ctx, conn); err != nil {
+				log.Warn("event stream unavailable", "err", err)
+			} else {
+				publisher := &evidence.OutboxPublisher{
+					Store:     evidence.NewStore(pool),
+					Publisher: evidence.NewPublisher(js),
+					Every:     time.Duration(envInt("OUTBOX_INTERVAL_MS", 1000)) * time.Millisecond,
+					Batch:     envInt("OUTBOX_BATCH", 100),
+					Report: func(published, failed int, err error) {
+						// The publisher reports and this logs, because INV-013 keeps a
+						// logger out of the evidence package: a package that can write
+						// to a log is one where somebody eventually writes evidence to
+						// a log instead of recording it.
+						switch {
+						case err != nil:
+							log.Warn("outbox could not be read", "err", err,
+								"consequence", "committed evidence has not reached the bus yet")
+						case failed > 0:
+							log.Warn("evidence not published", "published", published,
+								"failed", failed,
+								"consequence", "the events stay in the outbox and are retried")
+						}
+					},
+				}
+				log.Info("event backbone", "url", url, "every", publisher.Every.String(),
+					"note", "committed evidence is published from the outbox; nothing on the hot path waits for it")
+				go publisher.Run(ctx)
+			}
+		} else {
+			log.Warn("no NATS_URL; evidence stays in the outbox",
+				"consequence", "nothing consumes the event stream, and the outbox grows")
+		}
 	}
 
 	var submit http.HandlerFunc

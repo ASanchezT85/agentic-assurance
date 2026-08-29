@@ -84,7 +84,11 @@ Go 1.25 monorepo, 150 Go files, ~36,000 lines. Four deployables (ADR-011):
 - **ClickHouse** — analytical only, and **forbidden on the enforcement path** (INV-005).
   A decision must not depend on analytics being reachable.
 - **Redis** — cache, never truth (INV-011).
-- **NATS JetStream** — event backbone, asynchronous by construction.
+- **NATS JetStream** — event backbone for evidence, fed by a durable outbox: an event
+  and its outbox row are written in the same transaction as the decision, a publisher
+  drains the table, and a consumer in the fleet engine projects the stream into
+  ClickHouse. Nothing on the enforcement path waits for it (INV-005). Fleet telemetry
+  still goes to ClickHouse directly, which is stated rather than implied.
 - **SPIRE/SPIFFE** — workload identity. X509-SVID verified with stdlib `crypto/x509`.
 
 ### The hot path

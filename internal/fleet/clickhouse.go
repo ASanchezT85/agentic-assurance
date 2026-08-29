@@ -245,6 +245,17 @@ func (s *Sink) InsertMeasurements(ctx context.Context, ms []Measurement) error {
 	return s.exec(ctx, "INSERT INTO assurance.fleet_measurements FORMAT JSONEachRow", body.Bytes())
 }
 
+// InsertEvidence writes one projected evidence event.
+//
+// One row per call rather than a batch: the consumer already fetches in batches and
+// acknowledges per message, and buffering here would mean acknowledging events that
+// are not yet projected — the analytical copy silently missing what the stream says it
+// delivered.
+func (s *Sink) InsertEvidence(ctx context.Context, row string) error {
+	return s.exec(ctx,
+		"INSERT INTO assurance.evidence_stream FORMAT JSONEachRow", []byte(row+"\n"))
+}
+
 // Query runs a read-only statement and returns the raw response.
 func (s *Sink) Query(ctx context.Context, sql string) (string, error) {
 	out, err := s.request(ctx, sql, nil)

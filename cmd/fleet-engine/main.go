@@ -31,11 +31,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"agentic-assurance/internal/evidence"
+
 	"agentic-assurance/internal/fleet"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/incident"
 	"agentic-assurance/internal/pg"
 	"agentic-assurance/internal/simulation"
+	"github.com/nats-io/nats.go"
 )
 
 const component = "fleet-engine"
@@ -315,6 +317,27 @@ func main() {
 		log.Warn("incident API not served",
 			"missing", "POSTGRES_APP_DSN",
 			"consequence", "anomalies are measured and no incident is opened for them")
+	}
+
+	// The consumer end of the event backbone. The gateway publishes committed evidence
+	// from its outbox; this projects it into the analytical store so a question about
+	// months of decisions is not a scan of the enforcement plane's own table.
+	//
+	// A projection, never a source: PostgreSQL holds the evidence, and if the two
+	// disagree PostgreSQL is right and this is rebuilt.
+	if url := os.Getenv("NATS_URL"); url != "" {
+		if conn, err := nats.Connect(url); err != nil {
+			log.Warn("no event backbone", "err", err,
+				"consequence", "the analytical copy of evidence will not be updated")
+		} else if js, err := evidence.EnsureStream(ctx, conn); err != nil {
+			log.Warn("event stream unavailable", "err", err)
+		} else if consumer, err := evidence.NewConsumer(ctx, js, "fleet-evidence", "evidence.>"); err != nil {
+			log.Warn("evidence consumer unavailable", "err", err)
+		} else if sink, ok := openStore(log).(*fleet.Sink); ok && sink != nil {
+			log.Info("consuming evidence", "durable", "fleet-evidence", "subject", "evidence.>")
+			go fleet.RunEvidenceConsumer(ctx, consumer,
+				&fleet.EvidenceProjection{Sink: sink, Log: log}, log)
+		}
 	}
 
 	store := openStore(log)
