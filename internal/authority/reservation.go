@@ -110,6 +110,17 @@ func reservationDecision(g *Grant, at time.Time, allowed bool, code, reason stri
 // checkLimits is the arithmetic, shared by the pre-check in Evaluate and by the atomic
 // reservation, so the two can never disagree about what a limit means.
 func checkLimits(limits Limits, consumed Snapshot, notional money.Amount) (code, reason string) {
+	// The per-order ceiling, which lived only in Evaluate.
+	//
+	// It needs no atomicity — it is a property of one order rather than of accumulated
+	// state — and that is exactly why it was easy to leave out of the authoritative
+	// decision. The reservation is what authorizes; a component that returns ALLOW for
+	// an order the grant forbids is one refactor away from being the only check that
+	// runs.
+	if limits.PerOrderNotional > 0 && notional > limits.PerOrderNotional {
+		return "PER_ORDER_LIMIT_EXCEEDED", fmt.Sprintf(
+			"%s exceeds the per-order limit %s", notional, limits.PerOrderNotional)
+	}
 	if limits.Rolling1hNotional > 0 && consumed.Rolling1hNotional.Add(notional) > limits.Rolling1hNotional {
 		return "ROLLING_LIMIT_EXCEEDED", fmt.Sprintf(
 			"%s already used in the last hour plus %s exceeds the rolling limit %s",

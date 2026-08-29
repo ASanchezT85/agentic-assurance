@@ -33,3 +33,4 @@ venv/
 
 .bin/
 .gotmp/
+.live/

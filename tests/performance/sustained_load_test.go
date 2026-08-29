@@ -42,6 +42,7 @@ import (
 // passes on this laptop says nothing about a deployment, and a test that fails on a
 // background process stealing a core teaches people to ignore it.
 func TestSustainedLoadKeepsDeciding(t *testing.T) {
+	signingKey := loadSigningKey(t)
 	e := loadEnvironment(t)
 	ctx := context.Background()
 	run := strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -101,10 +102,10 @@ func TestSustainedLoadKeepsDeciding(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			agentID := fmt.Sprintf("agent_load_sust%s_%d", run, i)
+			agentID := fmt.Sprintf("agent_load_%d", i)
 			for n := 0; time.Now().Before(deadline); n++ {
 				key := fmt.Sprintf("sust_%s_%d_%d", run, i, n)
-				body := envelopeFor(e.tenant, grants[i], agentID, key)
+				body := signed(envelopeFor(e.tenant, grants[i], agentID, key), signingKey)
 
 				began := time.Now()
 				status, raw, err := e.post(ctx, "/v1/intents", e.agentToken, body)
@@ -163,6 +164,10 @@ func TestSustainedLoadKeepsDeciding(t *testing.T) {
 // second tenant here would mean inventing a credential, and a credential this test
 // made up would prove isolation against a caller nobody authenticated.
 func TestTenantsUnderLoadStayIsolated(t *testing.T) {
+	// Every tenant in LOAD_TENANTS needs this fleet's agent ids registered against
+	// its own signing key. Isolation is what this measures, and a tenant whose agents
+	// cannot sign is refused at identity and proves nothing about it.
+	signingKey := loadSigningKey(t)
 	e := loadEnvironment(t)
 
 	raw := os.Getenv("LOAD_TENANTS")
@@ -207,11 +212,11 @@ func TestTenantsUnderLoadStayIsolated(t *testing.T) {
 				t.Errorf("tenant %s: %v", tn.id, err)
 				return
 			}
-			agentID := fmt.Sprintf("agent_load_iso%s_%d_0", run, i)
+			agentID := fmt.Sprintf("agent_load_%d", i)
 
 			for n := 0; n < perTenant; n++ {
 				key := fmt.Sprintf("iso_%s_%d_%d", run, i, n)
-				body := envelopeFor(tn.id, grant, agentID, key)
+				body := signed(envelopeFor(tn.id, grant, agentID, key), signingKey)
 				status, _, err := scoped.post(ctx, "/v1/intents", tn.token, body)
 				if err != nil {
 					t.Errorf("tenant %s: %v", tn.id, err)

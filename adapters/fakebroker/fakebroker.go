@@ -49,6 +49,14 @@ const (
 
 	// FaultCancelRace: a cancel arrives after the order has already filled.
 	FaultCancelRace Fault = "CANCEL_RACE"
+
+	// FaultExpire: the venue takes the order and expires it unfilled — a day order
+	// that reached the close, a limit nobody met.
+	//
+	// Modelled because EXPIRED is a canonical state that no test could reach: the
+	// state that used to be recorded as one the venue accepted had no way of being
+	// produced, which is a large part of why nobody noticed.
+	FaultExpire Fault = "EXPIRE"
 )
 
 // Broker is a fake venue. The zero value is not usable; call New.
@@ -171,6 +179,8 @@ func (b *Broker) SubmitOrder(ctx context.Context, req broker.OrderRequest) (brok
 	case FaultFillAfterLocalTimeout:
 		order.State = broker.StateFilled
 		b.applyFill(order, req, 1.0)
+	case FaultExpire:
+		order.State = broker.StateExpired
 	}
 
 	b.orders[req.ClientOrderID] = order

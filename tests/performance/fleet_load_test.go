@@ -18,6 +18,8 @@ package performance
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +31,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"agentic-assurance/internal/identity"
 )
 
 const (
@@ -121,10 +125,12 @@ func (e loadEnv) post(ctx context.Context, path, token string, body []byte) (int
 func (e loadEnv) grantFor(ctx context.Context, run string, i int) (string, error) {
 	id := fmt.Sprintf("grant_load_%s_%d", run, i)
 	body, _ := json.Marshal(map[string]any{
-		"grant_id":              id,
-		"principal_id":          "prin_load",
-		"account_id":            "acct_load",
-		"agent_id":              fmt.Sprintf("agent_load_%s_%d", run, i),
+		"grant_id":     id,
+		"principal_id": "prin_load",
+		"account_id":   "acct_load",
+		// The ids live-setup registered signing keys for. Stable across runs: the
+		// same fleet running again is what a customer's deployment looks like.
+		"agent_id":              fmt.Sprintf("agent_load_%d", i),
 		"issued_by":             "load-harness",
 		"valid_until":           time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339),
 		"allowed_operations":    []string{"BUY", "SELL"},
@@ -144,6 +150,51 @@ func (e loadEnv) grantFor(ctx context.Context, run string, i int) (string, error
 		return "", fmt.Errorf("issue grant %s: HTTP %d: %s", id, status, raw)
 	}
 	return id, nil
+}
+
+// loadSigningKey is the fleet's signing key, registered by live-setup.
+//
+// Envelopes are signed rather than merely well-formed, because signature verification is
+// now on the hot path: a load run against unsigned envelopes would measure a pipeline
+// that refuses at the second stage and report the latency of a rejection.
+//
+// One key across the synthetic fleet. They are separate agent identities with separate
+// grants; what a run of a thousand measures is concurrent authorization, not concurrent
+// key generation.
+func loadSigningKey(t *testing.T) ed25519.PrivateKey {
+	t.Helper()
+	raw := os.Getenv("LIVE_SIGNING_KEY")
+	if raw == "" {
+		t.Skip("set LIVE_SIGNING_KEY (see scripts/live-boot.sh); an unsigned envelope is " +
+			"refused before anything worth measuring happens")
+	}
+	decoded, err := hex.DecodeString(raw)
+	if err != nil || len(decoded) != ed25519.PrivateKeySize {
+		t.Fatalf("LIVE_SIGNING_KEY is not a hex ed25519 private key")
+	}
+	return ed25519.PrivateKey(decoded)
+}
+
+// signed attaches a signature over the canonical form, the way an agent would.
+func signed(raw []byte, priv ed25519.PrivateKey) []byte {
+	value, err := identity.SignEnvelope(raw, priv)
+	if err != nil {
+		panic(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		panic(err)
+	}
+	m["signature"] = map[string]any{
+		"algorithm": identity.AlgorithmEd25519,
+		"key_id":    envOrDefault("LIVE_KEY_ID", "key_live"),
+		"value":     value,
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		panic(err)
+	}
+	return out
 }
 
 func envelopeFor(tenant, grantID, agentID, key string) []byte {
@@ -185,6 +236,7 @@ func envelopeFor(tenant, grantID, agentID, key string) []byte {
 // TestAThousandAgentsSubmitConcurrently is section 56 item 1.
 func TestAThousandAgentsSubmitConcurrently(t *testing.T) {
 	e := loadEnvironment(t)
+	signingKey := loadSigningKey(t)
 	ctx := context.Background()
 	run := strconv.FormatInt(time.Now().UnixNano(), 36)
 
@@ -240,10 +292,10 @@ func TestAThousandAgentsSubmitConcurrently(t *testing.T) {
 			defer done.Done()
 			start.Wait()
 
-			agentID := fmt.Sprintf("agent_load_%s_%d", run, i)
+			agentID := fmt.Sprintf("agent_load_%d", i)
 			for n := 0; n < intentsPerAgent; n++ {
 				key := fmt.Sprintf("load_%s_%d_%d", run, i, n)
-				body := envelopeFor(e.tenant, grants[i], agentID, key)
+				body := signed(envelopeFor(e.tenant, grants[i], agentID, key), signingKey)
 
 				began := time.Now()
 				status, raw, err := e.post(ctx, "/v1/intents", e.agentToken, body)
