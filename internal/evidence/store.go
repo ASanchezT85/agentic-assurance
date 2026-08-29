@@ -71,7 +71,10 @@ func (s *Store) Append(ctx context.Context, e Event) (recorded bool, err error) 
 				 correlation_id, causation_id, occurred_at, produced_at, producer,
 				 sequence, corrects_event_id, payload)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-			ON CONFLICT (event_id) DO NOTHING`,
+			-- The partition key is part of the key now that evidence is partitioned by
+			-- month. A redelivered event carries the moment it happened, so this
+			-- deduplicates exactly as (event_id) did (ADR-008).
+			ON CONFLICT (event_id, occurred_at) DO NOTHING`,
 			e.EventID, e.SchemaVersion, string(e.EventName), e.TenantID, e.AggregateID,
 			e.CorrelationID, nullIfEmpty(e.CausationID), e.OccurredAt.UTC(), e.ProducedAt.UTC(),
 			e.Producer, e.Sequence, nullIfEmpty(e.CorrectsEventID), payload)
@@ -130,7 +133,10 @@ func (s *Store) AppendBatch(ctx context.Context, events []Event) error {
 					 correlation_id, causation_id, occurred_at, produced_at, producer,
 					 sequence, corrects_event_id, payload)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-				ON CONFLICT (event_id) DO NOTHING`, row...)
+				-- The partition key is part of the key now that evidence is partitioned by
+			-- month. A redelivered event carries the moment it happened, so this
+			-- deduplicates exactly as (event_id) did (ADR-008).
+			ON CONFLICT (event_id, occurred_at) DO NOTHING`, row...)
 		}
 		results := tx.SendBatch(ctx, batch)
 		for range rows {
