@@ -97,8 +97,10 @@ Go 1.25 monorepo, 150 Go files, ~36,000 lines. Four deployables (ADR-011):
 not a description of it. If the two disagree the document is right and the code is a
 bug. In order:
 
-decode/validate → identity and attestation → tenant check → idempotency →
-authority → **fleet controls** → parent intent → hard policy → execution → evidence.
+decode/validate → identity and attestation → tenant check → **envelope signature** →
+idempotency → authority → **fleet controls** → parent intent → hard policy →
+**atomic authority reservation** → durable decision receipt → execution → outcome
+evidence.
 
 ### Attestation levels
 
@@ -107,6 +109,11 @@ authority → **fleet controls** → parent intent → hard policy → execution
 | A0 | Unknown origin. Legitimate to observe; never executable |
 | A1 | Authenticated API identity (bearer credential bound to a tenant) |
 | A2 | Workload-attested (verified X509-SVID mapped to a tenant) |
+
+At every level the envelope itself is signed by a key registered to that tenant **and**
+that agent. Transport identity says which customer is calling; the signature says which
+agent, which is what the authority grant is scoped to. They are separate provenance
+facts and the platform records both.
 | A3 | Provider-attested — **never produced in V0**, by ADR-006. Manufacturing it from a workload certificate is exactly the inference that ADR forbids |
 
 ---
@@ -316,6 +323,14 @@ the same — discover the surface instead of listing it.
 
 ## 7. Decisions taken, with their reasons
 
+- **A decision that cannot be recorded is not acted on.** The receipt — who was
+  authenticated, which key signed, which grant allowed, what policy decided, what
+  capacity was reserved — is committed before the venue is called. What may still be
+  lost afterwards is the outcome, and that is recoverable from the receipt plus
+  reconciliation. Neither half is telemetry.
+- **Authority limits are a reservation, not a check.** Counting, deciding and writing
+  happen in one transaction behind a lock on the grant, immediately before the venue
+  call. A definite venue rejection releases the capacity; an ambiguous outcome keeps it.
 - **Evidence is never mutated.** A correction is a new event referencing the earlier one
   (ADR-009, INV-006). Both stay in the chain, because a reader needs to see that a
   correction happened rather than a tidied result.
@@ -358,39 +373,31 @@ Not gaps. Each one is a decision with a reason:
 
 ## 9. Open
 
-### 9.1 The decision this document is being circulated for
+### 9.1 Retention: answered, and the shape of the answer
 
-**Evidence retention.** Measured: 916,119 events occupy 683 MB, about **745 bytes per
-event** and **~5 KB per intention** (an accepted order leaves seven events).
+The question was circulated and came back with a better answer than the one this
+document proposed: **do not encode one universal legal period.** How long a record must
+exist depends on the entity, the jurisdiction and the class of record, and a platform
+that hard-codes seven years is telling a regulated institution what its obligation is.
 
-| Daily volume | Evidence per day | Per year |
-|---|---|---|
-| 100,000 intents | ~0.5 GB | ~190 GB |
-| 1,000,000 intents | ~5 GB | ~1.9 TB |
-| 10,000,000 intents | ~50 GB | ~19 TB |
+What is built is the model rather than the number. Evidence is partitioned by month;
+retention is configured per tenant and per record class with hot days, archive days, a
+destination and a deletion mode; and four rules sit above any configuration:
 
-Uncompressed, in PostgreSQL. Object storage compressed is five to ten times less.
+- a **legal hold** outranks every policy;
+- an **unarchived partition is never destroyed**;
+- destruction requires an **approved authorization by someone other than the requester**;
+- every **default keeps everything**, including an unknown record class.
 
-Four questions, and only the first blocks anything:
+A dry-run planner produces verdicts and reasons without touching anything, and archives
+carry a hash chain over each event's identity so an edited or truncated archive does not
+verify. Destructive purge remains off by default.
 
-1. How long must evidence be **queryable online**?
-2. How long must it **exist at all**, including cold archive?
-3. **Where** does the archive live, and who may read it?
-4. May it **ever be deleted**, and on whose signature?
-
-The customary anchors are SEC 17a-4 (six years for a broker-dealer, the first two
-readily accessible) and MiFID II (five years, seven on a regulator's request). Which
-applies depends on the entity and the jurisdiction, and that is a compliance question
-rather than an engineering one. The working default until someone answers is **90 days
-online, seven years archived, deletion never without a signed approval** — stated here
-as an assumption rather than applied silently.
-
-Three of the four pieces do not depend on the answer and can be built now: partitioning
-`evidence_events` by month so a partition can be detached instead of deleted row by row,
-an export that carries a hash chain so an archived month can still prove it was not
-edited, and per-tenant growth measurement so the conversation with compliance uses real
-numbers. Only the last step — when a partition leaves and whether it is ever destroyed
-— needs the decision.
+The measured arithmetic, for the conversation with a compliance function: **745 bytes
+per event, ~5 KB per intention**, so a million intents a day is roughly 1.9 TB a year
+uncompressed in PostgreSQL and a few dollars a month archived. Storage is not the
+constraint; the accessibility tier is. `docs/EVIDENCE_RETENTION_BRIEF.md` carries the
+regulatory reading with sources.
 
 ### 9.2 Known coverage gaps, stated rather than discovered later
 
@@ -402,6 +409,12 @@ numbers. Only the last step — when a partition leaves and whether it is ever d
 - No guard catches prose that describes an existing mechanism *incorrectly* — which is
   where four findings in the thirteenth pass came from. Automating that would mean
   verifying intent, and it is recorded as an open hole rather than pretended away.
+- Fleet telemetry still reaches ClickHouse directly rather than through the event
+  backbone. Evidence goes through the outbox; intent telemetry does not, and saying
+  "everything flows through NATS" would be the same defect the audit found.
+- Parent intent is reconstruction and evidence, not an enforcement input. Fragmented
+  economic intent is detected and recorded; what stops it is the grant's atomic
+  ceiling. Describing it as prevention would overstate it.
 - The retention sweep has not been observed on a running binary: this host's
   Application Control began refusing freshly built executables. The store and sweeper
   are covered against real PostgreSQL, and a guard asserts the gateway starts it.
