@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"agentic-assurance/internal/authority"
+	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/policy"
 )
@@ -194,6 +195,21 @@ type FileBundles struct {
 	Dir       string
 	PublicKey ed25519.PublicKey
 
+	// Evidence records what took effect and when.
+	//
+	// A reload changes what the enforcement plane denies, and it used to leave nothing
+	// behind: an incident review could see every decision a bundle produced and not
+	// which bundle was in force when, who activated it, or that a rollback had happened
+	// at all. Section 32 names policy.bundle.activated.v1 and rolled_back.v1 and nothing
+	// produced either.
+	//
+	// Nil is allowed and means no recording, the way every other optional dependency in
+	// this package works. It never blocks a reload: a bundle the customer activated is
+	// in force whether or not the record of it committed, and the alternative — refusing
+	// to enforce a verified policy because an event could not be written — fails open.
+	Evidence *evidence.Store
+	Now      func() time.Time
+
 	mu     sync.RWMutex
 	cached map[string]*policy.Bundle
 
@@ -203,6 +219,18 @@ type FileBundles struct {
 	// the previous one during an incident — did nothing until somebody restarted the
 	// gateway. An activation that needs a restart is not an activation.
 	stamps map[string]string
+
+	// seen is every bundle id this process has had in force, per tenant. It is what
+	// separates an activation from a rollback: shipping a new bundle activates one
+	// nobody has enforced before, and restoring the previous one during an incident
+	// puts back a bundle this gateway was already running. The version number cannot
+	// tell them apart — a customer rolling back to bundle_v1 is not publishing a lower
+	// version, they are republishing the same one.
+	//
+	// It is per process, so the first activation after a restart is recorded as an
+	// activation even when an operator considers it a rollback. That is the honest
+	// limit of what the gateway knows: it did not witness the earlier activation.
+	seen map[string]map[string]bool
 }
 
 func NewFileBundles(dir, publicKeyHex string) (*FileBundles, error) {
@@ -211,7 +239,8 @@ func NewFileBundles(dir, publicKeyHex string) (*FileBundles, error) {
 		return nil, fmt.Errorf("POLICY_PUBLIC_KEY must be a hex-encoded ed25519 public key")
 	}
 	return &FileBundles{Dir: dir, PublicKey: key,
-		cached: map[string]*policy.Bundle{}, stamps: map[string]string{}}, nil
+		cached: map[string]*policy.Bundle{}, stamps: map[string]string{},
+		seen: map[string]map[string]bool{}}, nil
 }
 
 // Active returns the tenant's enforcing bundle, re-reading the file when it changed.
@@ -278,10 +307,88 @@ func (f *FileBundles) Active(_ context.Context, tenantID string) (*policy.Bundle
 	}
 
 	f.mu.Lock()
+	previous := f.cached[tenantID]
+	if f.seen[tenantID] == nil {
+		f.seen[tenantID] = map[string]bool{}
+	}
+	returning := f.seen[tenantID][bundle.BundleID]
+	f.seen[tenantID][bundle.BundleID] = true
 	f.cached[tenantID] = &bundle
 	f.stamps[tenantID] = stamp
 	f.mu.Unlock()
+
+	f.recordActivation(context.Background(), previous, &bundle, returning)
 	return &bundle, nil
+}
+
+// recordActivation writes down that enforcement changed.
+//
+// Only when the bundle actually changed. A file rewritten with identical content, or a
+// process starting up and reading the bundle that was already in force, is not an
+// activation, and recording one would put an event in the customer's evidence for
+// something their operators did not do.
+//
+// Activated or rolled back is decided by whether this gateway has had the bundle in
+// force before. A customer restoring the previous bundle during an incident is doing
+// something different from shipping a new one, and an incident review that cannot tell
+// them apart reads a sequence of activations where there was a retreat.
+func (f *FileBundles) recordActivation(ctx context.Context, previous, current *policy.Bundle,
+	returning bool) {
+	if f.Evidence == nil || current == nil {
+		return
+	}
+	if previous != nil && previous.BundleID == current.BundleID &&
+		previous.ContentHash == current.ContentHash {
+		return
+	}
+
+	now := time.Now().UTC
+	if f.Now != nil {
+		now = f.Now
+	}
+	at := now().UTC()
+
+	name := evidence.PolicyBundleActivated
+	actor := current.Activation.ActivatedBy
+	payload := map[string]any{
+		"bundle_id":    current.BundleID,
+		"policy":       current.Policy,
+		"version":      current.Version,
+		"content_hash": current.ContentHash,
+		"signed_by":    current.SignedBy,
+		// Who, from the bundle the customer signed and activated. The gateway does not
+		// activate policy and so is never the actor here (INV-009, ADR-010); an empty
+		// value is a bundle whose activation named nobody, and it is written as empty
+		// rather than filled in with the process that noticed.
+		"activated_by": actor,
+		"activated_at": current.Activation.ActivatedAt,
+		"rules":        len(current.Rules),
+	}
+	if previous != nil {
+		payload["previous_bundle_id"] = previous.BundleID
+		payload["previous_version"] = previous.Version
+	}
+	if returning {
+		name = evidence.PolicyBundleRolledBack
+		payload["rollback_reason"] = current.Activation.RollbackReason
+		if by := current.Activation.RolledBackBy; by != "" {
+			payload["activated_by"] = by
+		}
+	}
+
+	_, _ = f.Evidence.Append(ctx, evidence.Event{
+		SchemaVersion: evidence.SchemaVersion,
+		EventID:       fmt.Sprintf("%s_%s_%d", current.BundleID, name, at.UnixNano()),
+		EventName:     name,
+		TenantID:      current.TenantID,
+		AggregateID:   current.BundleID,
+		CorrelationID: current.BundleID,
+		OccurredAt:    at,
+		ProducedAt:    at,
+		Producer:      "assurance-gateway",
+		Sequence:      nextSequence(),
+		Payload:       payload,
+	})
 }
 
 // keepOnFailedReload keeps the bundle that is already enforcing when a candidate does

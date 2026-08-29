@@ -8,11 +8,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/policy"
 )
@@ -198,5 +200,92 @@ func TestADeletedBundleKeepsTheOneInForce(t *testing.T) {
 	}
 	if active.BundleID != "bundle_only" {
 		t.Errorf("bundle = %s, want bundle_only", active.BundleID)
+	}
+}
+
+// Enforcement changing is a fact about a customer's platform, so it is recorded.
+//
+// Reload took effect and left nothing behind. An incident review could see every
+// decision a bundle produced and not which bundle was in force when, who activated it,
+// or that a rollback had happened at all — while section 32 names
+// policy.bundle.activated.v1 and rolled_back.v1 and nothing produced either.
+func TestActivationAndRollbackAreRecorded(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_activation_%d", now.UnixNano())
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+
+	store := evidence.NewStore(idemPool(t))
+	writeBundle(t, dir, tenant, "bundle_a", priv, now, allowOrdinaryOrders)
+
+	bundles, err := gateway.NewFileBundles(dir, hex.EncodeToString(pub))
+	if err != nil {
+		t.Fatalf("bundles: %v", err)
+	}
+	bundles.Evidence = store
+
+	if _, err := bundles.Active(ctx, tenant); err != nil {
+		t.Fatalf("active: %v", err)
+	}
+	// A second read of an unchanged file is not an activation: the operators did
+	// nothing, and an event for it is noise in the customer's evidence.
+	if _, err := bundles.Active(ctx, tenant); err != nil {
+		t.Fatalf("active again: %v", err)
+	}
+
+	writeBundle(t, dir, tenant, "bundle_b", priv, now, denyEverything)
+	if _, err := bundles.Active(ctx, tenant); err != nil {
+		t.Fatalf("active after replace: %v", err)
+	}
+
+	// The retreat: the bundle this gateway was already running goes back in force.
+	writeBundle(t, dir, tenant, "bundle_a", priv, now, allowOrdinaryOrders)
+	if _, err := bundles.Active(ctx, tenant); err != nil {
+		t.Fatalf("active after rollback: %v", err)
+	}
+
+	events, err := store.ByAggregate(ctx, tenant, "bundle_a")
+	if err != nil {
+		t.Fatalf("read evidence: %v", err)
+	}
+	b, err := store.ByAggregate(ctx, tenant, "bundle_b")
+	if err != nil {
+		t.Fatalf("read evidence: %v", err)
+	}
+	events = append(events, b...)
+
+	var activated, rolledBack int
+	for _, e := range events {
+		switch e.EventName {
+		case evidence.PolicyBundleActivated:
+			activated++
+			if e.Payload["activated_by"] != "reload-test" {
+				t.Errorf("the activation names %v as its actor; a change to what the "+
+					"platform denies without a name attached is unattributable",
+					e.Payload["activated_by"])
+			}
+			if e.Payload["content_hash"] == nil || e.Payload["content_hash"] == "" {
+				t.Error("the activation does not say which content took effect")
+			}
+		case evidence.PolicyBundleRolledBack:
+			rolledBack++
+		}
+	}
+
+	// Two activations, bundle_a then bundle_b, and one rollback. Not three
+	// activations: an unchanged file was read twice and a bundle already in force
+	// came back, and a review that reads a retreat as a release is reading the
+	// incident backwards.
+	if activated != 2 {
+		t.Errorf("activated = %d, want 2; got %d events", activated, len(events))
+	}
+	if rolledBack != 1 {
+		t.Errorf("rolled back = %d, want 1; restoring the previous bundle during an "+
+			"incident is not the same act as shipping a new one", rolledBack)
 	}
 }

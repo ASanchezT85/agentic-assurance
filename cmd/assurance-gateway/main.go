@@ -332,6 +332,10 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 	if err != nil {
 		return missing("POLICY_PUBLIC_KEY", "an unverified policy bundle is not policy")
 	}
+	// A reload changes what the enforcement plane denies. Recorded, or an incident
+	// review can see every decision a bundle produced and not which bundle was in force
+	// when, who activated it, or that a rollback happened at all.
+	bundles.Evidence = evidence.NewStore(pool)
 
 	symbols, err := gateway.LoadSymbols(envOr("INSTRUMENT_SYMBOLS", "/etc/assurance/instruments.json"))
 	if err != nil {
