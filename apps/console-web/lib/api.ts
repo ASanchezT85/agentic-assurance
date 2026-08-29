@@ -154,6 +154,7 @@ export type ControlRow = {
   action: string;
   cohort_id: string;
   agent_id: string;
+  agent_ids?: string[];
   account_id: string;
   authorized_by: string;
   reason: string;

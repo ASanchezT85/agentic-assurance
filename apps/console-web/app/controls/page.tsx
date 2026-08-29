@@ -1,5 +1,5 @@
 import { Surface, Unavailable } from "@/components/Surface";
-import { controls } from "@/lib/api";
+import { controls, type ControlRow } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -85,7 +85,9 @@ async function ControlList() {
               <div style={{ opacity: 0.75 }}>{c.reason}</div>
             </td>
             <td>{c.action}</td>
-            <td>{c.agent_id || c.account_id || "whole tenant"}</td>
+            {/* A list-scoped control rendered as "whole tenant" would tell an
+                operator their entire customer is stopped when two agents are. */}
+            <td>{scopeOf(c)}</td>
             <td>{c.authorized_by}</td>
             <td>{c.expires_at}</td>
             {/* in_force comes from the gateway rather than from a comparison here: a
@@ -97,4 +99,11 @@ async function ControlList() {
       </tbody>
     </table>
   );
+}
+
+function scopeOf(c: ControlRow): string {
+  if (c.agent_id) return c.agent_id;
+  if (c.agent_ids && c.agent_ids.length > 0) return c.agent_ids.join(", ");
+  if (c.account_id) return c.account_id;
+  return "whole tenant";
 }
