@@ -253,3 +253,72 @@ func TestCredentialsAreNeverReturned(t *testing.T) {
 		}
 	}
 }
+
+// The symbol the platform resolved is the symbol the venue gets.
+//
+// It used to be ignored in favour of the injected mapping, which in the running
+// gateway was a passthrough of the canonical instrument id, so every real order asked
+// Alpaca for an asset called "instr_us_equity_00206R102". Every test injected a real
+// mapping and the fake broker accepts anything, so only an order at a real venue
+// showed it.
+func TestTheResolvedSymbolReachesTheVenue(t *testing.T) {
+	var sent map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"o-1","client_order_id":"coid-1","status":"accepted","symbol":"AAPL"}`))
+	}))
+	defer server.Close()
+
+	adapter, err := New(Config{
+		BaseURL: server.URL, KeyID: "k", SecretKey: "s",
+		// What the gateway actually injects: a resolver that refuses, because the
+		// platform has already done the resolving.
+		SymbolFor: func(string) (string, bool) { return "", false },
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	quantity := 1.0
+	if _, err := adapter.SubmitOrder(context.Background(), broker.OrderRequest{
+		ClientOrderID: "coid-1",
+		InstrumentID:  "instr_us_equity_00206R102",
+		Symbol:        "AAPL",
+		Side:          intent.SideBuy,
+		OrderType:     intent.OrderMarket,
+		Quantity:      &quantity,
+		TimeInForce:   intent.TIFDay,
+	}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	if sent["symbol"] != "AAPL" {
+		t.Errorf("the venue was asked for %q, want AAPL", sent["symbol"])
+	}
+}
+
+// And with neither a resolved symbol nor a mapping, the order is refused rather than
+// sent under the canonical id.
+func TestAnUnresolvedInstrumentIsRefusedRatherThanGuessed(t *testing.T) {
+	adapter, err := New(Config{
+		BaseURL: "https://paper-api.alpaca.markets", KeyID: "k", SecretKey: "s",
+		SymbolFor: func(string) (string, bool) { return "", false },
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	quantity := 1.0
+	_, err = adapter.SubmitOrder(context.Background(), broker.OrderRequest{
+		ClientOrderID: "coid-1",
+		InstrumentID:  "instr_us_equity_00206R102",
+		Side:          intent.SideBuy,
+		OrderType:     intent.OrderMarket,
+		Quantity:      &quantity,
+		TimeInForce:   intent.TIFDay,
+	})
+	if !errors.Is(err, broker.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}

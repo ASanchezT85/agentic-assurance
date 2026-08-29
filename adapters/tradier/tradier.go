@@ -235,10 +235,9 @@ func faultMessage(raw []byte) string {
 }
 
 func (a *Adapter) SubmitOrder(ctx context.Context, req broker.OrderRequest) (broker.BrokerOrder, error) {
-	symbol, ok := a.cfg.SymbolFor(req.InstrumentID)
-	if !ok {
-		return broker.BrokerOrder{}, fmt.Errorf("%w: no symbol for instrument %s",
-			broker.ErrUnsupported, req.InstrumentID)
+	symbol, err := venueSymbol(req, a.cfg.SymbolFor)
+	if err != nil {
+		return broker.BrokerOrder{}, err
 	}
 	if req.ClientOrderID == "" {
 		return broker.BrokerOrder{}, fmt.Errorf("%w: client order id is required for reconciliation",
@@ -508,4 +507,22 @@ func toExecutionState(status string) (broker.ExecutionState, bool) {
 		return broker.StateRejected, true
 	}
 	return "", false
+}
+
+// venueSymbol is the symbol this order goes to the venue with.
+//
+// The platform resolves it and puts it on the request (spec section 13); this used to
+// ignore that and re-resolve through the injected mapping, which in the running
+// gateway is a passthrough of the canonical instrument id.
+func venueSymbol(req broker.OrderRequest, fallback func(string) (string, bool)) (string, error) {
+	if req.Symbol != "" {
+		return req.Symbol, nil
+	}
+	if fallback != nil {
+		if symbol, ok := fallback(req.InstrumentID); ok {
+			return symbol, nil
+		}
+	}
+	return "", fmt.Errorf("%w: no venue symbol for instrument %s; an adapter does not "+
+		"guess one", broker.ErrUnsupported, req.InstrumentID)
 }

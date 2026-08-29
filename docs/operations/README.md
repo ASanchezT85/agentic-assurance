@@ -282,8 +282,18 @@ nothing is worse than a skipped one.
 The adapter refuses a non-paper endpoint at construction, so a live URL in that
 variable fails before the first order rather than after it.
 
-**Not yet run.** It needs paper credentials this repository does not have and must never
-contain (spec section 35).
+**Run 2026-08-29, and it found a real defect on the first attempt.** The adapter took
+the venue symbol from its injected mapping instead of from `OrderRequest.Symbol`, which
+the platform had already resolved. In the running gateway that mapping was a
+passthrough of the canonical instrument id, so the order asked Alpaca for an asset
+called `instr_us_equity_00206R102` and came back rejected. Every unit test injected a
+real mapping and the fake broker accepts any symbol, so nothing but an order at a real
+venue could show it.
+
+With the fix, the whole section 66 chain runs against Alpaca Paper: envelope → identity
+→ authority → policy → venue, order `dd6481bf-abce-41f6-883a-87ff4def9a70` accepted, the
+evidence chain complete, and the resting order cancelled afterwards — the account is
+left with no open orders and no positions.
 
 ### A measurement defect worth remembering
 

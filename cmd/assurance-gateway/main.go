@@ -361,7 +361,14 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 // openBroker builds the venue adapter. V0 has no real-money path, and both adapters
 // refuse a non-paper endpoint themselves (spec section 59).
 func openBroker() (broker.Adapter, error) {
-	symbolPassthrough := func(s string) (string, bool) { return s, s != "" }
+	// The platform resolves instrument identity to a venue symbol and puts it on the
+	// order (spec section 13), so an adapter never needs this. It used to be a
+	// passthrough that returned the canonical instrument id as if it were a ticker,
+	// and adapters preferred it over the resolved symbol: every order this gateway
+	// sent to Alpaca carried "instr_us_equity_..." where AAPL belonged. Refusing is
+	// the honest fallback — an unresolved instrument is an order to stop, not one to
+	// send under a guessed name.
+	symbolMustComeFromThePlatform := func(string) (string, bool) { return "", false }
 
 	switch os.Getenv("BROKER") {
 	case "alpaca":
@@ -369,14 +376,14 @@ func openBroker() (broker.Adapter, error) {
 			BaseURL:   os.Getenv("ALPACA_BASE_URL"),
 			KeyID:     os.Getenv("ALPACA_KEY_ID"),
 			SecretKey: os.Getenv("ALPACA_SECRET_KEY"),
-			SymbolFor: symbolPassthrough,
+			SymbolFor: symbolMustComeFromThePlatform,
 		})
 	case "tradier":
 		return tradier.New(tradier.Config{
 			BaseURL:   os.Getenv("TRADIER_BASE_URL"),
 			Token:     os.Getenv("TRADIER_TOKEN"),
 			AccountID: os.Getenv("TRADIER_ACCOUNT_ID"),
-			SymbolFor: symbolPassthrough,
+			SymbolFor: symbolMustComeFromThePlatform,
 		})
 	case "fake":
 		// A deterministic venue for development and end-to-end runs. It is gated on

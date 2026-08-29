@@ -202,10 +202,9 @@ func (a *Adapter) do(ctx context.Context, method, path string, body any, out any
 }
 
 func (a *Adapter) SubmitOrder(ctx context.Context, req broker.OrderRequest) (broker.BrokerOrder, error) {
-	symbol, ok := a.cfg.SymbolFor(req.InstrumentID)
-	if !ok {
-		return broker.BrokerOrder{}, fmt.Errorf("%w: no symbol for instrument %s",
-			broker.ErrUnsupported, req.InstrumentID)
+	symbol, err := venueSymbol(req, a.cfg.SymbolFor)
+	if err != nil {
+		return broker.BrokerOrder{}, err
 	}
 	if req.ClientOrderID == "" {
 		return broker.BrokerOrder{}, fmt.Errorf("%w: client order id is required for reconciliation",
@@ -396,4 +395,28 @@ func toExecutionState(status string) (broker.ExecutionState, bool) {
 		return broker.StateRejected, true
 	}
 	return "", false
+}
+
+// venueSymbol is the symbol this order goes to the venue with.
+//
+// The platform resolves it and puts it on the request: instrument reference data
+// belongs to the platform (spec section 13), and OrderRequest.Symbol is where that
+// resolution arrives. This used to ignore it and re-resolve through the injected
+// mapping, which in the running gateway was a passthrough of the canonical id — so
+// every real order carried "instr_us_equity_00206R102" where a ticker belonged, and
+// Alpaca answered "asset not found".
+//
+// Nothing caught it because every test injected a real mapping, and the fake broker
+// accepts any symbol. It took an order at a real venue to see it.
+func venueSymbol(req broker.OrderRequest, fallback func(string) (string, bool)) (string, error) {
+	if req.Symbol != "" {
+		return req.Symbol, nil
+	}
+	if fallback != nil {
+		if symbol, ok := fallback(req.InstrumentID); ok {
+			return symbol, nil
+		}
+	}
+	return "", fmt.Errorf("%w: no venue symbol for instrument %s; an adapter does not "+
+		"guess one", broker.ErrUnsupported, req.InstrumentID)
 }
