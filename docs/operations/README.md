@@ -205,6 +205,16 @@ disagreeing about who owns the infrastructure.
 It restores every container through `t.Cleanup`, including on failure, but it will
 interrupt anything else using the compose stack while it runs. Run it alone.
 
+**Run 2026-08-29, green in 27 s**: enforcement survives ClickHouse, NATS, Redis and the
+whole intelligence plane going away; PostgreSQL going away fails closed; a missing
+policy bundle denies; a broker timeout does not duplicate; a gateway restart loses
+nothing that matters.
+
+One gap worth naming rather than leaving to be discovered: the suite drives
+`execution.Service` directly, so the control stage added later is not in it. That an
+unreadable control store denies is proved by a unit test that injects the failure
+(`CONTROL_UNAVAILABLE`), not by stopping a container.
+
 ### Measured on the reference machine, 2026-08-28
 
 | | p50 | p95 | p99 | Section 50.1 target |
