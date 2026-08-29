@@ -14,6 +14,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 var origin = time.Date(2026, 8, 27, 14, 32, 0, 0, time.UTC)
@@ -246,7 +247,7 @@ func fragmentationGrant(perOrderLimit float64) *authority.Grant {
 		ValidUntil:          origin.Add(time.Hour),
 		AllowedOperations:   []intent.Side{intent.SideBuy, intent.SideSell},
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
-		Limits:              authority.Limits{PerOrderNotional: perOrderLimit},
+		Limits:              authority.Limits{PerOrderNotional: money.MustParse("5000")},
 		Status:              authority.StatusActive,
 	}
 }

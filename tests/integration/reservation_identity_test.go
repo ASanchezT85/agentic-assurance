@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentic-assurance/internal/authority"
+	"agentic-assurance/internal/money"
 )
 
 // B-003: can a reservation be inherited by a different intent?
@@ -18,12 +19,12 @@ import (
 // without checking what it was reserved for. These are the audit's exploit paths,
 // written to fail before the fix rather than after.
 
-func reservationGrant(tenant, id string, rolling float64, at time.Time) *authority.Grant {
+func reservationGrant(tenant, id string, rolling money.Amount, at time.Time) *authority.Grant {
 	return &authority.Grant{
 		GrantID: id, TenantID: tenant,
 		PrincipalID: "prin_res", AccountID: "acct_res", AgentID: "agent_res",
 		IssuedAt: at.Add(-time.Hour), ValidFrom: at.Add(-time.Hour), ValidUntil: at.Add(time.Hour),
-		Limits: authority.Limits{PerOrderNotional: 100000, Rolling1hNotional: rolling},
+		Limits: authority.Limits{PerOrderNotional: money.MustParse("100000"), Rolling1hNotional: rolling},
 		Status: authority.StatusActive,
 	}
 }
@@ -35,11 +36,11 @@ func TestAnOrphanReservationDoesNotAuthorizeADifferentIntent(t *testing.T) {
 	ctx := context.Background()
 	at := time.Now().UTC()
 	tenant := fmt.Sprintf("tenant_orphan_%d", at.UnixNano())
-	grant := reservationGrant(tenant, "grant_orphan", 10000, at)
+	grant := reservationGrant(tenant, "grant_orphan", money.MustParse("10000"), at)
 	key := "K"
 
 	// Intent A reserves 1,000 and never reaches a venue.
-	first, err := usage.Reserve(ctx, grant, key, 1000, authority.ReservationIdentity{
+	first, err := usage.Reserve(ctx, grant, key, money.MustParse("1000"), authority.ReservationIdentity{
 		EnvelopeID: "env_A", PrincipalID: "prin_res", AccountID: "acct_res",
 	}, at)
 	if err != nil {
@@ -50,7 +51,7 @@ func TestAnOrphanReservationDoesNotAuthorizeADifferentIntent(t *testing.T) {
 	}
 
 	// Intent B reuses the key with another envelope and eight times the size.
-	second, err := usage.Reserve(ctx, grant, key, 8000, authority.ReservationIdentity{
+	second, err := usage.Reserve(ctx, grant, key, money.MustParse("8000"), authority.ReservationIdentity{
 		EnvelopeID: "env_B", PrincipalID: "prin_res", AccountID: "acct_res",
 	}, at)
 	if err != nil {
@@ -75,16 +76,16 @@ func TestAReservationIsNotInheritedAcrossGrants(t *testing.T) {
 	tenant := fmt.Sprintf("tenant_cross_%d", at.UnixNano())
 	key := "K"
 
-	grantA := reservationGrant(tenant, "grant_A", 10000, at)
-	grantB := reservationGrant(tenant, "grant_B", 10000, at)
+	grantA := reservationGrant(tenant, "grant_A", money.MustParse("10000"), at)
+	grantB := reservationGrant(tenant, "grant_B", money.MustParse("10000"), at)
 
-	if d, err := usage.Reserve(ctx, grantA, key, 1000, authority.ReservationIdentity{
+	if d, err := usage.Reserve(ctx, grantA, key, money.MustParse("1000"), authority.ReservationIdentity{
 		EnvelopeID: "env_A", PrincipalID: "prin_res", AccountID: "acct_res",
 	}, at); err != nil || !d.Allowed {
 		t.Fatalf("reserve under A: %v %s", err, d.Code)
 	}
 
-	second, err := usage.Reserve(ctx, grantB, key, 1000, authority.ReservationIdentity{
+	second, err := usage.Reserve(ctx, grantB, key, money.MustParse("1000"), authority.ReservationIdentity{
 		EnvelopeID: "env_A", PrincipalID: "prin_res", AccountID: "acct_res",
 	}, at)
 	if err != nil {
@@ -103,11 +104,11 @@ func TestAStaleUsageRowDoesNotHideFreshUsage(t *testing.T) {
 	now := time.Now().UTC()
 	old := now.Add(-90 * 24 * time.Hour)
 	tenant := fmt.Sprintf("tenant_stale_%d", now.UnixNano())
-	grant := reservationGrant(tenant, "grant_stale", 10000, now)
+	grant := reservationGrant(tenant, "grant_stale", money.MustParse("10000"), now)
 	key := "K"
 
 	// Months ago, under this key.
-	if d, err := usage.Reserve(ctx, grant, key, 1000, authority.ReservationIdentity{
+	if d, err := usage.Reserve(ctx, grant, key, money.MustParse("1000"), authority.ReservationIdentity{
 		EnvelopeID: "env_old", PrincipalID: "prin_res", AccountID: "acct_res",
 	}, old); err != nil || !d.Allowed {
 		t.Fatalf("historical reserve: %v %s", err, d.Code)
@@ -115,7 +116,7 @@ func TestAStaleUsageRowDoesNotHideFreshUsage(t *testing.T) {
 
 	// The same key today, a different envelope. It must be evaluated as what it is: a
 	// new request whose notional counts against the current window.
-	fresh, err := usage.Reserve(ctx, grant, key, 9500, authority.ReservationIdentity{
+	fresh, err := usage.Reserve(ctx, grant, key, money.MustParse("9500"), authority.ReservationIdentity{
 		EnvelopeID: "env_new", PrincipalID: "prin_res", AccountID: "acct_res",
 	}, now)
 	if err != nil {

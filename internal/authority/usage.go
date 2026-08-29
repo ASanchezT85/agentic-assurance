@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"agentic-assurance/internal/money"
 )
 
 // Consumed usage is recorded against a grant when an order is actually submitted.
@@ -27,7 +29,7 @@ type Entry struct {
 	TenantID       string
 	GrantID        string
 	IdempotencyKey string
-	Notional       float64
+	Notional       money.Amount
 	SubmittedAt    time.Time
 
 	// Open is false once the order reached a terminal state. MaxOpenOrders counts
@@ -101,7 +103,7 @@ func (m *MemoryUsage) Close(_ context.Context, tenantID, idempotencyKey string, 
 // same call the gateway makes; the ceiling that has to hold across gateways is the
 // PostgreSQL one.
 func (m *MemoryUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey string,
-	notional float64, who ReservationIdentity, at time.Time) (Decision, error) {
+	notional money.Amount, who ReservationIdentity, at time.Time) (Decision, error) {
 
 	if g == nil {
 		return Decision{}, fmt.Errorf("no grant to reserve against")
@@ -184,10 +186,10 @@ func (m *MemoryUsage) snapshot(tenantID, grantID string, now time.Time) Snapshot
 			continue
 		}
 		if e.SubmittedAt.After(now.Add(-time.Hour)) {
-			snap.Rolling1hNotional += e.Notional
+			snap.Rolling1hNotional = snap.Rolling1hNotional.Add(e.Notional)
 		}
 		if !e.SubmittedAt.Before(dayStart) {
-			snap.DailyNotional += e.Notional
+			snap.DailyNotional = snap.DailyNotional.Add(e.Notional)
 		}
 		if e.Open {
 			snap.OpenOrders++
@@ -237,7 +239,8 @@ func (s *PostgresUsage) Record(ctx context.Context, e Entry) error {
 				(tenant_id, grant_id, idempotency_key, notional, submitted_at, open, closed_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`,
-			e.TenantID, e.GrantID, e.IdempotencyKey, e.Notional, e.SubmittedAt.UTC(), e.Open, closedAt)
+			e.TenantID, e.GrantID, e.IdempotencyKey, e.Notional.String(), e.SubmittedAt.UTC(),
+			e.Open, closedAt)
 		return err
 	})
 }
@@ -263,7 +266,7 @@ func (s *PostgresUsage) Close(ctx context.Context, tenantID, idempotencyKey stri
 // and it is transaction-scoped, so it is released by commit or rollback rather than by
 // remembering to.
 func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey string,
-	notional float64, who ReservationIdentity, at time.Time) (Decision, error) {
+	notional money.Amount, who ReservationIdentity, at time.Time) (Decision, error) {
 
 	if g == nil {
 		return Decision{}, fmt.Errorf("no grant to reserve against")
@@ -293,12 +296,12 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 			heldEnvelope  string
 			heldPrincipal string
 			heldAccount   string
-			heldNotional  float64
+			heldNotional  string
 			heldState     string
 		)
 		err := tx.QueryRow(ctx, `
 			SELECT grant_id, COALESCE(envelope_id, ''), COALESCE(principal_id, ''),
-			       COALESCE(account_id, ''), notional, state
+			       COALESCE(account_id, ''), notional::text, state
 			  FROM authority_usage
 			 WHERE tenant_id = $1 AND idempotency_key = $2`,
 			g.TenantID, idempotencyKey).Scan(&heldGrant, &heldEnvelope, &heldPrincipal,
@@ -321,7 +324,7 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 				mismatch = "a different envelope"
 			case heldPrincipal != who.PrincipalID || heldAccount != who.AccountID:
 				mismatch = "a different principal or account"
-			case heldNotional != notional:
+			case parseAmount(heldNotional) != notional:
 				mismatch = "a different amount"
 			}
 			if mismatch != "" {
@@ -340,18 +343,26 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 		// Released rows are capacity returned: an order the venue definitively
 		// refused never existed, and leaving it consumed would let anyone exhaust a
 		// customer's grant with requests that were always going to be rejected.
-		var consumed Snapshot
+		var (
+			consumed Snapshot
+			rolling  string
+			daily    string
+		)
 		if err := tx.QueryRow(ctx, `
 			SELECT
-				COALESCE(SUM(notional) FILTER (WHERE submitted_at > $3), 0),
-				COALESCE(SUM(notional) FILTER (WHERE submitted_at >= $4), 0),
+				COALESCE(SUM(notional) FILTER (WHERE submitted_at > $3), 0)::text,
+				COALESCE(SUM(notional) FILTER (WHERE submitted_at >= $4), 0)::text,
 				COUNT(*) FILTER (WHERE open)
 			FROM authority_usage
 			WHERE tenant_id = $1 AND grant_id = $2 AND state <> 'RELEASED'`,
 			g.TenantID, g.GrantID, now.Add(-time.Hour), dayStart,
-		).Scan(&consumed.Rolling1hNotional, &consumed.DailyNotional, &consumed.OpenOrders); err != nil {
+		).Scan(&rolling, &daily, &consumed.OpenOrders); err != nil {
 			return err
 		}
+		// Text, not a float. A sum that travelled through a float64 would be a number
+		// the ceiling was compared against but not the number that was stored.
+		consumed.Rolling1hNotional = parseAmount(rolling)
+		consumed.DailyNotional = parseAmount(daily)
 
 		if code, reason := checkLimits(g.Limits, consumed, notional); code != "" {
 			decision = reservationDecision(g, now, false, code, reason)
@@ -363,7 +374,7 @@ func (s *PostgresUsage) Reserve(ctx context.Context, g *Grant, idempotencyKey st
 				(tenant_id, grant_id, idempotency_key, notional, submitted_at, open, state,
 				 envelope_id, principal_id, account_id)
 			VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,$9)`,
-			g.TenantID, g.GrantID, idempotencyKey, notional, now, string(StateReserved),
+			g.TenantID, g.GrantID, idempotencyKey, notional.String(), now, string(StateReserved),
 			who.EnvelopeID, who.PrincipalID, who.AccountID); err != nil {
 			return err
 		}
@@ -421,19 +432,38 @@ func (s *PostgresUsage) Usage(ctx context.Context, tenantID, grantID string, now
 	now = now.UTC()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-	var snap Snapshot
+	var (
+		snap    Snapshot
+		rolling string
+		daily   string
+	)
 	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		// One round trip. Three queries would let the rolling window and the daily
 		// window disagree about what "now" was.
 		return tx.QueryRow(ctx, `
 			SELECT
-				COALESCE(SUM(notional) FILTER (WHERE submitted_at > $3), 0),
-				COALESCE(SUM(notional) FILTER (WHERE submitted_at >= $4), 0),
+				COALESCE(SUM(notional) FILTER (WHERE submitted_at > $3), 0)::text,
+				COALESCE(SUM(notional) FILTER (WHERE submitted_at >= $4), 0)::text,
 				COUNT(*) FILTER (WHERE open)
 			FROM authority_usage
 			WHERE tenant_id = $1 AND grant_id = $2 AND state <> 'RELEASED'`,
 			tenantID, grantID, now.Add(-time.Hour), dayStart,
-		).Scan(&snap.Rolling1hNotional, &snap.DailyNotional, &snap.OpenOrders)
+		).Scan(&rolling, &daily, &snap.OpenOrders)
 	})
+	snap.Rolling1hNotional = parseAmount(rolling)
+	snap.DailyNotional = parseAmount(daily)
 	return snap, err
+}
+
+// parseAmount reads a PostgreSQL numeric that arrived as text.
+//
+// An unreadable value becomes zero, which understates consumption rather than
+// overstating it — the wrong direction for a ceiling, so it cannot happen quietly: the
+// column is numeric(20,4) and everything written to it comes from Amount.String().
+func parseAmount(text string) money.Amount {
+	amount, err := money.Parse(text)
+	if err != nil {
+		return 0
+	}
+	return amount
 }

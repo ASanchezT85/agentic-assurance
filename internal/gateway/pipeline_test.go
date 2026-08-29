@@ -21,6 +21,7 @@ import (
 	"agentic-assurance/internal/execution"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 	"agentic-assurance/internal/policy"
 )
 
@@ -144,9 +145,9 @@ func grant() *authority.Grant {
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
 		AllowedInstruments:  []string{"instr_us_equity_00206R102", "instr_us_equity_PENNY"},
 		Limits: authority.Limits{
-			PerOrderNotional:  500000,
-			Rolling1hNotional: 1000000,
-			DailyNotional:     2000000,
+			PerOrderNotional:  money.MustParse("500000"),
+			Rolling1hNotional: money.MustParse("1000000"),
+			DailyNotional:     money.MustParse("2000000"),
 			MaxOpenOrders:     50,
 		},
 		Status: authority.StatusActive,
@@ -646,7 +647,7 @@ func TestARollingLimitTripsOnceTheGrantIsSpent(t *testing.T) {
 	// 190.50 x 10 = 1,905 per order against a 1,000,000 rolling limit.
 	g := grant()
 	g.Limits.MaxOpenOrders = 0
-	g.Limits.DailyNotional = 0
+	g.Limits.DailyNotional = money.MustParse("0")
 	p.Grants = memGrants{"grant_test": g}
 
 	const perOrder, limit = 1905.0, 1000000.0
@@ -678,8 +679,8 @@ func TestAReplayedSubmissionDoesNotSpendTheGrantTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("usage: %v", err)
 	}
-	if snapshot.Rolling1hNotional != 1905 {
-		t.Errorf("three submissions of one idempotency key spent %.2f, want 1905.00",
+	if snapshot.Rolling1hNotional != money.MustParse("1905") {
+		t.Errorf("three submissions of one idempotency key spent %s, want 1905.00",
 			snapshot.Rolling1hNotional)
 	}
 }

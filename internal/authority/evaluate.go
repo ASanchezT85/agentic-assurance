@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // Decision is the outcome of authority evaluation. Authority produces ALLOW or DENY
@@ -36,8 +37,8 @@ func deny(g *Grant, now time.Time, code, reason string) Decision {
 // Snapshot is the usage already consumed under a grant. It is a snapshot rather than
 // a live query per limit so that one evaluation sees one consistent view.
 type Snapshot struct {
-	Rolling1hNotional float64
-	DailyNotional     float64
+	Rolling1hNotional money.Amount
+	DailyNotional     money.Amount
 	OpenOrders        int
 }
 
@@ -126,9 +127,16 @@ func revokedAtString(g *Grant) string {
 // bounds the exposure, so LIMIT and STOP_LIMIT are determinable; a stop order is
 // not, because it becomes a market order once triggered and the stop price is a
 // trigger, not a fill price.
-func EffectiveNotional(in intent.Intent) (float64, bool) {
+func EffectiveNotional(in intent.Intent) (money.Amount, bool) {
 	if in.Notional != nil {
-		return *in.Notional, true
+		amount, err := money.FromFloat(*in.Notional)
+		if err != nil {
+			// More precision than the platform keeps. Refusing is the only honest
+			// answer: rounding here would authorize an amount the caller did not ask
+			// for, and the caller is the only one who can say which they meant.
+			return 0, false
+		}
+		return amount, true
 	}
 	if in.Quantity == nil {
 		return 0, false
@@ -136,7 +144,11 @@ func EffectiveNotional(in intent.Intent) (float64, bool) {
 	switch in.OrderType {
 	case intent.OrderLimit, intent.OrderStopLimit:
 		if in.LimitPrice != nil {
-			return *in.Quantity * *in.LimitPrice, true
+			price, err := money.FromFloat(*in.LimitPrice)
+			if err != nil {
+				return 0, false
+			}
+			return money.Notional(price, *in.Quantity), true
 		}
 	}
 	return 0, false
@@ -157,7 +169,8 @@ func evaluateLimits(ctx context.Context, env *intent.AgentExecutionEnvelope, g *
 
 	if limits.PerOrderNotional > 0 && notional > limits.PerOrderNotional {
 		return deny(g, now, "PER_ORDER_LIMIT_EXCEEDED",
-			fmt.Sprintf("order notional %.2f exceeds the per-order limit %.2f", notional, limits.PerOrderNotional))
+			fmt.Sprintf("order notional %s exceeds the per-order limit %s",
+				notional, limits.PerOrderNotional))
 	}
 
 	if !needsUsage {
@@ -176,19 +189,8 @@ func evaluateLimits(ctx context.Context, env *intent.AgentExecutionEnvelope, g *
 			"consumed usage could not be read: "+err.Error())
 	}
 
-	if limits.Rolling1hNotional > 0 && consumed.Rolling1hNotional+notional > limits.Rolling1hNotional {
-		return deny(g, now, "ROLLING_LIMIT_EXCEEDED",
-			fmt.Sprintf("%.2f already used in the last hour plus %.2f exceeds the rolling limit %.2f",
-				consumed.Rolling1hNotional, notional, limits.Rolling1hNotional))
-	}
-	if limits.DailyNotional > 0 && consumed.DailyNotional+notional > limits.DailyNotional {
-		return deny(g, now, "DAILY_LIMIT_EXCEEDED",
-			fmt.Sprintf("%.2f already used today plus %.2f exceeds the daily limit %.2f",
-				consumed.DailyNotional, notional, limits.DailyNotional))
-	}
-	if limits.MaxOpenOrders > 0 && consumed.OpenOrders >= limits.MaxOpenOrders {
-		return deny(g, now, "MAX_OPEN_ORDERS_EXCEEDED",
-			fmt.Sprintf("%d orders already open, limit is %d", consumed.OpenOrders, limits.MaxOpenOrders))
+	if code, reason := checkLimits(limits, consumed, notional); code != "" {
+		return deny(g, now, code, reason)
 	}
 
 	return allow(g, now)

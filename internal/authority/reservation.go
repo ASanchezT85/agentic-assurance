@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"agentic-assurance/internal/money"
 )
 
 // Atomic reservation of a grant's mutable limits.
@@ -75,7 +77,7 @@ type Reserver interface {
 	// Reserving twice under one idempotency key is not two reservations. A retry that
 	// already holds capacity keeps it: the ledger is keyed by the key for the same
 	// reason the idempotency record is.
-	Reserve(ctx context.Context, g *Grant, idempotencyKey string, notional float64,
+	Reserve(ctx context.Context, g *Grant, idempotencyKey string, notional money.Amount,
 		who ReservationIdentity, at time.Time) (Decision, error)
 
 	// Release returns capacity when it is known that nothing was sent.
@@ -107,15 +109,15 @@ func reservationDecision(g *Grant, at time.Time, allowed bool, code, reason stri
 
 // checkLimits is the arithmetic, shared by the pre-check in Evaluate and by the atomic
 // reservation, so the two can never disagree about what a limit means.
-func checkLimits(limits Limits, consumed Snapshot, notional float64) (code, reason string) {
-	if limits.Rolling1hNotional > 0 && consumed.Rolling1hNotional+notional > limits.Rolling1hNotional {
+func checkLimits(limits Limits, consumed Snapshot, notional money.Amount) (code, reason string) {
+	if limits.Rolling1hNotional > 0 && consumed.Rolling1hNotional.Add(notional) > limits.Rolling1hNotional {
 		return "ROLLING_LIMIT_EXCEEDED", fmt.Sprintf(
-			"%.2f already used in the last hour plus %.2f exceeds the rolling limit %.2f",
+			"%s already used in the last hour plus %s exceeds the rolling limit %s",
 			consumed.Rolling1hNotional, notional, limits.Rolling1hNotional)
 	}
-	if limits.DailyNotional > 0 && consumed.DailyNotional+notional > limits.DailyNotional {
+	if limits.DailyNotional > 0 && consumed.DailyNotional.Add(notional) > limits.DailyNotional {
 		return "DAILY_LIMIT_EXCEEDED", fmt.Sprintf(
-			"%.2f already used today plus %.2f exceeds the daily limit %.2f",
+			"%s already used today plus %s exceeds the daily limit %s",
 			consumed.DailyNotional, notional, limits.DailyNotional)
 	}
 	if limits.MaxOpenOrders > 0 && consumed.OpenOrders >= limits.MaxOpenOrders {

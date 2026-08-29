@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agentic-assurance/internal/authority"
+	"agentic-assurance/internal/money"
 	"agentic-assurance/internal/policy"
 )
 
@@ -110,7 +111,7 @@ func TestRollingLimitsWithoutABackendDeny(t *testing.T) {
 	at := time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
 
 	g := grantFor("tenant_acme")
-	g.Limits = authority.Limits{Rolling1hNotional: 10000}
+	g.Limits = authority.Limits{Rolling1hNotional: money.MustParse("10000")}
 
 	got := authority.Evaluate(context.Background(), envelopeFor("tenant_acme"), g, nil, at)
 	if got.Allowed {

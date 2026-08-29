@@ -7,6 +7,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // INV-007: tenant A cannot observe tenant B data.
@@ -30,7 +31,7 @@ func grantFor(tenantID string) *authority.Grant {
 		ValidUntil:          at.Add(time.Hour),
 		AllowedOperations:   []intent.Side{intent.SideBuy},
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
-		Limits:              authority.Limits{PerOrderNotional: 5000},
+		Limits:              authority.Limits{PerOrderNotional: money.MustParse("5000")},
 		Status:              authority.StatusActive,
 	}
 }

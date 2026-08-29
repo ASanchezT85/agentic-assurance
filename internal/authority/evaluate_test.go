@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 var now = time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
@@ -39,7 +40,7 @@ func validGrant() *Grant {
 		ValidUntil:          now.Add(time.Hour),
 		AllowedOperations:   []intent.Side{intent.SideBuy, intent.SideSell},
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity, intent.AssetETF},
-		Limits:              Limits{PerOrderNotional: 5000},
+		Limits:              Limits{PerOrderNotional: money.MustParse("5000")},
 		Status:              StatusActive,
 	}
 }
@@ -147,20 +148,20 @@ func TestAuthorityMatrix(t *testing.T) {
 		},
 		{
 			name:     "exceeds rolling limit",
-			grant:    func(g *Grant) { g.Limits.Rolling1hNotional = 10000 },
-			usage:    memoryUsage{snapshot: Snapshot{Rolling1hNotional: 6000}},
+			grant:    func(g *Grant) { g.Limits.Rolling1hNotional = money.MustParse("10000") },
+			usage:    memoryUsage{snapshot: Snapshot{Rolling1hNotional: money.MustParse("6000")}},
 			wantCode: "ROLLING_LIMIT_EXCEEDED",
 		},
 		{
 			name:     "within the rolling limit",
-			grant:    func(g *Grant) { g.Limits.Rolling1hNotional = 10000 },
-			usage:    memoryUsage{snapshot: Snapshot{Rolling1hNotional: 5000}},
+			grant:    func(g *Grant) { g.Limits.Rolling1hNotional = money.MustParse("10000") },
+			usage:    memoryUsage{snapshot: Snapshot{Rolling1hNotional: money.MustParse("5000")}},
 			wantCode: codeAllowed,
 		},
 		{
 			name:     "exceeds daily limit",
-			grant:    func(g *Grant) { g.Limits.DailyNotional = 15000 },
-			usage:    memoryUsage{snapshot: Snapshot{DailyNotional: 11000}},
+			grant:    func(g *Grant) { g.Limits.DailyNotional = money.MustParse("15000") },
+			usage:    memoryUsage{snapshot: Snapshot{DailyNotional: money.MustParse("11000")}},
 			wantCode: "DAILY_LIMIT_EXCEEDED",
 		},
 		{
@@ -171,13 +172,13 @@ func TestAuthorityMatrix(t *testing.T) {
 		},
 		{
 			name:     "usage unreadable fails closed",
-			grant:    func(g *Grant) { g.Limits.DailyNotional = 15000 },
+			grant:    func(g *Grant) { g.Limits.DailyNotional = money.MustParse("15000") },
 			usage:    memoryUsage{failWith: errors.New("connection refused")},
 			wantCode: "USAGE_UNAVAILABLE",
 		},
 		{
 			name:     "rolling limit with no usage source fails closed",
-			grant:    func(g *Grant) { g.Limits.Rolling1hNotional = 10000 },
+			grant:    func(g *Grant) { g.Limits.Rolling1hNotional = money.MustParse("10000") },
 			usage:    nil,
 			wantCode: "USAGE_UNAVAILABLE",
 		},
@@ -289,13 +290,13 @@ func TestEffectiveNotional(t *testing.T) {
 	cases := []struct {
 		name         string
 		in           intent.Intent
-		want         float64
+		want         money.Amount
 		determinable bool
 	}{
-		{"explicit notional", intent.Intent{OrderType: intent.OrderMarket, Notional: f(4200)}, 4200, true},
+		{"explicit notional", intent.Intent{OrderType: intent.OrderMarket, Notional: f(4200)}, money.MustParse("4200"), true},
 		{"market sized by quantity", intent.Intent{OrderType: intent.OrderMarket, Quantity: f(25)}, 0, false},
-		{"limit bounded by price", intent.Intent{OrderType: intent.OrderLimit, Quantity: f(25), LimitPrice: f(100)}, 2500, true},
-		{"stop limit bounded by price", intent.Intent{OrderType: intent.OrderStopLimit, Quantity: f(10), LimitPrice: f(50), StopPrice: f(49)}, 500, true},
+		{"limit bounded by price", intent.Intent{OrderType: intent.OrderLimit, Quantity: f(25), LimitPrice: f(100)}, money.MustParse("2500"), true},
+		{"stop limit bounded by price", intent.Intent{OrderType: intent.OrderStopLimit, Quantity: f(10), LimitPrice: f(50), StopPrice: f(49)}, money.MustParse("500"), true},
 		{"stop is a trigger not a price", intent.Intent{OrderType: intent.OrderStop, Quantity: f(10), StopPrice: f(49)}, 0, false},
 		{"nothing at all", intent.Intent{OrderType: intent.OrderMarket}, 0, false},
 	}

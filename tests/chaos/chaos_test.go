@@ -44,6 +44,7 @@ import (
 	"agentic-assurance/internal/broker"
 	"agentic-assurance/internal/execution"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 	"agentic-assurance/internal/policy"
 )
 
@@ -114,7 +115,7 @@ func grant() *authority.Grant {
 		ValidUntil:          at.Add(time.Hour),
 		AllowedOperations:   []intent.Side{intent.SideBuy, intent.SideSell},
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
-		Limits:              authority.Limits{PerOrderNotional: 5000},
+		Limits:              authority.Limits{PerOrderNotional: money.MustParse("5000")},
 		Status:              authority.StatusActive,
 	}
 }

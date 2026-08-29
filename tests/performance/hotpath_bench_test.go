@@ -14,6 +14,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 	"agentic-assurance/internal/policy"
 )
 
@@ -54,7 +55,7 @@ func benchGrant() *authority.Grant {
 		ValidUntil:          benchAt.Add(time.Hour),
 		AllowedOperations:   []intent.Side{intent.SideBuy, intent.SideSell},
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity, intent.AssetETF},
-		Limits:              authority.Limits{PerOrderNotional: 5000},
+		Limits:              authority.Limits{PerOrderNotional: money.MustParse("5000")},
 		Status:              authority.StatusActive,
 	}
 }

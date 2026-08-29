@@ -25,6 +25,7 @@ import (
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 	"agentic-assurance/internal/policy"
 )
 
@@ -230,7 +231,7 @@ func mtlsGrant(at time.Time) *authority.Grant {
 		AllowedOperations:   []intent.Side{intent.SideBuy, intent.SideSell},
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
 		AllowedInstruments:  []string{"instr_us_equity_00206R102"},
-		Limits:              authority.Limits{PerOrderNotional: 50000},
+		Limits:              authority.Limits{PerOrderNotional: money.MustParse("50000")},
 		Status:              authority.StatusActive,
 	}
 }

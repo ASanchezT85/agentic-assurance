@@ -12,6 +12,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // INV-007, the database half.
@@ -106,7 +107,7 @@ func seedGrant(t *testing.T, store *authority.Store, tenantID, grantID string) *
 		ValidUntil:          at.Add(time.Hour),
 		AllowedOperations:   sidesBuy(),
 		AllowedAssetClasses: classesEquity(),
-		Limits:              authority.Limits{PerOrderNotional: 5000},
+		Limits:              authority.Limits{PerOrderNotional: money.MustParse("5000")},
 		Status:              authority.StatusActive,
 	}
 	if err := store.Save(context.Background(), g); err != nil {

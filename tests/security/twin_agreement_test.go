@@ -9,6 +9,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // The production authority engine and the Digital Twin must agree on the one rule they
@@ -57,7 +58,11 @@ func TestProductionEngineMatchesTheSharedLimitContract(t *testing.T) {
 			// invent a price it does not have (ADR-019). The contract is about the
 			// limit comparison, so the notional is computed the same way here and
 			// the difference in how each engine obtains one stays out of it.
-			notional := c.Quantity * c.ReferencePrice
+			// Exactly, through the same rule production uses. A float multiply here
+			// produced values like 5000.010000000001, which the platform refuses as
+			// more precision than it keeps — the test would then be comparing a
+			// refusal about precision against a contract about limits.
+			notional := money.Notional(mustAmount(t, c.ReferencePrice), c.Quantity).Float()
 
 			grant := &authority.Grant{
 				GrantID:             "grant_contract",
@@ -70,8 +75,10 @@ func TestProductionEngineMatchesTheSharedLimitContract(t *testing.T) {
 				ValidUntil:          at.Add(time.Hour),
 				AllowedOperations:   []intent.Side{intent.SideBuy, intent.SideSell},
 				AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
-				Limits:              authority.Limits{PerOrderNotional: c.PerOrderNotional},
-				Status:              authority.StatusActive,
+				// The twin's fixture carries a float; the platform decides in exact
+				// money, so it is converted here rather than compared as one.
+				Limits: authority.Limits{PerOrderNotional: mustAmount(t, c.PerOrderNotional)},
+				Status: authority.StatusActive,
 			}
 
 			env := &intent.AgentExecutionEnvelope{
@@ -113,4 +120,15 @@ func TestProductionEngineMatchesTheSharedLimitContract(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mustAmount converts a fixture value into the exact representation authority decides
+// in, failing loudly if the fixture carries more precision than the platform keeps.
+func mustAmount(t *testing.T, f float64) money.Amount {
+	t.Helper()
+	amount, err := money.FromFloat(f)
+	if err != nil {
+		t.Fatalf("fixture value %v is not an exact amount: %v", f, err)
+	}
+	return amount
 }

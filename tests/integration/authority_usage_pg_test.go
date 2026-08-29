@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"agentic-assurance/internal/authority"
+	"agentic-assurance/internal/money"
 )
 
 // The usage ledger against the real database.
@@ -83,19 +84,19 @@ func TestPostgresUsageWindowsAndIsolation(t *testing.T) {
 
 	entries := []authority.Entry{
 		// Inside both windows, still open.
-		{TenantID: tenant, GrantID: grant, IdempotencyKey: "in-hour", Notional: 1000,
+		{TenantID: tenant, GrantID: grant, IdempotencyKey: "in-hour", Notional: money.MustParse("1000"),
 			SubmittedAt: now.Add(-10 * time.Minute), Open: true},
 		// Earlier today but outside the rolling hour, and closed.
-		{TenantID: tenant, GrantID: grant, IdempotencyKey: "earlier-today", Notional: 500,
+		{TenantID: tenant, GrantID: grant, IdempotencyKey: "earlier-today", Notional: money.MustParse("500"),
 			SubmittedAt: now.Add(-5 * time.Hour), Open: false},
 		// Yesterday: outside both windows.
-		{TenantID: tenant, GrantID: grant, IdempotencyKey: "yesterday", Notional: 9999,
+		{TenantID: tenant, GrantID: grant, IdempotencyKey: "yesterday", Notional: money.MustParse("9999"),
 			SubmittedAt: now.Add(-30 * time.Hour), Open: false},
 		// Another grant in the same tenant must not be counted.
-		{TenantID: tenant, GrantID: "grant_other", IdempotencyKey: "other-grant", Notional: 7777,
+		{TenantID: tenant, GrantID: "grant_other", IdempotencyKey: "other-grant", Notional: money.MustParse("7777"),
 			SubmittedAt: now.Add(-1 * time.Minute), Open: true},
 		// Another tenant entirely (INV-007).
-		{TenantID: other, GrantID: grant, IdempotencyKey: "other-tenant", Notional: 4444,
+		{TenantID: other, GrantID: grant, IdempotencyKey: "other-tenant", Notional: money.MustParse("4444"),
 			SubmittedAt: now.Add(-1 * time.Minute), Open: true},
 	}
 	for _, e := range entries {
@@ -113,12 +114,12 @@ func TestPostgresUsageWindowsAndIsolation(t *testing.T) {
 		t.Fatalf("usage: %v", err)
 	}
 
-	if snapshot.Rolling1hNotional != 1000 {
-		t.Errorf("rolling hour = %.2f, want 1000.00; only the entry inside the hour "+
+	if snapshot.Rolling1hNotional != money.MustParse("1000") {
+		t.Errorf("rolling hour = %s, want 1000.00; only the entry inside the hour "+
 			"counts", snapshot.Rolling1hNotional)
 	}
-	if snapshot.DailyNotional != 1500 {
-		t.Errorf("daily = %.2f, want 1500.00; today is both entries and excludes "+
+	if snapshot.DailyNotional != money.MustParse("1500") {
+		t.Errorf("daily = %s, want 1500.00; today is both entries and excludes "+
 			"yesterday", snapshot.DailyNotional)
 	}
 	if snapshot.OpenOrders != 1 {
@@ -139,7 +140,7 @@ func TestClosingAnEntryKeepsItsNotional(t *testing.T) {
 	t.Cleanup(func() { purge(t, pool, tenant, "authority_usage") })
 
 	entry := authority.Entry{TenantID: tenant, GrantID: "g", IdempotencyKey: "k",
-		Notional: 2500, SubmittedAt: now.Add(-time.Minute), Open: true}
+		Notional: money.MustParse("2500"), SubmittedAt: now.Add(-time.Minute), Open: true}
 	if err := usage.Record(ctx, entry); err != nil {
 		t.Fatalf("record: %v", err)
 	}
@@ -154,8 +155,8 @@ func TestClosingAnEntryKeepsItsNotional(t *testing.T) {
 	if snapshot.OpenOrders != 0 {
 		t.Errorf("open orders = %d, want 0", snapshot.OpenOrders)
 	}
-	if snapshot.Rolling1hNotional != 2500 {
-		t.Errorf("rolling hour = %.2f, want 2500.00; a filled order still spent the grant",
+	if snapshot.Rolling1hNotional != money.MustParse("2500") {
+		t.Errorf("rolling hour = %s, want 2500.00; a filled order still spent the grant",
 			snapshot.Rolling1hNotional)
 	}
 }
@@ -172,7 +173,7 @@ func TestRecordingTheSameKeyTwiceSpendsOnce(t *testing.T) {
 	t.Cleanup(func() { purge(t, pool, tenant, "authority_usage") })
 
 	entry := authority.Entry{TenantID: tenant, GrantID: "g", IdempotencyKey: "k",
-		Notional: 100, SubmittedAt: now.Add(-time.Minute), Open: true}
+		Notional: money.MustParse("100"), SubmittedAt: now.Add(-time.Minute), Open: true}
 	for range 3 {
 		if err := usage.Record(ctx, entry); err != nil {
 			t.Fatalf("record: %v", err)
@@ -180,8 +181,8 @@ func TestRecordingTheSameKeyTwiceSpendsOnce(t *testing.T) {
 	}
 
 	snapshot, _ := usage.Usage(ctx, tenant, "g", now)
-	if snapshot.Rolling1hNotional != 100 {
-		t.Errorf("three records of one key spent %.2f, want 100.00",
+	if snapshot.Rolling1hNotional != money.MustParse("100") {
+		t.Errorf("three records of one key spent %s, want 100.00",
 			snapshot.Rolling1hNotional)
 	}
 }

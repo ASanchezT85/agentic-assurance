@@ -7,6 +7,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // S07 — Cross-agent accumulation.
@@ -31,7 +32,7 @@ func TestS07_CrossAgentAccumulation(t *testing.T) {
 	// Each agent's own grant permits its own order. That is the premise: per-agent
 	// authority sees nothing wrong.
 	for _, e := range envelopes {
-		g := perAgentGrant(e.Agent.AgentID, e.AuthorityGrantID, 5000)
+		g := perAgentGrant(e.Agent.AgentID, e.AuthorityGrantID, money.MustParse("5000"))
 		if d := authority.Evaluate(context.Background(), e, g, nil, origin); !d.Allowed {
 			t.Fatalf("%s was denied under its own grant (%s); the scenario requires each "+
 				"agent to be individually within its limits", e.EnvelopeID, d.Code)
@@ -148,7 +149,7 @@ func TestS07_TenantsNeverMerge(t *testing.T) {
 	}
 }
 
-func perAgentGrant(agentID, grantID string, perOrderLimit float64) *authority.Grant {
+func perAgentGrant(agentID, grantID string, perOrderLimit money.Amount) *authority.Grant {
 	return &authority.Grant{
 		GrantID:             grantID,
 		TenantID:            "tenant_acme",

@@ -14,6 +14,7 @@ import (
 	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // POST /v1/authority-grants.
@@ -54,10 +55,12 @@ type grantRequest struct {
 	AllowedInstruments  []string `json:"allowed_instruments"`
 	DeniedInstruments   []string `json:"denied_instruments"`
 
-	PerOrderNotional  float64 `json:"per_order_notional"`
-	Rolling1hNotional float64 `json:"rolling_1h_notional"`
-	DailyNotional     float64 `json:"daily_notional"`
-	MaxOpenOrders     int     `json:"max_open_orders"`
+	// Exact, and refused rather than rounded when a caller sends more precision than
+	// the platform keeps: a ceiling silently rounded is a ceiling nobody agreed to.
+	PerOrderNotional  money.Amount `json:"per_order_notional"`
+	Rolling1hNotional money.Amount `json:"rolling_1h_notional"`
+	DailyNotional     money.Amount `json:"daily_notional"`
+	MaxOpenOrders     int          `json:"max_open_orders"`
 
 	MarginAllowed   bool `json:"margin_allowed"`
 	ShortingAllowed bool `json:"shorting_allowed"`

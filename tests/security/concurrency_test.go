@@ -12,6 +12,7 @@ import (
 	"agentic-assurance/internal/fleet"
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // The shared mutable state, exercised concurrently.
@@ -74,7 +75,7 @@ func TestUsageLedgerUnderConcurrency(t *testing.T) {
 		key := fmt.Sprintf("idem-%d-%d", worker, i)
 		if err := usage.Record(ctx, authority.Entry{
 			TenantID: "tenant_c", GrantID: "grant_c", IdempotencyKey: key,
-			Notional: 10, SubmittedAt: at, Open: true,
+			Notional: money.MustParse("10"), SubmittedAt: at, Open: true,
 		}); err != nil {
 			t.Errorf("record: %v", err)
 		}
@@ -94,9 +95,9 @@ func TestUsageLedgerUnderConcurrency(t *testing.T) {
 	}
 
 	// Every write is a distinct key, so nothing may be lost.
-	want := float64(concurrentGoroutines * concurrentIterations * 10)
+	want := money.MustParse("10") * money.Amount(concurrentGoroutines*concurrentIterations)
 	if snapshot.Rolling1hNotional != want {
-		t.Errorf("rolling = %.0f, want %.0f; %d writes and some did not land",
+		t.Errorf("rolling = %s, want %s; %d writes and some did not land",
 			snapshot.Rolling1hNotional, want, concurrentGoroutines*concurrentIterations)
 	}
 }

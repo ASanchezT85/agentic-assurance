@@ -28,6 +28,7 @@ import (
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 	"agentic-assurance/internal/policy"
 )
 
@@ -91,8 +92,8 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
 		AllowedInstruments:  []string{"instr_us_equity_00206R102"},
 		Limits: authority.Limits{
-			PerOrderNotional:  50000,
-			Rolling1hNotional: 10000,
+			PerOrderNotional:  money.MustParse("50000"),
+			Rolling1hNotional: money.MustParse("10000"),
 			MaxOpenOrders:     10,
 		},
 		Status: authority.StatusActive,
@@ -326,8 +327,8 @@ func TestSubmissionEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("usage: %v", err)
 	}
-	if snapshot.Rolling1hNotional != 1905 {
-		t.Errorf("the grant was charged %.2f, want 1905.00", snapshot.Rolling1hNotional)
+	if snapshot.Rolling1hNotional != money.MustParse("1905") {
+		t.Errorf("the grant was charged %s, want 1905.00", snapshot.Rolling1hNotional)
 	}
 
 	// And the chain of spec section 66 step 19 is readable back out of the database:
@@ -380,8 +381,8 @@ func TestDuplicateSubmissionOverHTTP(t *testing.T) {
 	// And it was not charged twice.
 	snapshot, _ := authority.NewPostgresUsage(rig.pool).Usage(
 		context.Background(), rig.tenant, rig.grantID, now)
-	if snapshot.Rolling1hNotional != 1905 {
-		t.Errorf("two submissions of one key charged %.2f, want 1905.00",
+	if snapshot.Rolling1hNotional != money.MustParse("1905") {
+		t.Errorf("two submissions of one key charged %s, want 1905.00",
 			snapshot.Rolling1hNotional)
 	}
 }
@@ -472,8 +473,8 @@ func TestRefusalsEndToEnd(t *testing.T) {
 			// Nothing was charged against the grant for an order that never went.
 			snapshot, _ := authority.NewPostgresUsage(rig.pool).Usage(
 				context.Background(), rig.tenant, rig.grantID, now)
-			if snapshot.Rolling1hNotional != 0 {
-				t.Errorf("a refused intent charged %.2f against the grant",
+			if snapshot.Rolling1hNotional != money.MustParse("0") {
+				t.Errorf("a refused intent charged %s against the grant",
 					snapshot.Rolling1hNotional)
 			}
 		})

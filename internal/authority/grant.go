@@ -6,6 +6,8 @@
 package authority
 
 import (
+	"agentic-assurance/internal/money"
+
 	"time"
 
 	"agentic-assurance/internal/intent"
@@ -27,11 +29,17 @@ const (
 //
 // This is the one place where zero-means-unset is acceptable, because a grant with a
 // zero ceiling would permit nothing and is better expressed by revoking it.
+// Limits are exact.
+//
+// They were float64 while the database stored grant limits at scale 4 and consumed
+// usage at scale 2, so the number a ceiling was evaluated against was not necessarily
+// the number later counted against it. A ceiling that is approximately enforced is not
+// a ceiling.
 type Limits struct {
-	PerOrderNotional  float64 `json:"per_order_notional"`
-	Rolling1hNotional float64 `json:"rolling_1h_notional"`
-	DailyNotional     float64 `json:"daily_notional"`
-	MaxOpenOrders     int     `json:"max_open_orders"`
+	PerOrderNotional  money.Amount `json:"per_order_notional"`
+	Rolling1hNotional money.Amount `json:"rolling_1h_notional"`
+	DailyNotional     money.Amount `json:"daily_notional"`
+	MaxOpenOrders     int          `json:"max_open_orders"`
 }
 
 // Capabilities are permissions V0 records but does not yet enforce, because

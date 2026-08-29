@@ -8,6 +8,7 @@ import (
 
 	"agentic-assurance/internal/authority"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/money"
 )
 
 // INV-002: an agent can never exercise more authority than its active grant.
@@ -42,21 +43,21 @@ func TestEveryLimitIsACeiling(t *testing.T) {
 	}{
 		{
 			name:  "per order",
-			limit: func(g *authority.Grant) { g.Limits.PerOrderNotional = 5000 },
+			limit: func(g *authority.Grant) { g.Limits.PerOrderNotional = money.MustParse("5000") },
 			size:  5000.01,
 			code:  "PER_ORDER_LIMIT_EXCEEDED",
 		},
 		{
 			name:  "rolling hour",
-			limit: func(g *authority.Grant) { g.Limits.Rolling1hNotional = 10000 },
-			usage: usageOf{Rolling1hNotional: 9999},
+			limit: func(g *authority.Grant) { g.Limits.Rolling1hNotional = money.MustParse("10000") },
+			usage: usageOf{Rolling1hNotional: money.MustParse("9999")},
 			size:  1.01,
 			code:  "ROLLING_LIMIT_EXCEEDED",
 		},
 		{
 			name:  "daily",
-			limit: func(g *authority.Grant) { g.Limits.DailyNotional = 15000 },
-			usage: usageOf{DailyNotional: 14999},
+			limit: func(g *authority.Grant) { g.Limits.DailyNotional = money.MustParse("15000") },
+			usage: usageOf{DailyNotional: money.MustParse("14999")},
 			size:  1.01,
 			code:  "DAILY_LIMIT_EXCEEDED",
 		},
@@ -93,7 +94,7 @@ func TestEveryLimitIsACeiling(t *testing.T) {
 // against the ceiling would let an agent spend the limit repeatedly.
 func TestRollingLimitsCountConsumedUsage(t *testing.T) {
 	g := grantFor("tenant_acme")
-	g.Limits = authority.Limits{Rolling1hNotional: 10000}
+	g.Limits = authority.Limits{Rolling1hNotional: money.MustParse("10000")}
 
 	env := envelopeFor("tenant_acme")
 	env.Intent.Notional = ptr(4000.0)
@@ -104,7 +105,7 @@ func TestRollingLimitsCountConsumedUsage(t *testing.T) {
 	}
 
 	// With 7,000 already spent this hour, the same order breaches it.
-	got := authority.Evaluate(context.Background(), env, g, usageOf{Rolling1hNotional: 7000}, evalAt)
+	got := authority.Evaluate(context.Background(), env, g, usageOf{Rolling1hNotional: money.MustParse("7000")}, evalAt)
 	if got.Allowed {
 		t.Fatal("the rolling limit was evaluated against the new order alone (INV-002)")
 	}
@@ -151,7 +152,7 @@ func TestInactiveGrantConfersNothing(t *testing.T) {
 // policy unavailable means DENY.
 func TestUnreadableUsageDeniesRatherThanPasses(t *testing.T) {
 	g := grantFor("tenant_acme")
-	g.Limits = authority.Limits{DailyNotional: 15000}
+	g.Limits = authority.Limits{DailyNotional: money.MustParse("15000")}
 
 	got := authority.Evaluate(context.Background(), envelopeFor("tenant_acme"), g, usageBroken{}, evalAt)
 	if got.Allowed {
@@ -166,7 +167,7 @@ func TestUnreadableUsageDeniesRatherThanPasses(t *testing.T) {
 // the way around every notional limit is to stop stating a notional.
 func TestIndeterminateSizeCannotSatisfyASizeCap(t *testing.T) {
 	g := grantFor("tenant_acme")
-	g.Limits = authority.Limits{PerOrderNotional: 5000}
+	g.Limits = authority.Limits{PerOrderNotional: money.MustParse("5000")}
 
 	env := envelopeFor("tenant_acme")
 	env.Intent.Notional = nil
