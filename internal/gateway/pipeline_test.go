@@ -284,7 +284,17 @@ func TestAnAuthorizedIntentReachesTheVenue(t *testing.T) {
 		"agent.identity.verified.v1",
 		"authority.evaluated.v1",
 		"policy.evaluated.v1",
-		"broker.order.submitted.v1",
+		// Capacity held, as an append-only fact rather than a row that will later be
+		// overwritten with where the reservation ended.
+		"authority.reserved.v1",
+		// The receipt. It says a decision was committed, which is what is true before
+		// the broker is called; it used to say the order had been submitted, so
+		// evidence could claim a submission that the next line never made.
+		"execution.decision.committed.v1",
+		// And what the platform actually knows once it has tried.
+		"broker.order.submission_attempted.v1",
+		"authority.reservation.committed.v1",
+		"broker.order.accepted.v1",
 	}
 	got := ev.names()
 	for _, name := range want {

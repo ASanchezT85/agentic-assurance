@@ -119,7 +119,9 @@ func TestIdempotencyStoreUnderConcurrency(t *testing.T) {
 
 		_, won, err := store.Claim(ctx, execution.Record{
 			TenantID: "tenant_c", IdempotencyKey: key,
-			EnvelopeID: "env", ClientOrderID: "coid-" + key,
+			// One envelope id per key. A single id shared across keys is a caller
+			// asking for several orders under one intent, which the store refuses.
+			EnvelopeID: "env-" + key, ClientOrderID: "coid-" + key,
 			State: execution.RecordPending, CreatedAt: at, UpdatedAt: at,
 		})
 		if err != nil {

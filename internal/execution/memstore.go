@@ -15,12 +15,18 @@ type MemoryStore struct {
 	mu      sync.Mutex
 	records map[string]*Record
 
+	// envelopes mirrors the unique index the PostgreSQL store relies on. Without it
+	// the two stores disagree about what is allowed: every test running against this
+	// one passed while reusing an envelope id under a new key, which is the one thing
+	// idempotency_envelope_idx exists to refuse.
+	envelopes map[string]string
+
 	// FailWith makes the fail-closed path testable without breaking a database.
 	FailWith error
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{records: map[string]*Record{}}
+	return &MemoryStore{records: map[string]*Record{}, envelopes: map[string]string{}}
 }
 
 func key(tenantID, idempotencyKey string) string {
@@ -38,6 +44,15 @@ func (m *MemoryStore) Claim(_ context.Context, rec Record) (*Record, bool, error
 	if existing, ok := m.records[k]; ok {
 		copied := *existing
 		return &copied, false, nil
+	}
+	// A second key over one envelope id is a caller asking for a second order under
+	// one intent, and it is refused before anything is claimed.
+	if rec.EnvelopeID != "" {
+		e := key(rec.TenantID, rec.EnvelopeID)
+		if held, ok := m.envelopes[e]; ok && held != rec.IdempotencyKey {
+			return nil, false, ErrEnvelopeReused
+		}
+		m.envelopes[e] = rec.IdempotencyKey
 	}
 	stored := rec
 	m.records[k] = &stored

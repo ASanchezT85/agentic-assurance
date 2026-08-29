@@ -24,6 +24,15 @@ const (
 	IdentityFailed     EventName = "agent.identity.failed.v1"
 	AuthorityEvaluated EventName = "authority.evaluated.v1"
 
+	// The reservation, as evidence rather than as a mutable row.
+	//
+	// authority_usage moves from RESERVED to COMMITTED or RELEASED, so reading it later
+	// tells you where a reservation ended and not what was authorized at the moment of
+	// authorizing. These three are the append-only account of that.
+	AuthorityReserved             EventName = "authority.reserved.v1"
+	AuthorityReservationCommitted EventName = "authority.reservation.committed.v1"
+	AuthorityReservationReleased  EventName = "authority.reservation.released.v1"
+
 	// AuthorityRevoked is not in the section 32 catalog. It is added because cutting
 	// an agent's authority is the emergency action of spec section 14, and one that
 	// left no record would be the hardest thing to explain afterwards.
@@ -35,6 +44,19 @@ const (
 	AuthorityIssued    EventName = "authority.grant.issued.v1"
 	PolicyEvaluated    EventName = "policy.evaluated.v1"
 	IntentParentLinked EventName = "intent.parent.linked.v1"
+
+	// DecisionCommitted is the durable receipt: every check passed, capacity is held,
+	// and the platform is about to attempt a submission. It is not in the section 32
+	// catalog and it exists because the receipt used to record broker.order.submitted
+	// before the broker was called — so evidence could state that an order was
+	// submitted when the idempotency claim failed a moment later and nothing was ever
+	// sent. An intention to submit is not proof that submission happened.
+	DecisionCommitted EventName = "execution.decision.committed.v1"
+
+	// SubmissionAttempted is the truthful boundary event. The platform knows it tried;
+	// whether the venue received it is what the outcome says, and an ambiguous timeout
+	// means nobody knows (INV-004).
+	SubmissionAttempted EventName = "broker.order.submission_attempted.v1"
 
 	OrderSubmitted  EventName = "broker.order.submitted.v1"
 	OrderUnknown    EventName = "broker.order.unknown.v1"
@@ -100,6 +122,9 @@ const (
 var catalog = map[EventName]bool{
 	IntentReceived: true, IdentityVerified: true, IdentityFailed: true,
 	AuthorityEvaluated: true, AuthorityRevoked: true, AuthorityIssued: true,
+	AuthorityReserved: true, AuthorityReservationCommitted: true,
+	AuthorityReservationReleased: true,
+	DecisionCommitted:            true, SubmissionAttempted: true,
 	PolicyEvaluated: true, IntentParentLinked: true,
 	OrderSubmitted: true, OrderUnknown: true, OrderAccepted: true, OrderRejected: true,
 	OrderFilled: true, OrderCancelled: true, OrderReconciled: true,

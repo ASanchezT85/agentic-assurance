@@ -19,6 +19,8 @@ var sourceExts = map[string]bool{".go": true, ".ts": true, ".tsx": true, ".py": 
 
 var skipDirs = map[string]bool{
 	".git": true, "node_modules": true, ".next": true, "docs": true,
+	// A build scratch directory whose contents Go deletes underneath a walk.
+	".gotmp":        true,
 	".pytest_cache": true, ".ruff_cache": true, "__pycache__": true, ".venv": true,
 }
 

@@ -496,6 +496,18 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 				return p.deny(result, StageAuthority, "USAGE_UNAVAILABLE",
 					"the reservation could not be taken: "+err.Error())
 			}
+			if reservation.Allowed {
+				// The reservation as an append-only fact. authority_usage moves from
+				// RESERVED to COMMITTED or RELEASED, so reading it later says where a
+				// reservation ended rather than what was authorized at the moment of
+				// authorizing.
+				p.record(ctx, env, evidence.AuthorityReserved, at, map[string]any{
+					"grant_id":          env.AuthorityGrantID,
+					"idempotency_key":   env.IdempotencyKey,
+					"envelope_id":       env.EnvelopeID,
+					"reserved_notional": notional.String(),
+				})
+			}
 			if !reservation.Allowed {
 				result.Authority = &reservation
 				p.record(ctx, env, evidence.AuthorityEvaluated, at, map[string]any{
@@ -509,8 +521,13 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		}
 	}
 
-	p.record(ctx, env, evidence.OrderSubmitted, at, map[string]any{
+	// The receipt says a decision was committed, which is what is true at this point.
+	// It used to say broker.order.submitted before the broker was called, so evidence
+	// could state that an order was submitted when the idempotency claim failed a
+	// moment later and nothing was ever sent.
+	p.record(ctx, env, evidence.DecisionCommitted, at, map[string]any{
 		"client_order_id": req.ClientOrderID,
+		"authorized":      true,
 	})
 
 	// The durable boundary. Nothing reaches a venue until the decision that permits it
@@ -529,6 +546,19 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	outcome, err := p.Execution.Submit(ctx, env, req)
 	result.Outcome = &outcome
 	result.Replayed = outcome.Replayed
+
+	// What the platform knows once the claim has been taken: it tried. Whether the
+	// venue received it is what the outcome says, and an ambiguous timeout means nobody
+	// knows (INV-004).
+	//
+	// Not recorded for a refused claim or a replay. Both return before the venue, and an
+	// attempt that stopped inside the platform was not an attempt on a venue.
+	if !outcome.Replayed && !errors.Is(err, execution.ErrEnvelopeReused) &&
+		!errors.Is(err, execution.ErrKeyReused) {
+		p.record(ctx, env, evidence.SubmissionAttempted, at, map[string]any{
+			"client_order_id": req.ClientOrderID,
+		})
+	}
 
 	if errors.Is(err, execution.ErrEnvelopeReused) || errors.Is(err, execution.ErrKeyReused) {
 		// Nothing was sent: the claim refused before the venue. Release, or the losing
@@ -692,7 +722,15 @@ func (p *Pipeline) releaseReservation(ctx context.Context, env *intent.AgentExec
 	if p.Reserve == nil || env == nil {
 		return
 	}
-	if err := p.Reserve.Release(ctx, env.TenantID, env.IdempotencyKey, at); err != nil {
+	// Recorded after the release, never before it: an event saying capacity was
+	// returned, emitted ahead of the write that returns it, is a claim rather than a
+	// record.
+	if err := p.Reserve.Release(ctx, env.TenantID, env.IdempotencyKey, at); err == nil {
+		p.record(ctx, env, evidence.AuthorityReservationReleased, at, map[string]any{
+			"idempotency_key": env.IdempotencyKey,
+			"reason":          "no order was sent",
+		})
+	} else {
 		// The capacity stays held, which errs toward refusing later orders rather than
 		// allowing them, and the identity check means it can no longer be inherited by
 		// a different request. Recorded so an operator can see it happened.
@@ -733,7 +771,17 @@ func (p *Pipeline) settle(ctx context.Context, env *intent.AgentExecutionEnvelop
 	// and could permanently consume max_open_orders.
 	terminal := outcome.State.Terminal()
 
-	if err := p.Reserve.Settle(ctx, env.TenantID, env.IdempotencyKey, state, !terminal, at); err != nil {
+	if err := p.Reserve.Settle(ctx, env.TenantID, env.IdempotencyKey, state, !terminal, at); err == nil {
+		settlement := evidence.AuthorityReservationCommitted
+		if state == authority.StateReleased {
+			settlement = evidence.AuthorityReservationReleased
+		}
+		p.record(ctx, env, settlement, at, map[string]any{
+			"idempotency_key": env.IdempotencyKey,
+			"outcome":         string(outcome.State),
+			"open":            !terminal,
+		})
+	} else {
 		// The capacity stays reserved, which errs toward refusing later orders rather
 		// than allowing them. That is the safe direction for a ceiling, and it is
 		// recorded so an operator can see it happened.
