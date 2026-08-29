@@ -390,10 +390,29 @@ func TestPathIsIdempotentWithoutACache(t *testing.T) {
 // causing the incident.
 func TestPathEnforcesWithoutTelemetry(t *testing.T) {
 	rig := newPathRig(t)
+	rig.pipeline.Telemetry = nil
+	rig.pipeline.Controls = nil
+
+	// INV-005 is about the analytical plane: a decision must not need ClickHouse, the
+	// fleet engine or a message bus. It is not about the evidence store, and reading
+	// it that way is how a failed decision receipt used to be waved through — an order
+	// at a venue with no record of the decision that permitted it.
+	if r := rig.submit(pathEnvelope(nil), pathCaller()); !r.Accepted {
+		t.Errorf("a decision failed with the analytical plane absent: %s (INV-005)", r.Reason)
+	}
+}
+
+// And the other half, which the audit named: the decision receipt is authoritative.
+func TestPathRefusesWhenTheDecisionCannotBeRecorded(t *testing.T) {
+	rig := newPathRig(t)
 	rig.pipeline.Evidence = brokenSink{}
 
-	if r := rig.submit(pathEnvelope(nil), pathCaller()); !r.Accepted {
-		t.Errorf("a decision failed because telemetry was unavailable: %s (INV-005)", r.Reason)
+	r := rig.submit(pathEnvelope(nil), pathCaller())
+	if r.Accepted {
+		t.Error("an order was authorized with no durable record of the decision")
+	}
+	if rig.broker.Submissions("coid-idem_path") != 0 {
+		t.Error("the order reached the venue anyway")
 	}
 }
 
