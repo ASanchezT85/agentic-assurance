@@ -64,6 +64,13 @@ func (m *memEvidence) Append(_ context.Context, e evidence.Event) (bool, error) 
 	return true, nil
 }
 
+func (m *memEvidence) AppendBatch(_ context.Context, events []evidence.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, events...)
+	return nil
+}
+
 func (m *memEvidence) names() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -408,6 +415,10 @@ type failingSink struct{}
 
 func (failingSink) Append(context.Context, evidence.Event) (bool, error) {
 	return false, constError("evidence store unavailable")
+}
+
+func (failingSink) AppendBatch(context.Context, []evidence.Event) error {
+	return constError("evidence store unavailable")
 }
 
 // --- HTTP surface ---

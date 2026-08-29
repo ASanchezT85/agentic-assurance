@@ -222,6 +222,10 @@ unreadable control store denies is proved by a unit test that injects the failur
 | Enforcement path | 12.5 µs | 16.8 µs | 20.5 µs | 2 ms / 5 ms / 10 ms |
 | Idempotency claim | 3.34 ms | 4.23 ms | 5.25 ms | — |
 
+Neither row is the cost of an intent. See "What an accepted intent actually costs"
+below: the two together are a fraction of it, and reading them as the whole is what hid
+six transactions of evidence for as long as it did.
+
 The enforcement path is envelope decode and validation, authority evaluation and
 policy evaluation: about **0.6% of the p50 budget**.
 

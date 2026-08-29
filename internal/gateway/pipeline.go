@@ -126,6 +126,12 @@ type ControlSource interface {
 // telemetry is unavailable, so a failure to record must never fail a decision.
 type EvidenceSink interface {
 	Append(ctx context.Context, e evidence.Event) (bool, error)
+
+	// AppendBatch writes a submission's events in one transaction. Written one at a
+	// time they were six transactions per intent, which measured at about 95 ms of
+	// the 120 ms an accepted intent took — six times the cost of the decision they
+	// describe, for an enforcement computation of 12.5 microseconds.
+	AppendBatch(ctx context.Context, events []evidence.Event) error
 }
 
 // Pipeline is the enforcement plane's composition root.
@@ -183,6 +189,12 @@ func (p *Pipeline) now() time.Time {
 // being re-evaluated against a grant that may since have expired.
 func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Presented) Result {
 	at := p.now().UTC()
+
+	// Every path out of this function flushes, including the refusals: an intent that
+	// was refused is exactly the one someone will ask about later.
+	buffered := &recorder{}
+	ctx = withRecorder(ctx, buffered)
+	defer p.flush(ctx, buffered)
 
 	// 3. Envelope validation.
 	env, err := intent.Decode(raw)
@@ -625,7 +637,7 @@ func (p *Pipeline) record(ctx context.Context, env *intent.AgentExecutionEnvelop
 	}
 
 	seq := nextSequence()
-	_, _ = p.Evidence.Append(ctx, evidence.Event{
+	event := evidence.Event{
 		SchemaVersion: evidence.SchemaVersion,
 		EventID:       fmt.Sprintf("%s_%s_%d", env.EnvelopeID, name, seq),
 		EventName:     name,
@@ -637,7 +649,45 @@ func (p *Pipeline) record(ctx context.Context, env *intent.AgentExecutionEnvelop
 		Producer:      "assurance-gateway",
 		Sequence:      seq,
 		Payload:       payload,
-	})
+	}
+
+	// Buffered for this submission and written once, at the end. Six events written
+	// one at a time were six transactions on the hot path; the decision they describe
+	// takes microseconds. A crash before the flush loses the account of a decision
+	// that never returned — which is the same window the caller already has, and the
+	// idempotency record that protects execution is still written synchronously.
+	if buffered := recorderFrom(ctx); buffered != nil {
+		buffered.add(event)
+		return
+	}
+	_, _ = p.Evidence.Append(ctx, event)
+}
+
+// recorder buffers one submission's evidence.
+type recorder struct {
+	events []evidence.Event
+}
+
+type recorderKey struct{}
+
+func withRecorder(ctx context.Context, r *recorder) context.Context {
+	return context.WithValue(ctx, recorderKey{}, r)
+}
+
+func recorderFrom(ctx context.Context) *recorder {
+	r, _ := ctx.Value(recorderKey{}).(*recorder)
+	return r
+}
+
+func (r *recorder) add(e evidence.Event) { r.events = append(r.events, e) }
+
+// flush writes what the submission recorded. Failure costs the audit trail and never
+// the decision (spec section 17), so it is logged by the store and dropped here.
+func (p *Pipeline) flush(ctx context.Context, r *recorder) {
+	if p.Evidence == nil || r == nil || len(r.events) == 0 {
+		return
+	}
+	_ = p.Evidence.AppendBatch(ctx, r.events)
 }
 
 // correlationOf falls back to the envelope id.

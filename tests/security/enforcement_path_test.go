@@ -373,6 +373,10 @@ func (brokenSink) Append(context.Context, evidence.Event) (bool, error) {
 	return false, errNoGrant{}
 }
 
+func (brokenSink) AppendBatch(context.Context, []evidence.Event) error {
+	return errNoGrant{}
+}
+
 // INV-012 on the path. A venue that answers with something the core does not know does
 // not become a plausible state; the platform reports it as unresolved.
 func TestPathContainsAnAdapterFailure(t *testing.T) {

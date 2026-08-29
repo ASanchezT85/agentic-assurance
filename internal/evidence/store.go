@@ -84,6 +84,65 @@ func (s *Store) Append(ctx context.Context, e Event) (recorded bool, err error) 
 	return recorded, err
 }
 
+// AppendBatch records several events in one transaction.
+//
+// One round trip instead of one per event, and that is the whole point. A submission
+// produces six events, and written one at a time they were six transactions — six
+// times the cost of the decision they describe, measured at about 95 ms of the 120 ms
+// an accepted intent took while the enforcement computation itself is 12.5 us.
+//
+// All events must belong to one tenant: the transaction sets app.tenant_id once, and a
+// batch that mixed tenants would write some of them under the wrong one.
+func (s *Store) AppendBatch(ctx context.Context, events []Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	tenantID := events[0].TenantID
+	rows := make([][]any, 0, len(events))
+	for _, e := range events {
+		if e.TenantID != tenantID {
+			return fmt.Errorf("evidence batch mixes tenants %q and %q", tenantID, e.TenantID)
+		}
+		if err := e.Validate(); err != nil {
+			return err
+		}
+		payload, err := json.Marshal(e.Payload)
+		if err != nil {
+			return fmt.Errorf("payload is not serialisable: %w", err)
+		}
+		if e.Payload == nil {
+			payload = []byte(`{}`)
+		}
+		rows = append(rows, []any{
+			e.EventID, e.SchemaVersion, string(e.EventName), e.TenantID, e.AggregateID,
+			e.CorrelationID, nullIfEmpty(e.CausationID), e.OccurredAt.UTC(), e.ProducedAt.UTC(),
+			e.Producer, e.Sequence, nullIfEmpty(e.CorrectsEventID), payload,
+		})
+	}
+
+	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		batch := &pgx.Batch{}
+		for _, row := range rows {
+			batch.Queue(`
+				INSERT INTO evidence_events
+					(event_id, schema_version, event_name, tenant_id, aggregate_id,
+					 correlation_id, causation_id, occurred_at, produced_at, producer,
+					 sequence, corrects_event_id, payload)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+				ON CONFLICT (event_id) DO NOTHING`, row...)
+		}
+		results := tx.SendBatch(ctx, batch)
+		defer results.Close()
+		for range rows {
+			if _, err := results.Exec(); err != nil {
+				return err
+			}
+		}
+		return results.Close()
+	})
+}
+
 // Chain returns every event for a correlation id, in the order it happened.
 //
 // This is the query ADR-023 exists for and the one spec section 66 step 19 walks:
