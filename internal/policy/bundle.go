@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"agentic-assurance/internal/money"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
@@ -55,14 +56,14 @@ type CompiledRule struct {
 	WhenSide          intent.Side       `json:"when_side,omitempty"`
 	WhenOrderType     intent.OrderType  `json:"when_order_type,omitempty"`
 	WhenInstruments   []string          `json:"when_instruments,omitempty"`
-	WhenNotionalGT    *float64          `json:"when_notional_gt,omitempty"`
-	WhenNotionalGTE   *float64          `json:"when_notional_gte,omitempty"`
-	WhenNotionalLT    *float64          `json:"when_notional_lt,omitempty"`
-	WhenNotionalLTE   *float64          `json:"when_notional_lte,omitempty"`
+	WhenNotionalGT    *money.Amount     `json:"when_notional_gt,omitempty"`
+	WhenNotionalGTE   *money.Amount     `json:"when_notional_gte,omitempty"`
+	WhenNotionalLT    *money.Amount     `json:"when_notional_lt,omitempty"`
+	WhenNotionalLTE   *money.Amount     `json:"when_notional_lte,omitempty"`
 	WhenExtendedHours *bool             `json:"when_extended_hours,omitempty"`
 
-	RequireNotionalLTE *float64 `json:"require_notional_lte,omitempty"`
-	RequireNotionalGTE *float64 `json:"require_notional_gte,omitempty"`
+	RequireNotionalLTE *money.Amount `json:"require_notional_lte,omitempty"`
+	RequireNotionalGTE *money.Amount `json:"require_notional_gte,omitempty"`
 
 	// NeedsNotional is computed at compile time so the evaluator never has to work
 	// out whether a rule depends on order size.

@@ -58,7 +58,7 @@ func execRequest(key string) broker.OrderRequest {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      ptr(100.0),
+		Quantity:      qty(100.0),
 		LimitPrice:    ptr(50.0),
 		TimeInForce:   intent.TIFDay,
 	}

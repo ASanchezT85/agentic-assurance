@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"agentic-assurance/internal/money"
 	"crypto/ed25519"
 	"crypto/rand"
 	"os"
@@ -16,7 +17,23 @@ var at = time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
 
 const fixtureRoot = "../../tests/fixtures/policies"
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 func loadFixture(t *testing.T, rel string) *Source {
 	t.Helper()
@@ -223,7 +240,7 @@ func TestSizeRuleFiresWhenSizeIsUnknown(t *testing.T) {
 
 	got := Evaluate(b, envelope(func(in *intent.Intent) {
 		in.Notional = nil
-		in.Quantity = f(1000)
+		in.Quantity = q(1000)
 		in.OrderType = intent.OrderMarket
 	}), at)
 
@@ -239,7 +256,7 @@ func TestLimitOrderNotionalComesFromThePrice(t *testing.T) {
 
 	got := Evaluate(b, envelope(func(in *intent.Intent) {
 		in.Notional = nil
-		in.Quantity = f(10)
+		in.Quantity = q(10)
 		in.LimitPrice = f(100) // 1,000 notional: under every threshold
 		in.OrderType = intent.OrderLimit
 	}), at)

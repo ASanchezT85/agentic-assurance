@@ -19,7 +19,23 @@ import (
 
 var origin = time.Date(2026, 8, 27, 14, 32, 0, 0, time.UTC)
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 type child struct {
 	envelopeID string
@@ -116,8 +132,8 @@ func TestS06_OrderFragmentation(t *testing.T) {
 	if p.ChildCount != 5 {
 		t.Errorf("child_count = %d, want 5", p.ChildCount)
 	}
-	if p.GrossNotional != 20000 {
-		t.Errorf("gross_notional = %.2f, want 20000", p.GrossNotional)
+	if p.GrossNotional != money.MustParse("20000") {
+		t.Errorf("gross_notional = %s, want 20000", p.GrossNotional)
 	}
 	if !p.Fragmented(perOrderLimit) {
 		t.Errorf("a 20,000 intention split into 4,000 pieces was not flagged as "+
@@ -160,8 +176,8 @@ func TestS06_SeparatedOrdersAreNotOneIntent(t *testing.T) {
 		t.Fatalf("reconstructed %d parent intents, want 2 separate clusters", len(parents))
 	}
 	for _, p := range parents {
-		if p.GrossNotional != 8000 {
-			t.Errorf("cluster gross = %.2f, want 8000", p.GrossNotional)
+		if p.GrossNotional != money.MustParse("8000") {
+			t.Errorf("cluster gross = %s, want 8000", p.GrossNotional)
 		}
 	}
 }
@@ -185,7 +201,7 @@ func TestS06_UndeterminableChildrenAreCountedNotDropped(t *testing.T) {
 
 	hidden := envelope(child{envelopeID: "env_2", agentID: "agent_a", offset: time.Second})
 	hidden.Intent.Notional = nil
-	hidden.Intent.Quantity = f(100000)
+	hidden.Intent.Quantity = q(100000)
 
 	parents := intent.Reconstruct([]*intent.AgentExecutionEnvelope{determinable, hidden},
 		intent.DefaultClusterConfig)

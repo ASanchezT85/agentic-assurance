@@ -173,7 +173,7 @@ func TestIndeterminateSizeCannotSatisfyASizeCap(t *testing.T) {
 
 	env := envelopeFor("tenant_acme")
 	env.Intent.Notional = nil
-	env.Intent.Quantity = ptr(1000000.0) // a market order of unbounded value
+	env.Intent.Quantity = qty(1000000.0) // a market order of unbounded value
 
 	got := authority.Evaluate(context.Background(), env, g, usageOf{}, evalAt)
 	if got.Allowed {

@@ -16,6 +16,7 @@
 package contract
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"errors"
 	"testing"
@@ -25,7 +26,16 @@ import (
 	"agentic-assurance/internal/intent"
 )
 
-func f(v float64) *float64 { return &v }
+// qty and amount build exact values the way an envelope would.
+func qty(v string) *money.Quantity {
+	q := money.MustParseQuantity(v)
+	return &q
+}
+
+func amount(v string) *money.Amount {
+	a := money.MustParse(v)
+	return &a
+}
 
 // Subject is an adapter under test plus what a harness needs to drive it.
 type Subject struct {
@@ -68,8 +78,8 @@ func Request(clientOrderID string) broker.OrderRequest {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      f(10),
-		LimitPrice:    f(50),
+		Quantity:      qty("10"),
+		LimitPrice:    amount("50"),
 		TimeInForce:   intent.TIFDay,
 	}
 }

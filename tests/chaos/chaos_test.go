@@ -50,7 +50,23 @@ import (
 
 var at = time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 // stop halts a compose service and restores it when the test ends.
 //
@@ -233,7 +249,7 @@ func TestPostgresOutageFailsClosed(t *testing.T) {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      f(10),
+		Quantity:      q(10),
 		LimitPrice:    f(50),
 		TimeInForce:   intent.TIFDay,
 	}
@@ -282,7 +298,7 @@ func TestBrokerTimeoutDoesNotDuplicate(t *testing.T) {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      f(10),
+		Quantity:      q(10),
 		LimitPrice:    f(50),
 		TimeInForce:   intent.TIFDay,
 	}
@@ -327,7 +343,7 @@ func TestGatewayRestartLosesNothingThatMatters(t *testing.T) {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      f(10),
+		Quantity:      q(10),
 		LimitPrice:    f(50),
 		TimeInForce:   intent.TIFDay,
 	}

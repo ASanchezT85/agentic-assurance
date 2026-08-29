@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"agentic-assurance/internal/money"
 	"time"
 
 	"agentic-assurance/internal/intent"
@@ -100,7 +101,7 @@ func Evaluate(b *Bundle, env *intent.AgentExecutionEnvelope, now time.Time) Deci
 // A rule fires when its `when` clause matches AND its `require` clause fails. A rule
 // with no `require` fires on `when` alone, which is how a blanket prohibition like
 // OPTIONS_DISABLED works.
-func ruleFires(r CompiledRule, in intent.Intent, notional float64, notionalKnown bool) (bool, string) {
+func ruleFires(r CompiledRule, in intent.Intent, notional money.Amount, notionalKnown bool) (bool, string) {
 	if r.NeedsNotional && !notionalKnown {
 		// A size-dependent rule cannot be evaluated against an order of unknown
 		// size. Treating that as "does not match" would make every notional rule
@@ -156,7 +157,10 @@ func ruleFires(r CompiledRule, in intent.Intent, notional float64, notionalKnown
 // a market order sized by quantity has no bounded notional until it fills, and there
 // is no market data on the hot path (ADR-019). A limit price bounds the exposure; a
 // stop price is a trigger, not a fill price.
-func effectiveNotional(in intent.Intent) (float64, bool) {
+func effectiveNotional(in intent.Intent) (money.Amount, bool) {
+	// Exact, and the same arithmetic authority uses. A policy threshold compared against
+	// a float while a grant ceiling is compared against an exact amount would be two
+	// different questions asked about one order.
 	if in.Notional != nil {
 		return *in.Notional, true
 	}
@@ -166,7 +170,11 @@ func effectiveNotional(in intent.Intent) (float64, bool) {
 	switch in.OrderType {
 	case intent.OrderLimit, intent.OrderStopLimit:
 		if in.LimitPrice != nil {
-			return *in.Quantity * *in.LimitPrice, true
+			notional := money.NotionalOf(*in.LimitPrice, *in.Quantity)
+			if notional == 0 && *in.LimitPrice != 0 && *in.Quantity != 0 {
+				return 0, false
+			}
+			return notional, true
 		}
 	}
 	return 0, false

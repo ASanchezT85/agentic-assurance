@@ -52,7 +52,7 @@ func TestACrashAfterVenueAcceptanceDoesNotResubmit(t *testing.T) {
 	}
 
 	// 2. The venue accepts.
-	quantity := 10.0
+	quantity := money.MustParseQuantity("10")
 	if _, err := first.broker.SubmitOrder(ctx, broker.OrderRequest{
 		ClientOrderID: clientOrderID,
 		Symbol:        "AAPL",

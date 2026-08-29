@@ -13,6 +13,7 @@
 package performance
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"fmt"
 	"os"
@@ -43,7 +44,23 @@ func sink() *fleet.Sink {
 	return fleet.NewSink(base, user, pass)
 }
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 // buildIntents makes a deterministic stream. The mix matters: a stream of identical
 // intents would compress and index far better than a real fleet, and would flatter

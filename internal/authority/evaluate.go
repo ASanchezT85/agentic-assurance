@@ -128,15 +128,12 @@ func revokedAtString(g *Grant) string {
 // not, because it becomes a market order once triggered and the stop price is a
 // trigger, not a fill price.
 func EffectiveNotional(in intent.Intent) (money.Amount, bool) {
+	// No conversion. The envelope decoded the signed decimal literal into these exact
+	// types, so the amount here is the amount that was signed — it used to arrive as a
+	// float64 and be converted back, which recorded exactly whatever binary64 had made
+	// of it.
 	if in.Notional != nil {
-		amount, err := money.FromFloat(*in.Notional)
-		if err != nil {
-			// More precision than the platform keeps. Refusing is the only honest
-			// answer: rounding here would authorize an amount the caller did not ask
-			// for, and the caller is the only one who can say which they meant.
-			return 0, false
-		}
-		return amount, true
+		return *in.Notional, true
 	}
 	if in.Quantity == nil {
 		return 0, false
@@ -144,11 +141,13 @@ func EffectiveNotional(in intent.Intent) (money.Amount, bool) {
 	switch in.OrderType {
 	case intent.OrderLimit, intent.OrderStopLimit:
 		if in.LimitPrice != nil {
-			price, err := money.FromFloat(*in.LimitPrice)
-			if err != nil {
+			notional := money.NotionalOf(*in.LimitPrice, *in.Quantity)
+			if notional == 0 && *in.LimitPrice != 0 && *in.Quantity != 0 {
+				// Beyond what the platform can represent. Indeterminate rather than
+				// free: a limit cannot be applied to a number that does not fit.
 				return 0, false
 			}
-			return money.Notional(price, *in.Quantity), true
+			return notional, true
 		}
 	}
 	return 0, false

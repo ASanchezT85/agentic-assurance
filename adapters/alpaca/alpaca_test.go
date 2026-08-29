@@ -1,6 +1,7 @@
 package alpaca
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,7 +19,23 @@ import (
 // Alpaca, and nothing here should be read as saying the adapter has been exercised
 // against the real sandbox.
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 func newTestAdapter(t *testing.T, handler http.HandlerFunc) (*Adapter, *httptest.Server) {
 	t.Helper()
@@ -50,7 +67,7 @@ func sampleRequest() broker.OrderRequest {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      f(100),
+		Quantity:      q(100),
 		LimitPrice:    f(50.25),
 		TimeInForce:   intent.TIFDay,
 	}
@@ -111,7 +128,10 @@ func TestSubmitOrderShapesTheRequest(t *testing.T) {
 	if got["type"] != "limit" || got["side"] != "buy" || got["time_in_force"] != "day" {
 		t.Errorf("order fields wrong: %v", got)
 	}
-	if got["qty"] != "100" || got["limit_price"] != "50.25" {
+	// The exact decimal, at the platform's scale. "50.2500" and "50.25" are the same
+	// price to a venue; what matters is that the digits are the ones that were signed
+	// rather than the shortest rendering of a float that approximated them.
+	if got["qty"] != "100" || got["limit_price"] != "50.2500" {
 		t.Errorf("sizing wrong: qty=%v limit=%v", got["qty"], got["limit_price"])
 	}
 	if order.State != broker.StateAccepted || order.BrokerOrderID != "alp-1" {
@@ -280,7 +300,7 @@ func TestTheResolvedSymbolReachesTheVenue(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 
-	quantity := 1.0
+	quantity := money.MustParseQuantity("1.0")
 	if _, err := adapter.SubmitOrder(context.Background(), broker.OrderRequest{
 		ClientOrderID: "coid-1",
 		InstrumentID:  "instr_us_equity_00206R102",
@@ -309,7 +329,7 @@ func TestAnUnresolvedInstrumentIsRefusedRatherThanGuessed(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 
-	quantity := 1.0
+	quantity := money.MustParseQuantity("1.0")
 	_, err = adapter.SubmitOrder(context.Background(), broker.OrderRequest{
 		ClientOrderID: "coid-1",
 		InstrumentID:  "instr_us_equity_00206R102",

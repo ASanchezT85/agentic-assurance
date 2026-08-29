@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -57,7 +58,10 @@ func windowFor(base time.Time, d time.Duration) fleet.Window {
 func fleetEnvelope(tenant, id string, at time.Time, side intent.Side, notional float64,
 	agent, modelFamily string, deps []intent.Dependency) *intent.AgentExecutionEnvelope {
 
-	n := notional
+	n, err := money.FromFloat(notional)
+	if err != nil {
+		panic(err)
+	}
 	return &intent.AgentExecutionEnvelope{
 		SchemaVersion:  "0.1",
 		EnvelopeID:     id,

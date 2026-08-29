@@ -133,10 +133,13 @@ func MeasureObserved(c Cohort, w Window, observed []Observed) Measurement {
 		if e.Intent.Side == intent.SideSell {
 			sign = -1
 		}
-		m.GrossNotional += notional
-		m.NetNotional += sign * notional
-		signedSum += sign * notional
-		absSum += notional
+		// Analytical arithmetic, in floats by design. The exact value is what the
+		// enforcement plane decided against; this is what the fleet view aggregates.
+		value := notional.Float()
+		m.GrossNotional += value
+		m.NetNotional += sign * value
+		signedSum += sign * value
+		absSum += value
 	}
 
 	m.AgentCount = len(agents)

@@ -144,7 +144,7 @@ func TestParentTrackerUnderConcurrency(t *testing.T) {
 	at := time.Now().UTC()
 
 	hammer(t, func(worker, i int) {
-		n := 100.0
+		n := money.MustParse("100")
 		tracker.Observe(&intent.AgentExecutionEnvelope{
 			EnvelopeID: fmt.Sprintf("env-%d-%d", worker, i),
 			TenantID:   fmt.Sprintf("tenant_%d", worker%3),
@@ -179,7 +179,7 @@ func TestTelemetryBufferUnderConcurrency(t *testing.T) {
 
 	at := time.Now().UTC()
 	hammer(t, func(worker, i int) {
-		n := 100.0
+		n := money.MustParse("100")
 		telemetry.Observe(&intent.AgentExecutionEnvelope{
 			EnvelopeID: fmt.Sprintf("env-%d-%d", worker, i),
 			TenantID:   "tenant_c",

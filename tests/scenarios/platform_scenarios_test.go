@@ -124,7 +124,7 @@ func TestS05_RetryStorm(t *testing.T) {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      f(100),
+		Quantity:      q(100),
 		LimitPrice:    f(50),
 		TimeInForce:   intent.TIFDay,
 	}

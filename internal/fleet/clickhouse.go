@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"agentic-assurance/internal/money"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -101,17 +102,21 @@ func (s *Sink) InsertIntents(ctx context.Context, envelopes []*intent.AgentExecu
 		}
 		notional, determinable := intent.ClusterNotional(e.Intent)
 		row := intentRow{
-			TenantID:         e.TenantID,
-			EnvelopeID:       e.EnvelopeID,
-			CorrelationID:    e.CorrelationID,
-			PrincipalID:      e.Principal.PrincipalID,
-			AccountID:        e.Principal.AccountID,
-			AgentID:          e.Agent.AgentID,
-			InstrumentID:     e.Intent.InstrumentID,
-			AssetClass:       string(e.Intent.AssetClass),
-			Side:             string(e.Intent.Side),
-			OrderType:        string(e.Intent.OrderType),
-			Quantity:         e.Intent.Quantity,
+			TenantID:      e.TenantID,
+			EnvelopeID:    e.EnvelopeID,
+			CorrelationID: e.CorrelationID,
+			PrincipalID:   e.Principal.PrincipalID,
+			AccountID:     e.Principal.AccountID,
+			AgentID:       e.Agent.AgentID,
+			InstrumentID:  e.Intent.InstrumentID,
+			AssetClass:    string(e.Intent.AssetClass),
+			Side:          string(e.Intent.Side),
+			OrderType:     string(e.Intent.OrderType),
+			// The analytical plane keeps floats: a risk score off in the twelfth
+			// decimal is a risk score. Converted here, at the boundary, so the
+			// enforcement side stays exact (INV-005 keeps this plane off the hot
+			// path in the other direction too).
+			Quantity:         quantityFloat(e.Intent.Quantity),
 			StrategyID:       e.Lineage.StrategyID,
 			AuthorityGrantID: e.AuthorityGrantID,
 			AttestationLevel: string(e.Agent.Attestation.Level),
@@ -120,7 +125,7 @@ func (s *Sink) InsertIntents(ctx context.Context, envelopes []*intent.AgentExecu
 			ReceivedAt:       e.ReceivedAt.UTC().Format("2006-01-02 15:04:05.000"),
 		}
 		if determinable {
-			n := notional
+			n := notional.Float()
 			row.Notional = &n
 			row.NotionalDeterminable = 1
 		}
@@ -300,4 +305,13 @@ func (s *Sink) request(ctx context.Context, query string, body []byte) (string, 
 		return "", fmt.Errorf("clickhouse returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return string(raw), nil
+}
+
+// quantityFloat converts an exact quantity for the analytical plane.
+func quantityFloat(q *money.Quantity) *float64 {
+	if q == nil {
+		return nil
+	}
+	f := q.Float()
+	return &f
 }

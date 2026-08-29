@@ -106,7 +106,12 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 		t.Fatal("a committed event owes nothing to the bus; the outbox row was not written")
 	}
 
-	consumer, err := evidence.NewConsumer(ctx, js, "test-outbox-"+event.EventID, "evidence.>")
+	// Filtered to this run's tenant. A consumer over "evidence.>" starting at the
+	// beginning of the stream hands over every other run's events first, and this test
+	// would then be measuring how long it takes to walk a backlog rather than whether
+	// this event reached the projection.
+	consumer, err := evidence.NewConsumer(ctx, js, "test-outbox-"+event.EventID,
+		"evidence."+tenant+".>")
 	if err != nil {
 		t.Fatalf("consumer: %v", err)
 	}

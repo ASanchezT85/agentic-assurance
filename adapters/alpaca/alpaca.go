@@ -221,17 +221,19 @@ func (a *Adapter) SubmitOrder(ctx context.Context, req broker.OrderRequest) (bro
 	}
 	switch {
 	case req.Quantity != nil:
-		payload["qty"] = strconv.FormatFloat(*req.Quantity, 'f', -1, 64)
+		// The exact decimal, as text. FormatFloat rendered whatever binary64 had
+		// made of the value; String renders the value itself.
+		payload["qty"] = req.Quantity.String()
 	case req.Notional != nil:
-		payload["notional"] = strconv.FormatFloat(*req.Notional, 'f', -1, 64)
+		payload["notional"] = req.Notional.String()
 	default:
 		return broker.BrokerOrder{}, fmt.Errorf("%w: neither quantity nor notional", broker.ErrUnsupported)
 	}
 	if req.LimitPrice != nil {
-		payload["limit_price"] = strconv.FormatFloat(*req.LimitPrice, 'f', -1, 64)
+		payload["limit_price"] = req.LimitPrice.String()
 	}
 	if req.StopPrice != nil {
-		payload["stop_price"] = strconv.FormatFloat(*req.StopPrice, 'f', -1, 64)
+		payload["stop_price"] = req.StopPrice.String()
 	}
 
 	var wire wireOrder

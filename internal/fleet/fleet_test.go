@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"agentic-assurance/internal/identity"
+	"agentic-assurance/internal/money"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -22,7 +23,23 @@ import (
 
 var origin = time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 func env(agentID string, side intent.Side, notional float64, offset time.Duration) *intent.AgentExecutionEnvelope {
 	return &intent.AgentExecutionEnvelope{
@@ -151,7 +168,7 @@ func TestGrossAndNetBothSurvive(t *testing.T) {
 func TestIndeterminateIntentsAreCounted(t *testing.T) {
 	hidden := env("c", intent.SideBuy, 0, 2*time.Second)
 	hidden.Intent.Notional = nil
-	hidden.Intent.Quantity = f(500)
+	hidden.Intent.Quantity = q(500)
 
 	w := Window{Start: origin, End: origin.Add(time.Minute)}
 	m := Measure(instrumentCohort(t), w, []*intent.AgentExecutionEnvelope{
@@ -304,7 +321,13 @@ func TestAMeasurementSaysHowMuchWasAuthorized(t *testing.T) {
 		End:   time.Date(2026, 8, 28, 14, 1, 0, 0, time.UTC),
 	}
 	at := w.Start.Add(time.Second)
-	n := func(v float64) *float64 { return &v }
+	n := func(v float64) *money.Amount {
+		a, err := money.FromFloat(v)
+		if err != nil {
+			panic(err)
+		}
+		return &a
+	}
 
 	env := func(id string, notional float64) *intent.AgentExecutionEnvelope {
 		return &intent.AgentExecutionEnvelope{
@@ -346,7 +369,7 @@ func TestMeasureOverEnvelopesAssumesAuthorized(t *testing.T) {
 		Start: time.Date(2026, 8, 28, 14, 0, 0, 0, time.UTC),
 		End:   time.Date(2026, 8, 28, 14, 1, 0, 0, time.UTC),
 	}
-	n := 1000.0
+	n := money.MustParse("1000")
 	m := Measure(Cohort{TenantID: "tenant_x"}, w, []*intent.AgentExecutionEnvelope{{
 		EnvelopeID: "a", TenantID: "tenant_x", ReceivedAt: w.Start.Add(time.Second),
 		Agent: intent.Agent{AgentID: "agent_a"},

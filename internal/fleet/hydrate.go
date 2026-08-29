@@ -1,6 +1,7 @@
 package fleet
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -126,8 +127,13 @@ func (s *Sink) LoadWindow(ctx context.Context, tenantID string, w Window) ([]Obs
 		// and recomputing from quantity and a price we no longer have would either
 		// fail or invent one.
 		if row.NotionalDeterminable == "1" && row.Notional != nil {
-			n := parseFloat(*row.Notional)
-			e.Intent.Notional = &n
+			// Back from the analytical store into the exact type. A stored figure
+			// that will not parse exactly is left absent rather than approximated:
+			// this is a measurement of what was decided, and inventing a nearby
+			// number would measure something that never happened.
+			if n, err := money.Parse(*row.Notional); err == nil {
+				e.Intent.Notional = &n
+			}
 		}
 
 		// Authorized means the enforcement plane let it through to a venue. An

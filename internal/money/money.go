@@ -15,12 +15,9 @@
 package money
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
-	"strings"
 )
 
 // Scale is the number of decimal places every amount carries.
@@ -45,68 +42,11 @@ var ErrPrecision = errors.New("more precision than the supported scale of four d
 // is invisible until it accumulates. JSON numbers arrive as text on the wire and this
 // is where they stop being text.
 func Parse(s string) (Amount, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty amount")
-	}
-
-	negative := false
-	switch s[0] {
-	case '+':
-		s = s[1:]
-	case '-':
-		negative = true
-		s = s[1:]
-	}
-	if s == "" {
-		return 0, fmt.Errorf("no digits in amount")
-	}
-
-	// Exponents are refused rather than expanded. "1e3" is a perfectly good number and
-	// a poor way to write money, and accepting it would mean deciding what "1e-9"
-	// rounds to.
-	if strings.ContainsAny(s, "eE") {
-		return 0, fmt.Errorf("exponent notation is not an exact amount: %q", s)
-	}
-
-	whole, fraction, hasFraction := strings.Cut(s, ".")
-	if whole == "" {
-		whole = "0"
-	}
-	if !allDigits(whole) || (hasFraction && !allDigits(fraction)) {
-		return 0, fmt.Errorf("%q is not a decimal amount", s)
-	}
-	if hasFraction && len(fraction) > Scale {
-		// Trailing zeros beyond the scale are not extra precision.
-		if strings.Trim(fraction[Scale:], "0") != "" {
-			return 0, fmt.Errorf("%w: %q", ErrPrecision, s)
-		}
-		fraction = fraction[:Scale]
-	}
-
-	units, err := strconv.ParseInt(whole, 10, 64)
+	units, err := parseFixed(s, Scale, ErrPrecision)
 	if err != nil {
-		return 0, fmt.Errorf("amount out of range: %q", s)
+		return 0, err
 	}
-
-	padded := fraction + strings.Repeat("0", Scale-len(fraction))
-	var fractionUnits int64
-	if padded != "" {
-		fractionUnits, err = strconv.ParseInt(padded, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("amount out of range: %q", s)
-		}
-	}
-
-	if units > (1<<62)/unitsPerCurrency {
-		return 0, fmt.Errorf("amount out of range: %q", s)
-	}
-
-	total := units*unitsPerCurrency + fractionUnits
-	if negative {
-		total = -total
-	}
-	return Amount(total), nil
+	return Amount(units), nil
 }
 
 // MustParse is Parse for constants and tests.
@@ -120,8 +60,19 @@ func MustParse(s string) Amount {
 
 // FromFloat converts a float, refusing anything that is not exact at this scale.
 //
-// It exists for the edges where a float is what arrives — an analytical figure, a
-// legacy caller — and it refuses rather than rounds for the same reason Parse does.
+// NOT FOR THE AUTHORIZATION PATH. A structural guard fails the build if it appears in
+// internal/intent, internal/authority, internal/policy, internal/execution or
+// internal/broker.
+//
+// The reason is that its input has already lost information. 900000000000.0002 and
+// 900000000000.0003 are different amounts, both exactly representable at this scale, and
+// binary64 cannot tell them apart: an agent signing the second had the first authorized.
+// Converting faithfully from a float that is already wrong produces an exact record of
+// the wrong number.
+//
+// It survives for the edges where a float is genuinely what arrives — a simulated
+// figure, an analytical input — and it refuses rather than rounds for the same reason
+// Parse does.
 func FromFloat(f float64) (Amount, error) {
 	return Parse(strconv.FormatFloat(f, 'f', -1, 64))
 }
@@ -165,21 +116,19 @@ func (a Amount) MarshalJSON() ([]byte, error) {
 	return []byte(a.String()), nil
 }
 
-// UnmarshalJSON reads decimal text, refusing anything beyond the scale.
+// UnmarshalJSON reads the decimal literal, refusing anything beyond the scale.
+//
+// The literal rather than a float. This is the boundary the type exists for: JSON numbers
+// arrive as text, and this is where they stop being text — not after a detour through
+// binary64, which is where the signed amount and the authorized amount used to diverge.
 func (a *Amount) UnmarshalJSON(data []byte) error {
-	text := strings.TrimSpace(string(data))
-	if text == "null" {
+	text, err := numericText(data)
+	if err != nil {
+		return err
+	}
+	if text == "" {
 		*a = 0
 		return nil
-	}
-	// A JSON string is accepted too: a client that sends money as a string is being
-	// careful rather than wrong.
-	if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
-		var s string
-		if err := json.Unmarshal(data, &s); err != nil {
-			return err
-		}
-		text = s
 	}
 	parsed, err := Parse(text)
 	if err != nil {
@@ -187,28 +136,6 @@ func (a *Amount) UnmarshalJSON(data []byte) error {
 	}
 	*a = parsed
 	return nil
-}
-
-// Notional derives an order's value from a price and a quantity of shares.
-//
-// This is the one place a monetary value is not simply parsed or added, and the one
-// place a rounding rule is needed: a quantity is a count of shares rather than money —
-// venues accept fractional ones — so a price times a quantity can land between units.
-//
-// It rounds **up**, away from zero. A ceiling must count at least what an order can
-// cost: rounding down would let a sequence of orders each shave a fraction off what
-// the grant is charged, and the direction that errs toward refusing is the safe one
-// for a limit. From here on the arithmetic is exact.
-func Notional(price Amount, quantity float64) Amount {
-	if price == 0 || quantity == 0 {
-		return 0
-	}
-	units := float64(price) * quantity
-	rounded := math.Ceil(math.Abs(units))
-	if units < 0 {
-		return Amount(-rounded)
-	}
-	return Amount(rounded)
 }
 
 func allDigits(s string) bool {

@@ -1,11 +1,28 @@
 package intent
 
 import (
+	"agentic-assurance/internal/money"
 	"testing"
 	"time"
 )
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 // valid returns an envelope that passes, so each test can break exactly one thing.
 func valid() AgentExecutionEnvelope {
@@ -47,26 +64,26 @@ func TestSizingMatrix(t *testing.T) {
 	cases := []struct {
 		name      string
 		orderType OrderType
-		notional  *float64
-		quantity  *float64
-		limit     *float64
-		stop      *float64
+		notional  *money.Amount
+		quantity  *money.Quantity
+		limit     *money.Amount
+		stop      *money.Amount
 		wantCode  string // empty means the combination must be accepted
 	}{
 		{"market with notional", OrderMarket, f(4200), nil, nil, nil, ""},
-		{"market with quantity", OrderMarket, nil, f(25), nil, nil, ""},
-		{"market with both", OrderMarket, f(4200), f(25), nil, nil, "SIZING_NOT_EXCLUSIVE"},
+		{"market with quantity", OrderMarket, nil, q(25), nil, nil, ""},
+		{"market with both", OrderMarket, f(4200), q(25), nil, nil, "SIZING_NOT_EXCLUSIVE"},
 		{"market with neither", OrderMarket, nil, nil, nil, nil, "SIZING_MISSING"},
 
-		{"limit with quantity", OrderLimit, nil, f(25), f(10), nil, ""},
+		{"limit with quantity", OrderLimit, nil, q(25), f(10), nil, ""},
 		{"limit with notional", OrderLimit, f(4200), nil, f(10), nil, "NOTIONAL_NOT_ALLOWED_FOR_ORDER_TYPE"},
-		{"limit with both", OrderLimit, f(4200), f(25), f(10), nil, "NOTIONAL_NOT_ALLOWED_FOR_ORDER_TYPE"},
+		{"limit with both", OrderLimit, f(4200), q(25), f(10), nil, "NOTIONAL_NOT_ALLOWED_FOR_ORDER_TYPE"},
 		{"limit with neither", OrderLimit, nil, nil, f(10), nil, "QUANTITY_REQUIRED_FOR_ORDER_TYPE"},
 
-		{"stop with quantity", OrderStop, nil, f(25), nil, f(9), ""},
+		{"stop with quantity", OrderStop, nil, q(25), nil, f(9), ""},
 		{"stop with notional", OrderStop, f(4200), nil, nil, f(9), "NOTIONAL_NOT_ALLOWED_FOR_ORDER_TYPE"},
 
-		{"stop_limit with quantity", OrderStopLimit, nil, f(25), f(10), f(9), ""},
+		{"stop_limit with quantity", OrderStopLimit, nil, q(25), f(10), f(9), ""},
 		{"stop_limit with notional", OrderStopLimit, f(4200), nil, f(10), f(9), "NOTIONAL_NOT_ALLOWED_FOR_ORDER_TYPE"},
 	}
 

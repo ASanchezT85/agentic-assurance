@@ -262,15 +262,16 @@ func (a *Adapter) SubmitOrder(ctx context.Context, req broker.OrderRequest) (bro
 	form.Set("class", "equity")
 	form.Set("symbol", symbol)
 	form.Set("side", tradierSide(req.Side))
-	form.Set("quantity", strconv.FormatFloat(*req.Quantity, 'f', -1, 64))
+	// The exact decimal as text, which is what the venue's form accepts anyway.
+	form.Set("quantity", req.Quantity.String())
 	form.Set("type", tradierOrderType(req.OrderType))
 	form.Set("duration", strings.ToLower(string(req.TimeInForce)))
 	form.Set("tag", req.ClientOrderID)
 	if req.LimitPrice != nil {
-		form.Set("price", strconv.FormatFloat(*req.LimitPrice, 'f', -1, 64))
+		form.Set("price", req.LimitPrice.String())
 	}
 	if req.StopPrice != nil {
-		form.Set("stop", strconv.FormatFloat(*req.StopPrice, 'f', -1, 64))
+		form.Set("stop", req.StopPrice.String())
 	}
 
 	var envelope wireOrderEnvelope

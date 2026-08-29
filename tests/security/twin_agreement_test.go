@@ -62,7 +62,11 @@ func TestProductionEngineMatchesTheSharedLimitContract(t *testing.T) {
 			// produced values like 5000.010000000001, which the platform refuses as
 			// more precision than it keeps — the test would then be comparing a
 			// refusal about precision against a contract about limits.
-			notional := money.Notional(mustAmount(t, c.ReferencePrice), c.Quantity).Float()
+			quantity, err := money.QuantityFromFloat(c.Quantity)
+			if err != nil {
+				t.Fatalf("quantity %v: %v", c.Quantity, err)
+			}
+			notional := money.NotionalOf(mustAmount(t, c.ReferencePrice), quantity)
 
 			grant := &authority.Grant{
 				GrantID:             "grant_contract",

@@ -1,6 +1,7 @@
 package intent
 
 import (
+	"agentic-assurance/internal/money"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -58,8 +59,8 @@ type ParentIntent struct {
 	// determinable. NetNotional carries the sign of the side, because spec
 	// section 23 requires both flows to survive: a cluster of buys and a cluster of
 	// sells that net to zero are very different situations.
-	GrossNotional float64
-	NetNotional   float64
+	GrossNotional money.Amount
+	NetNotional   money.Amount
 
 	// IndeterminateChildren counts children whose notional could not be established
 	// without a market price. They are counted rather than dropped: a fragmented
@@ -227,11 +228,11 @@ func summarize(cluster []*AgentExecutionEnvelope) ParentIntent {
 		markets[e.Context.MarketSnapshotID] = true
 
 		if notional, ok := ClusterNotional(e.Intent); ok {
-			p.GrossNotional += notional
+			p.GrossNotional = p.GrossNotional.Add(notional)
 			if e.Intent.Side == SideSell {
-				p.NetNotional -= notional
+				p.NetNotional = p.NetNotional.Sub(notional)
 			} else {
-				p.NetNotional += notional
+				p.NetNotional = p.NetNotional.Add(notional)
 			}
 			continue
 		}
@@ -300,7 +301,7 @@ func parentID(p ParentIntent) string {
 // It mirrors the authority and policy packages, and for the same reason: a market
 // order sized by quantity has no bounded notional until it fills, and there is no
 // market data on the hot path (ADR-019).
-func ClusterNotional(in Intent) (float64, bool) {
+func ClusterNotional(in Intent) (money.Amount, bool) {
 	if in.Notional != nil {
 		return *in.Notional, true
 	}
@@ -310,7 +311,7 @@ func ClusterNotional(in Intent) (float64, bool) {
 	switch in.OrderType {
 	case OrderLimit, OrderStopLimit:
 		if in.LimitPrice != nil {
-			return *in.Quantity * *in.LimitPrice, true
+			return money.NotionalOf(*in.LimitPrice, *in.Quantity), true
 		}
 	}
 	return 0, false
@@ -322,7 +323,7 @@ func ClusterNotional(in Intent) (float64, bool) {
 // It reports the observation, not a verdict. Splitting an order is ordinary
 // execution practice; splitting it so every piece clears a limit that the whole
 // would not is the pattern worth surfacing, and a human decides what it means.
-func (p ParentIntent) Fragmented(perOrderLimit float64) bool {
+func (p ParentIntent) Fragmented(perOrderLimit money.Amount) bool {
 	if perOrderLimit <= 0 || p.ChildCount < 2 {
 		return false
 	}

@@ -194,14 +194,17 @@ func (b *Broker) SubmitOrder(ctx context.Context, req broker.OrderRequest) (brok
 }
 
 func (b *Broker) applyFill(order *broker.BrokerOrder, req broker.OrderRequest, fraction float64) {
+	// A fill is a venue's report, and BrokerOrder carries those as floats — a filled
+	// quantity is an observation rather than an authorization. The exact values are
+	// what was submitted; these are what came back.
 	qty := 100.0
 	if req.Quantity != nil {
-		qty = *req.Quantity
+		qty = req.Quantity.Float()
 	}
 	filled := qty * fraction
 	price := 100.0
 	if req.LimitPrice != nil {
-		price = *req.LimitPrice
+		price = req.LimitPrice.Float()
 	}
 	order.FilledQuantity = filled
 	order.AverageFillPrice = price

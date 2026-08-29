@@ -4,6 +4,7 @@
 package security
 
 import (
+	"agentic-assurance/internal/money"
 	"testing"
 	"time"
 
@@ -44,7 +45,23 @@ func baseEnvelope() intent.AgentExecutionEnvelope {
 	}
 }
 
-func ptr(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func ptr(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func qty(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 // An absent verification level must resolve to UNKNOWN. Not DECLARED, not empty.
 func TestAbsentVerificationBecomesUnknown(t *testing.T) {

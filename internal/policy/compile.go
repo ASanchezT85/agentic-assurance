@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"agentic-assurance/internal/money"
 	"fmt"
 	"strings"
 	"time"
@@ -160,7 +161,7 @@ func compileRules(src *Source) ([]CompiledRule, error) {
 func boundsProblems(where string, r CompiledRule) []string {
 	var problems []string
 
-	for name, v := range map[string]*float64{
+	for name, v := range map[string]*money.Amount{
 		"when.notional_gt":     r.WhenNotionalGT,
 		"when.notional_gte":    r.WhenNotionalGTE,
 		"when.notional_lt":     r.WhenNotionalLT,

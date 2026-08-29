@@ -6,6 +6,7 @@
 package broker
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"errors"
 	"time"
@@ -88,13 +89,19 @@ type OrderRequest struct {
 	// only place allowed to care.
 	Symbol string
 
-	AssetClass    intent.AssetClass
-	Side          intent.Side
-	OrderType     intent.OrderType
-	Quantity      *float64
-	Notional      *float64
-	LimitPrice    *float64
-	StopPrice     *float64
+	AssetClass intent.AssetClass
+	Side       intent.Side
+	OrderType  intent.OrderType
+
+	// Exact, and the same values the envelope carried. An adapter renders them as
+	// decimal text for its venue, which is what venues accept anyway; the previous
+	// float64 fields meant the economic value submitted could not be proved equal to
+	// the one authorized.
+	Quantity   *money.Quantity
+	Notional   *money.Amount
+	LimitPrice *money.Amount
+	StopPrice  *money.Amount
+
 	TimeInForce   intent.TimeInForce
 	ExtendedHours bool
 }

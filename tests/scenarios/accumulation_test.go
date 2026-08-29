@@ -46,11 +46,11 @@ func TestS07_CrossAgentAccumulation(t *testing.T) {
 	p := parents[0]
 
 	// The number spec section 21 names.
-	if p.GrossNotional != 11500 {
-		t.Errorf("effective exposure = %.2f, want 11500", p.GrossNotional)
+	if p.GrossNotional != money.MustParse("11500") {
+		t.Errorf("effective exposure = %s, want 11500", p.GrossNotional)
 	}
-	if p.NetNotional != 11500 {
-		t.Errorf("net exposure = %.2f, want 11500 for three same-side buys", p.NetNotional)
+	if p.NetNotional != money.MustParse("11500") {
+		t.Errorf("net exposure = %s, want 11500 for three same-side buys", p.NetNotional)
 	}
 	if !p.CrossAgent() {
 		t.Fatal("three agents under one principal were not reported as cross-agent (INV-002, spec 21)")
@@ -64,7 +64,10 @@ func TestS07_CrossAgentAccumulation(t *testing.T) {
 
 	// The combined exposure breaches a principal-level ceiling that no individual
 	// order came close to.
-	const principalCeiling = 10000.0
+	// Exact, and named as an amount rather than left as an untyped constant. Against
+	// money.Amount a bare 10000.0 means ten thousand ten-thousandths — one currency
+	// unit — and the assertion would pass for the wrong reason.
+	principalCeiling := money.MustParse("10000")
 	if p.GrossNotional <= principalCeiling {
 		t.Fatal("the scenario is misconfigured: the combined exposure does not breach the ceiling")
 	}
@@ -98,11 +101,11 @@ func TestS07_OppositeSidesDoNotAccumulate(t *testing.T) {
 		t.Fatalf("reconstructed %d parent intents, want one per side", len(parents))
 	}
 	for _, p := range parents {
-		if p.GrossNotional != 8000 {
-			t.Errorf("side %s: gross = %.2f, want 8000", p.Side, p.GrossNotional)
+		if p.GrossNotional != money.MustParse("8000") {
+			t.Errorf("side %s: gross = %s, want 8000", p.Side, p.GrossNotional)
 		}
-		if p.Side == intent.SideSell && p.NetNotional != -8000 {
-			t.Errorf("sell cluster net = %.2f; spec section 23 requires the direction "+
+		if p.Side == intent.SideSell && p.NetNotional != money.MustParse("-8000") {
+			t.Errorf("sell cluster net = %s; spec section 23 requires the direction "+
 				"to survive", p.NetNotional)
 		}
 	}

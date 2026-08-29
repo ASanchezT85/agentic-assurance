@@ -8,6 +8,7 @@
 package policy
 
 import (
+	"agentic-assurance/internal/money"
 	"fmt"
 	"strings"
 
@@ -37,21 +38,21 @@ type SourceRule struct {
 }
 
 type SourceWhen struct {
-	AssetClass    string   `yaml:"asset_class"`
-	Side          string   `yaml:"side"`
-	OrderType     string   `yaml:"order_type"`
-	Instrument    string   `yaml:"instrument_id"`
-	Instruments   []string `yaml:"instrument_ids"`
-	NotionalGT    *float64 `yaml:"notional_gt"`
-	NotionalGTE   *float64 `yaml:"notional_gte"`
-	NotionalLT    *float64 `yaml:"notional_lt"`
-	NotionalLTE   *float64 `yaml:"notional_lte"`
-	ExtendedHours *bool    `yaml:"extended_hours"`
+	AssetClass    string        `yaml:"asset_class"`
+	Side          string        `yaml:"side"`
+	OrderType     string        `yaml:"order_type"`
+	Instrument    string        `yaml:"instrument_id"`
+	Instruments   []string      `yaml:"instrument_ids"`
+	NotionalGT    *money.Amount `yaml:"notional_gt"`
+	NotionalGTE   *money.Amount `yaml:"notional_gte"`
+	NotionalLT    *money.Amount `yaml:"notional_lt"`
+	NotionalLTE   *money.Amount `yaml:"notional_lte"`
+	ExtendedHours *bool         `yaml:"extended_hours"`
 }
 
 type SourceReq struct {
-	NotionalLTE *float64 `yaml:"notional_lte"`
-	NotionalGTE *float64 `yaml:"notional_gte"`
+	NotionalLTE *money.Amount `yaml:"notional_lte"`
+	NotionalGTE *money.Amount `yaml:"notional_gte"`
 }
 
 // ParseSource reads an authored policy document.

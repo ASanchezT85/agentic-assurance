@@ -1,6 +1,7 @@
 package intent
 
 import (
+	"agentic-assurance/internal/money"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,8 +61,17 @@ func (v ValidationErrors) Has(code string) bool {
 func Decode(data []byte) (*AgentExecutionEnvelope, error) {
 	var env AgentExecutionEnvelope
 	if err := json.Unmarshal(data, &env); err != nil {
+		// A financial value the platform cannot represent is named as such rather than
+		// reported as a malformed envelope. The envelope is well formed; the amount
+		// carries more precision than the platform keeps, and the caller is the only one
+		// who can decide which of the two neighbouring amounts they meant. Told
+		// "malformed", they would go looking for a syntax error that is not there.
+		code := "ENVELOPE_MALFORMED"
+		if errors.Is(err, money.ErrPrecision) || errors.Is(err, money.ErrQuantityPrecision) {
+			code = "AMOUNT_PRECISION_UNSUPPORTED"
+		}
 		return nil, ValidationErrors{{
-			Field: "", Code: "ENVELOPE_MALFORMED", Message: err.Error(),
+			Field: "", Code: code, Message: err.Error(),
 		}}
 	}
 	if err := env.Validate(); err != nil {

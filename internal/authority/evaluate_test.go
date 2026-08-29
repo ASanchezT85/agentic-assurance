@@ -26,7 +26,23 @@ func (m memoryUsage) Usage(context.Context, string, string, time.Time) (Snapshot
 	return m.snapshot, nil
 }
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 func validGrant() *Grant {
 	return &Grant{
@@ -294,10 +310,10 @@ func TestEffectiveNotional(t *testing.T) {
 		determinable bool
 	}{
 		{"explicit notional", intent.Intent{OrderType: intent.OrderMarket, Notional: f(4200)}, money.MustParse("4200"), true},
-		{"market sized by quantity", intent.Intent{OrderType: intent.OrderMarket, Quantity: f(25)}, 0, false},
-		{"limit bounded by price", intent.Intent{OrderType: intent.OrderLimit, Quantity: f(25), LimitPrice: f(100)}, money.MustParse("2500"), true},
-		{"stop limit bounded by price", intent.Intent{OrderType: intent.OrderStopLimit, Quantity: f(10), LimitPrice: f(50), StopPrice: f(49)}, money.MustParse("500"), true},
-		{"stop is a trigger not a price", intent.Intent{OrderType: intent.OrderStop, Quantity: f(10), StopPrice: f(49)}, 0, false},
+		{"market sized by quantity", intent.Intent{OrderType: intent.OrderMarket, Quantity: q(25)}, 0, false},
+		{"limit bounded by price", intent.Intent{OrderType: intent.OrderLimit, Quantity: q(25), LimitPrice: f(100)}, money.MustParse("2500"), true},
+		{"stop limit bounded by price", intent.Intent{OrderType: intent.OrderStopLimit, Quantity: q(10), LimitPrice: f(50), StopPrice: f(49)}, money.MustParse("500"), true},
+		{"stop is a trigger not a price", intent.Intent{OrderType: intent.OrderStop, Quantity: q(10), StopPrice: f(49)}, 0, false},
 		{"nothing at all", intent.Intent{OrderType: intent.OrderMarket}, 0, false},
 	}
 	for _, tc := range cases {
@@ -318,7 +334,7 @@ func TestEffectiveNotional(t *testing.T) {
 func TestIndeterminateNotionalFailsClosedAgainstACap(t *testing.T) {
 	env := validEnvelope()
 	env.Intent.Notional = nil
-	env.Intent.Quantity = f(25) // market order sized by quantity
+	env.Intent.Quantity = q(25) // market order sized by quantity
 
 	got := Evaluate(context.Background(), env, validGrant(), nil, now)
 	if got.Allowed {
@@ -335,7 +351,7 @@ func TestIndeterminateNotionalIsFineWithoutANotionalCap(t *testing.T) {
 	g.Limits = Limits{}
 	env := validEnvelope()
 	env.Intent.Notional = nil
-	env.Intent.Quantity = f(25)
+	env.Intent.Quantity = q(25)
 
 	if got := Evaluate(context.Background(), env, g, nil, now); !got.Allowed {
 		t.Fatalf("denied with %s: %s", got.Code, got.Reason)

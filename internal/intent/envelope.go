@@ -10,6 +10,7 @@
 package intent
 
 import (
+	"agentic-assurance/internal/money"
 	"time"
 )
 
@@ -142,17 +143,25 @@ const (
 // Notional and Quantity are pointers so that "absent" and "zero" are different
 // facts. Exactly one is the primary sizing field (§12.3), and which one is
 // permitted depends on OrderType (ADR-020).
+//
+// The financial fields are exact decimal types rather than float64, and they are exact
+// from the wire inwards. They used to be float64 and authority converted them back to an
+// exact type afterwards, which is exactness applied after the loss: 900000000000.0002
+// and 900000000000.0003 are different amounts, both representable at the platform's
+// scale, and binary64 cannot tell them apart. An agent signing the second had the first
+// authorized. The signature covers the decimal literal, so the literal is what must reach
+// the decision.
 type Intent struct {
-	AssetClass    AssetClass  `json:"asset_class"`
-	InstrumentID  string      `json:"instrument_id"`
-	Side          Side        `json:"side"`
-	OrderType     OrderType   `json:"order_type"`
-	Notional      *float64    `json:"notional"`
-	Quantity      *float64    `json:"quantity"`
-	LimitPrice    *float64    `json:"limit_price"`
-	StopPrice     *float64    `json:"stop_price"`
-	TimeInForce   TimeInForce `json:"time_in_force"`
-	ExtendedHours bool        `json:"extended_hours"`
+	AssetClass    AssetClass      `json:"asset_class"`
+	InstrumentID  string          `json:"instrument_id"`
+	Side          Side            `json:"side"`
+	OrderType     OrderType       `json:"order_type"`
+	Notional      *money.Amount   `json:"notional"`
+	Quantity      *money.Quantity `json:"quantity"`
+	LimitPrice    *money.Amount   `json:"limit_price"`
+	StopPrice     *money.Amount   `json:"stop_price"`
+	TimeInForce   TimeInForce     `json:"time_in_force"`
+	ExtendedHours bool            `json:"extended_hours"`
 }
 
 type Lineage struct {

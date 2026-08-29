@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"fmt"
 	"os"
@@ -73,8 +74,8 @@ func idemEnvelope(key string) *intent.AgentExecutionEnvelope {
 }
 
 func idemRequest(key string) broker.OrderRequest {
-	qty := 100.0
-	price := 50.0
+	qty := money.MustParseQuantity("100")
+	price := money.MustParse("50")
 	return broker.OrderRequest{
 		ClientOrderID: "coid_" + key,
 		TenantID:      idemTenant,

@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"agentic-assurance/internal/money"
 	"context"
 	"errors"
 	"testing"
@@ -13,7 +14,23 @@ import (
 
 var at = time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
 
-func f(v float64) *float64 { return &v }
+// f and q build the exact financial types a decoded envelope carries. Tests may start
+// from a float literal for readability; the platform never does.
+func f(v float64) *money.Amount {
+	a, err := money.FromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &a
+}
+
+func q(v float64) *money.Quantity {
+	x, err := money.QuantityFromFloat(v)
+	if err != nil {
+		panic(err)
+	}
+	return &x
+}
 
 func envelope(key string) *intent.AgentExecutionEnvelope {
 	return &intent.AgentExecutionEnvelope{
@@ -27,7 +44,7 @@ func envelope(key string) *intent.AgentExecutionEnvelope {
 			InstrumentID: "instr_us_equity_00206R102",
 			Side:         intent.SideBuy,
 			OrderType:    intent.OrderLimit,
-			Quantity:     f(100),
+			Quantity:     q(100),
 			LimitPrice:   f(50),
 			TimeInForce:  intent.TIFDay,
 		},
@@ -43,7 +60,7 @@ func request(key string) broker.OrderRequest {
 		AssetClass:    intent.AssetEquity,
 		Side:          intent.SideBuy,
 		OrderType:     intent.OrderLimit,
-		Quantity:      f(100),
+		Quantity:      q(100),
 		LimitPrice:    f(50),
 		TimeInForce:   intent.TIFDay,
 	}
