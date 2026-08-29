@@ -71,6 +71,11 @@ type Result struct {
 	Policy    *policy.Decision
 	Outcome   *execution.Outcome
 
+	// ControlID names the fleet control that refused, when one did. Kept on the
+	// result so telemetry can record which control acted without re-deriving it from
+	// the code.
+	ControlID string
+
 	// Replayed marks a duplicate served from the idempotency record rather than
 	// re-executed (spec section 17).
 	Replayed bool
@@ -305,6 +310,7 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 				"fleet controls could not be read: "+err.Error())
 		}
 		if d := control.Evaluate(inForce, env, at); !d.Allowed {
+			result.ControlID = d.ControlID
 			// control.enforced, not control.applied: applying is what the customer
 			// did once, enforcing is what the platform does on every order after.
 			// Recording this as an application made the incident timeline report a
@@ -335,6 +341,7 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 			}
 			if !allowed {
 				d := control.Throttled(throttle, used)
+				result.ControlID = d.ControlID
 				p.record(ctx, env, evidence.ControlEnforced, at, map[string]any{
 					"control":    d.Code,
 					"control_id": d.ControlID,
@@ -463,6 +470,14 @@ func (p *Pipeline) observed(env *intent.AgentExecutionEnvelope, r Result) Result
 	if r.Policy != nil {
 		d.PolicyAction = string(r.Policy.Action)
 		d.PolicyBundleID = r.Policy.BundleID
+	}
+	// A control refusal already reaches the analytical plane as unauthorized flow,
+	// because an intent counts as authorized only when authority and policy both
+	// allowed. What was missing is which control did it, and the codes are different
+	// operational stories: throttled is not isolated is not read-only.
+	if r.Stage == StageControl {
+		d.ControlDecision = r.Code
+		d.ControlID = r.ControlID
 	}
 	p.Telemetry.Observe(env, d)
 	return r

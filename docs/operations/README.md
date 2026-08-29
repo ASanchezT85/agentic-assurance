@@ -251,8 +251,10 @@ number to read here is that every one of them got a decision.
 **The run found a real default.** pgxpool sizes itself at four connections per CPU, and
 with a thousand concurrent agents that is where every submission queues: 232 intents/s
 on the default against 422/s with fifty connections, same hardware, same enforcement
-work. The gateway now defaults to 50 (`POSTGRES_MAX_CONNS`), and a DSN that sets
-`pool_max_conns` itself is left alone.
+work. Both binaries default to 50 (`POSTGRES_MAX_CONNS`) through `internal/pg`, and a
+DSN that sets `pool_max_conns` itself is left alone. It lived in the gateway's main for
+a while and the fleet engine kept the library default — a sizing policy that applies to
+one of two processes is not a policy, it is a patch.
 
 Two things the harness had to be told, both properties of this machine rather than of
 the platform. A thousand simultaneous TCP connections overflow the Windows listen

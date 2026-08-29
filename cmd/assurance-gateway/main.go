@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -37,6 +36,7 @@ import (
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/intent"
+	"agentic-assurance/internal/pg"
 )
 
 const component = "assurance-gateway"
@@ -236,7 +236,7 @@ func openEvidence(ctx context.Context, log *slog.Logger) evidenceReader {
 		log.Warn("no POSTGRES_APP_DSN; evidence endpoints will report unavailable")
 		return nil
 	}
-	pool, err := openPoolFrom(ctx, dsn)
+	pool, err := pg.Open(ctx, dsn)
 	if err != nil {
 		log.Error("evidence store unavailable", "err", err)
 		return nil
@@ -266,7 +266,7 @@ func openPool(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
 	if dsn == "" {
 		return nil
 	}
-	pool, err := openPoolFrom(ctx, dsn)
+	pool, err := pg.Open(ctx, dsn)
 	if err != nil {
 		log.Error("database unavailable", "err", err)
 		return nil
@@ -295,7 +295,7 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 	if dsn == "" {
 		return missing("POSTGRES_APP_DSN", "idempotency and usage have nowhere authoritative to live")
 	}
-	pool, err := openPoolFrom(ctx, dsn)
+	pool, err := pg.Open(ctx, dsn)
 	if err != nil {
 		log.Error("database unavailable", "err", err)
 		return nil, nil
@@ -512,29 +512,4 @@ func main() {
 		log.Error("shutdown failed", "err", err)
 	}
 	log.Info("stopped")
-}
-
-// openPoolFrom connects with a pool sized for a fleet rather than for a laptop.
-//
-// pgxpool defaults to four connections per CPU. With a thousand agents submitting
-// concurrently that is where every submission queues: the same load run measured
-// 232 intents/s on the default and 422/s with fifty connections, on identical
-// hardware, with the enforcement work unchanged. A DSN that sets pool_max_conns
-// itself is left alone — an operator who tuned it means it.
-func openPoolFrom(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		return nil, err
-	}
-	if !strings.Contains(dsn, "pool_max_conns") {
-		cfg.MaxConns = int32(envInt("POSTGRES_MAX_CONNS", 50))
-	}
-	return pgxpool.NewWithConfig(ctx, cfg)
-}
-
-func envInt(key string, fallback int) int {
-	if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v > 0 {
-		return v
-	}
-	return fallback
 }

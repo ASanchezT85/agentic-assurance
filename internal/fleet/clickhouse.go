@@ -61,6 +61,8 @@ type intentRow struct {
 	ModelID              string   `json:"model_id"`
 	AuthorityDecision    string   `json:"authority_decision"`
 	PolicyAction         string   `json:"policy_action"`
+	ControlDecision      string   `json:"control_decision"`
+	ControlID            string   `json:"control_id"`
 	PolicyBundleID       string   `json:"policy_bundle_id"`
 	ReceivedAt           string   `json:"received_at"`
 }
@@ -71,6 +73,13 @@ type Decision struct {
 	AuthorityDecision string
 	PolicyAction      string
 	PolicyBundleID    string
+
+	// ControlDecision is the code of the fleet control that refused, empty when none
+	// did. Recorded because "did the control work" is the question that follows every
+	// control an operator authorizes, and without this the intents a THROTTLE stopped
+	// look exactly like the intents a policy rule stopped.
+	ControlDecision string
+	ControlID       string
 }
 
 // InsertIntents writes a batch.
@@ -118,6 +127,8 @@ func (s *Sink) InsertIntents(ctx context.Context, envelopes []*intent.AgentExecu
 		if d, ok := decisions[e.EnvelopeID]; ok {
 			row.AuthorityDecision = d.AuthorityDecision
 			row.PolicyAction = d.PolicyAction
+			row.ControlDecision = d.ControlDecision
+			row.ControlID = d.ControlID
 			row.PolicyBundleID = d.PolicyBundleID
 		}
 		if err := enc.Encode(row); err != nil {

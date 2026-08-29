@@ -34,6 +34,7 @@ import (
 	"agentic-assurance/internal/fleet"
 	"agentic-assurance/internal/identity"
 	"agentic-assurance/internal/incident"
+	"agentic-assurance/internal/pg"
 	"agentic-assurance/internal/simulation"
 )
 
@@ -153,7 +154,7 @@ func openSimulation(ctx context.Context, log *slog.Logger) *simulation.API {
 	if dsn == "" {
 		return missing("POSTGRES_APP_DSN", "a simulation nobody can retrieve is a log line")
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := pg.Open(ctx, dsn)
 	if err != nil {
 		log.Error("simulation store unavailable", "err", err)
 		return nil
@@ -239,7 +240,7 @@ func openPool(ctx context.Context, log *slog.Logger) *pgxpool.Pool {
 	if dsn == "" {
 		return nil
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := pg.Open(ctx, dsn)
 	if err != nil {
 		log.Error("database unavailable", "err", err)
 		return nil

@@ -2,7 +2,11 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -172,5 +176,62 @@ func TestAnUncountableThrottleDenies(t *testing.T) {
 	result := p.Submit(context.Background(), envelope(nil), presentedAPI())
 	if result.Accepted || result.Code != "CONTROL_UNAVAILABLE" {
 		t.Errorf("accepted=%v code=%s, want CONTROL_UNAVAILABLE", result.Accepted, result.Code)
+	}
+}
+
+// The analytical plane learns which control refused.
+//
+// A control refusal already reached it as unauthorized flow, because an intent counts
+// as authorized only when authority and policy both allowed. What it could not say is
+// why: the intents a THROTTLE stopped looked exactly like the intents a policy rule
+// stopped, so "did the control work" had no answer short of reading evidence one chain
+// at a time.
+func TestTelemetryRecordsWhichControlRefused(t *testing.T) {
+	var written []byte
+	clickhouse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		written, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer clickhouse.Close()
+
+	p, _, _ := harness(t)
+	p.Telemetry = NewTelemetry(fleet.NewSink(clickhouse.URL, "u", "p"), nil)
+	// One intent per flush, so the assertion is about this order and not about a
+	// batch that happens to contain it.
+	p.Telemetry.Batch = 1
+	go p.Telemetry.Run(context.Background())
+
+	p.Controls = &memControls{controls: []control.Control{readOnlyFor("agent_test", at)}}
+
+	result := p.Submit(context.Background(), envelope(nil), presentedAPI())
+	if result.Code != "CONTROL_READ_ONLY" {
+		t.Fatalf("code = %s, want CONTROL_READ_ONLY", result.Code)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for len(written) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(written) == 0 {
+		t.Fatal("nothing reached the analytical plane")
+	}
+
+	var row struct {
+		ControlDecision string `json:"control_decision"`
+		ControlID       string `json:"control_id"`
+		PolicyAction    string `json:"policy_action"`
+	}
+	firstRow, _, _ := strings.Cut(string(written), "\n")
+	if err := json.Unmarshal([]byte(firstRow), &row); err != nil {
+		t.Fatalf("the row is not JSON: %v", err)
+	}
+	if row.ControlDecision != "CONTROL_READ_ONLY" || row.ControlID != "ctl_test" {
+		t.Errorf("row recorded control=%q id=%q, want CONTROL_READ_ONLY/ctl_test",
+			row.ControlDecision, row.ControlID)
+	}
+	// And the row still reads as unauthorized flow, which is what the fleet vector
+	// counts on: an intent is authorized only when authority and policy both allowed.
+	if row.PolicyAction != "" {
+		t.Errorf("policy_action = %q on an order policy never saw", row.PolicyAction)
 	}
 }
