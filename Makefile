@@ -37,6 +37,9 @@ migrate: ## Apply PostgreSQL migrations (run `make up` first)
 test-integration: ## Integration tests (run `make up && make migrate` first)
 	go test -tags=integration -count=1 ./tests/integration/...
 
+openapi: ## Regenerate docs/api/openapi.json from the routes and packages/ schemas
+	go run ./cmd/openapi-gen -root .
+
 test-load: ## 1,000 synthetic agents against a running gateway (spec section 56 item 1)
 	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=load -count=1 -v -timeout 20m ./tests/performance/ -run TestAThousandAgents
 

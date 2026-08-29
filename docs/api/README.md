@@ -75,11 +75,15 @@ The endpoint is **absent, not failing**, when the enforcement plane is not fully
 configured. A gateway with no signed policy bundle, no venue and no credentials
 answers 404 here rather than accepting intents it cannot evaluate.
 
-**No OpenAPI document is generated today.** Section 60 asks for one, built from the
-canonical schemas in `packages/` rather than hand-written, and nothing builds it: this
-file and the route table above are the reference. That sentence used to say nothing was
-generated "because no endpoint exists yet", which stopped being true around fifteen
-endpoints ago and kept being read as an explanation.
+**OpenAPI is generated** into [`openapi.json`](openapi.json) by
+`go run ./cmd/openapi-gen`, from the routes the binaries register and the canonical
+schemas in `packages/` (§60). It has no route list of its own: the paths come from the
+`HandleFunc` registrations, so an endpoint cannot be missing from it by omission, and a
+served route with no description stops the generator rather than being published blank.
+
+A generated file that is committed is wrong from the next endpoint onwards, so a test
+regenerates it and compares. This file stays the prose — why each endpoint behaves as
+it does — and that document stays the contract.
 
 ## Evidence endpoints (Phase 6)
 

@@ -1,0 +1,1112 @@
+{
+  "components": {
+    "schemas": {
+      "agent-execution-envelope": {
+        "$defs": {
+          "claim": {
+            "description": "An assertion carrying provenance. VERIFIED requires an evidence_ref: nothing verifies itself.",
+            "properties": {
+              "evidence_ref": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              },
+              "verification": {
+                "$ref": "#/$defs/verificationLevel"
+              }
+            },
+            "type": "object"
+          },
+          "verificationLevel": {
+            "description": "Exactly three levels. An absent level is UNKNOWN, never DECLARED, and nothing is ever silently promoted (INV-008).",
+            "enum": [
+              "UNKNOWN",
+              "DECLARED",
+              "VERIFIED"
+            ]
+          }
+        },
+        "$id": "https://agentic-assurance.dev/schemas/agent-execution-envelope/v0.1",
+        "description": "The canonical financial-intent contract (ADR-002). Every inbound adapter normalizes into this object before any policy runs. This document is the published contract for producers; internal/intent is the enforcement, and internal/intent/schema_sync_test.go fails if the two disagree. Unknown properties are accepted by design: producers run ahead of consumers under ADR-008.",
+        "properties": {
+          "agent": {
+            "properties": {
+              "agent_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "attestation": {
+                "properties": {
+                  "evidence_ref": {
+                    "type": "string"
+                  },
+                  "level": {
+                    "description": "A0 unknown origin, A1 authenticated app identity, A2 workload-attested, A3 provider-attested. V0 rejects A3: it has no provider attestation mechanism and will not record an unverifiable claim.",
+                    "enum": [
+                      "A0",
+                      "A1",
+                      "A2",
+                      "A3"
+                    ]
+                  },
+                  "method": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "workload_identity": {
+                "properties": {
+                  "spiffe_id": {
+                    "description": "Attests the workload, never the model (ADR-006).",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "agent_id"
+            ],
+            "type": "object"
+          },
+          "authority_grant_id": {
+            "description": "Mandatory for executable intents. A natural-language prompt is never authority.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "context": {
+            "properties": {
+              "market_snapshot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "portfolio_snapshot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "correlation_id": {
+            "description": "Optional on the envelope; the gateway assigns one when absent.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "properties": {
+                "evidence_ref": {
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "observed_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "MARKET_DATA",
+                    "NEWS",
+                    "MODEL",
+                    "STRATEGY",
+                    "RUNTIME",
+                    "EXECUTION_ADAPTER"
+                  ]
+                },
+                "verification": {
+                  "$ref": "#/$defs/verificationLevel"
+                }
+              },
+              "required": [
+                "type",
+                "id",
+                "observed_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "envelope_id": {
+            "description": "Immutable once issued.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Tenant-scoped. Duplicate handling is deterministic and its truth lives in PostgreSQL (ADR-015).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "intent": {
+            "description": "Exactly one of quantity or notional is the primary sizing field, and which one is permitted depends on order_type (ADR-020): MARKET accepts either; LIMIT, STOP and STOP_LIMIT require quantity and forbid notional. The platform does not derive a share count from a quoted price, because that is a trading decision.",
+            "properties": {
+              "asset_class": {
+                "enum": [
+                  "EQUITY",
+                  "ETF",
+                  "OPTION",
+                  "CRYPTO"
+                ]
+              },
+              "extended_hours": {
+                "type": "boolean"
+              },
+              "instrument_id": {
+                "description": "Canonical identity. A ticker symbol is not one.",
+                "pattern": "^instr_[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}$",
+                "type": "string"
+              },
+              "limit_price": {
+                "exclusiveMinimum": 0,
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "notional": {
+                "exclusiveMinimum": 0,
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "order_type": {
+                "enum": [
+                  "MARKET",
+                  "LIMIT",
+                  "STOP",
+                  "STOP_LIMIT"
+                ]
+              },
+              "quantity": {
+                "exclusiveMinimum": 0,
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "side": {
+                "enum": [
+                  "BUY",
+                  "SELL"
+                ]
+              },
+              "stop_price": {
+                "exclusiveMinimum": 0,
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "time_in_force": {
+                "enum": [
+                  "DAY",
+                  "GTC",
+                  "IOC",
+                  "FOK"
+                ]
+              }
+            },
+            "required": [
+              "asset_class",
+              "instrument_id",
+              "side",
+              "order_type",
+              "time_in_force"
+            ],
+            "type": "object"
+          },
+          "lineage": {
+            "properties": {
+              "parent_intent_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "strategy_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          },
+          "principal": {
+            "properties": {
+              "account_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "principal_id": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "principal_id",
+              "account_id"
+            ],
+            "type": "object"
+          },
+          "received_at": {
+            "description": "RFC3339. Normalized to UTC on acceptance.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "runtime_claims": {
+            "description": "What the agent says about itself. DECLARED at best unless a provider attests it.",
+            "properties": {
+              "model_family": {
+                "$ref": "#/$defs/claim"
+              },
+              "model_provider": {
+                "$ref": "#/$defs/claim"
+              },
+              "model_version": {
+                "$ref": "#/$defs/claim"
+              }
+            },
+            "type": "object"
+          },
+          "schema_version": {
+            "const": "0.1",
+            "description": "There is no unversioned envelope."
+          },
+          "signature": {
+            "properties": {
+              "algorithm": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "tenant_id": {
+            "description": "Mandatory on every domain object.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "envelope_id",
+          "idempotency_key",
+          "tenant_id",
+          "received_at",
+          "authority_grant_id",
+          "principal",
+          "agent",
+          "intent"
+        ],
+        "title": "AgentExecutionEnvelope",
+        "type": "object",
+        "x-owning-phase": 1
+      },
+      "internal-event": {
+        "$id": "https://agentic-assurance.dev/schemas/internal-event/v0.1",
+        "description": "The envelope every event in the section 32 catalog carries, and the row shape of the append-only evidence store. event_id is the deduplication key: delivery is at-least-once (ADR-008), so a consumer that is not idempotent will double-count everything the network hiccuped on.",
+        "properties": {
+          "aggregate_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "causation_id": {
+            "description": "The event that led to this one. Null for the first in a chain.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "corrects_event_id": {
+            "description": "The event this one supersedes. The superseded record is left exactly as written; corrections add rows (ADR-009, INV-006).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "correlation_id": {
+            "description": "Without it the event cannot be placed in a timeline.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "event_id": {
+            "description": "Deduplication key for at-least-once delivery (ADR-008).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "event_name": {
+            "description": "Closed set. An event nobody wrote down cannot be emitted, because a timeline containing unnamed events cannot be replayed. evidence.corrected.v1 is not in section 32; ADR-009 requires corrections to be expressible as events rather than as updates.",
+            "enum": [
+              "agent.intent.received.v1",
+              "agent.identity.verified.v1",
+              "agent.identity.failed.v1",
+              "authority.evaluated.v1",
+              "policy.evaluated.v1",
+              "intent.parent.linked.v1",
+              "broker.order.submitted.v1",
+              "broker.order.unknown.v1",
+              "broker.order.accepted.v1",
+              "broker.order.rejected.v1",
+              "broker.order.filled.v1",
+              "broker.order.cancelled.v1",
+              "broker.order.reconciled.v1",
+              "fleet.metric.updated.v1",
+              "fleet.cohort.created.v1",
+              "fleet.anomaly.detected.v1",
+              "incident.created.v1",
+              "incident.updated.v1",
+              "incident.escalated.v1",
+              "incident.closed.v1",
+              "control.recommended.v1",
+              "control.applied.v1",
+              "control.enforced.v1",
+              "control.revoked.v1",
+              "policy.bundle.created.v1",
+              "policy.bundle.activated.v1",
+              "policy.bundle.rolled_back.v1",
+              "simulation.started.v1",
+              "simulation.completed.v1",
+              "simulation.failed.v1",
+              "evidence.corrected.v1",
+              "agent.intent.replayed.v1",
+              "simulation.cancelled.v1",
+              "authority.grant.revoked.v1",
+              "authority.grant.issued.v1"
+            ]
+          },
+          "occurred_at": {
+            "description": "When the thing happened.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "payload": {
+            "description": "Event-specific. Secrets never appear here (spec section 35), and consumers must tolerate unknown properties.",
+            "type": "object"
+          },
+          "produced_at": {
+            "description": "When the producer said so.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "producer": {
+            "description": "Unattributed evidence is not evidence.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "0.1"
+          },
+          "sequence": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tenant_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "event_id",
+          "event_name",
+          "tenant_id",
+          "aggregate_id",
+          "correlation_id",
+          "occurred_at",
+          "produced_at",
+          "producer",
+          "sequence"
+        ],
+        "title": "InternalEvent",
+        "type": "object",
+        "x-owning-phase": 6
+      },
+      "policy-bundle": {
+        "$id": "https://agentic-assurance.dev/schemas/policy-bundle/v0.1",
+        "description": "A compiled, hashed and signed policy. Authoring is YAML (spec section 15.1); this is the compiled artifact. Section 15.2 forbids interpreting the YAML per order, so the evaluator reads only what is described here. content_hash covers bundle_id, tenant_id, policy, version and rules, and nothing else: promoting a bundle through the lifecycle must not change its identity.",
+        "properties": {
+          "activation": {
+            "description": "Staged deployment metadata (spec section 43). Outside content_hash on purpose.",
+            "properties": {
+              "activated_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "activated_by": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "previous_bundle_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rollback_reason": {
+                "description": "Required on rollback; one without a reason cannot be explained later.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rolled_back_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "rolled_back_by": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "description": "Forward-only pipeline with rollback available from SIGN onward. ROLLED_BACK is terminal: production policy is never edited in place, a new version is created instead. Only ACTIVE enforces production; SHADOW and CANARY do not.",
+                "enum": [
+                  "DRAFT",
+                  "VALIDATE",
+                  "COMPILE",
+                  "SIGN",
+                  "SIMULATE",
+                  "SHADOW",
+                  "CANARY",
+                  "ACTIVE",
+                  "ROLLED_BACK"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          "bundle_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "compiled_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "content_hash": {
+            "description": "SHA-256 over the canonical encoding. Recorded on every decision.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "policy": {
+            "description": "Authored policy name.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "rules": {
+            "description": "A policy with no rules enforces nothing, so an empty list is invalid.",
+            "items": {
+              "properties": {
+                "action": {
+                  "description": "Order-level control actions from section 16. ISOLATE_COHORT and READ_ONLY are fleet-level and cannot be emitted by a per-order rule (INV-009, Phase 13). Resolution across matching rules takes the most restrictive, so rule order in the source does not change the outcome.",
+                  "enum": [
+                    "ALLOW",
+                    "OBSERVE",
+                    "DELAY",
+                    "THROTTLE",
+                    "REQUIRE_APPROVAL",
+                    "DENY"
+                  ]
+                },
+                "id": {
+                  "description": "A decision must be able to name the rule that produced it.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "needs_notional": {
+                  "description": "Computed at compile time. A size-dependent rule fires when order size cannot be determined, so a notional limit is not avoidable by omitting the notional.",
+                  "type": "boolean"
+                },
+                "require_notional_gte": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "require_notional_lte": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "when_asset_class": {
+                  "enum": [
+                    "EQUITY",
+                    "ETF",
+                    "OPTION",
+                    "CRYPTO"
+                  ]
+                },
+                "when_extended_hours": {
+                  "type": "boolean"
+                },
+                "when_instruments": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "when_notional_gt": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "when_notional_gte": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "when_notional_lt": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "when_notional_lte": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "when_order_type": {
+                  "enum": [
+                    "MARKET",
+                    "LIMIT",
+                    "STOP",
+                    "STOP_LIMIT"
+                  ]
+                },
+                "when_side": {
+                  "enum": [
+                    "BUY",
+                    "SELL"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "action"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "0.1"
+          },
+          "signature": {
+            "description": "Ed25519 over content_hash. Required before ACTIVE (INV-010).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signed_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tenant_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "version": {
+            "description": "There is no unversioned policy (INV-010). Every change is a new version.",
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "bundle_id",
+          "tenant_id",
+          "policy",
+          "version",
+          "rules",
+          "content_hash",
+          "activation"
+        ],
+        "title": "PolicyBundle",
+        "type": "object",
+        "x-owning-phase": 4
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "description": "identity@tenant=token from the credential registry. The tenant comes from the credential; a header naming another is 403.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Generated from the routes the binaries register and the canonical schemas in packages/ (spec section 60). Do not edit by hand: run `go run ./cmd/openapi-gen`. Prose and the reasoning behind each endpoint live in docs/api/README.md.",
+    "title": "Agentic Order-Flow Assurance Platform",
+    "version": "0.1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/authority-grants": {
+      "post": {
+        "operationId": "post_authority_grants",
+        "responses": {
+          "201": {
+            "description": "Issued"
+          },
+          "400": {
+            "description": "The grant would not constrain anything"
+          },
+          "403": {
+            "description": "This credential may not issue authority (P-002)"
+          },
+          "409": {
+            "description": "A grant with this id already exists"
+          }
+        },
+        "summary": "Issue an authority grant",
+        "tags": [
+          "Authority"
+        ]
+      }
+    },
+    "/v1/authority-grants/{id}/revoke": {
+      "post": {
+        "operationId": "post_authority_grants_id_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoked, or already revoked"
+          },
+          "400": {
+            "description": "revoked_by and reason are required"
+          },
+          "404": {
+            "description": "No such grant for this tenant"
+          }
+        },
+        "summary": "Revoke an authority grant",
+        "tags": [
+          "Authority"
+        ]
+      }
+    },
+    "/v1/cohorts": {
+      "get": {
+        "operationId": "get_cohorts",
+        "responses": {
+          "200": {
+            "description": "The cohorts"
+          }
+        },
+        "summary": "Cohorts observed for the caller's tenant",
+        "tags": [
+          "Intelligence"
+        ]
+      }
+    },
+    "/v1/controls": {
+      "get": {
+        "operationId": "get_controls",
+        "responses": {
+          "200": {
+            "description": "The controls, with in_force computed"
+          }
+        },
+        "summary": "List the tenant's fleet controls, in force or not",
+        "tags": [
+          "Controls"
+        ]
+      },
+      "post": {
+        "operationId": "post_controls",
+        "responses": {
+          "201": {
+            "description": "Authorized and in force"
+          },
+          "400": {
+            "description": "Not authorizable as written"
+          },
+          "403": {
+            "description": "This credential may not authorize fleet controls"
+          },
+          "404": {
+            "description": "No such incident, or it carries no recommendation"
+          },
+          "409": {
+            "description": "A control with this id already exists"
+          },
+          "503": {
+            "description": "The incident evidence could not be read"
+          }
+        },
+        "summary": "Authorize a fleet control from an incident's recommendation (INV-009)",
+        "tags": [
+          "Controls"
+        ]
+      }
+    },
+    "/v1/controls/{id}/revoke": {
+      "post": {
+        "operationId": "post_controls_id_revoke",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lifted, or already lifted"
+          },
+          "400": {
+            "description": "revoked_by and reason are required"
+          },
+          "404": {
+            "description": "No such control for this tenant"
+          }
+        },
+        "summary": "Lift a fleet control",
+        "tags": [
+          "Controls"
+        ]
+      }
+    },
+    "/v1/dependencies": {
+      "get": {
+        "operationId": "get_dependencies",
+        "responses": {
+          "200": {
+            "description": "The observations"
+          }
+        },
+        "summary": "Declared dependency concentration for the caller's tenant",
+        "tags": [
+          "Intelligence"
+        ]
+      }
+    },
+    "/v1/evidence": {
+      "get": {
+        "operationId": "get_evidence",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/internal-event"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The chain, exactly as stored"
+          }
+        },
+        "summary": "The evidence chain for one correlation id",
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/v1/fleet/state": {
+      "get": {
+        "operationId": "get_fleet_state",
+        "responses": {
+          "200": {
+            "description": "The measurements in the window"
+          }
+        },
+        "summary": "Fleet risk measurements for the caller's tenant",
+        "tags": [
+          "Intelligence"
+        ]
+      }
+    },
+    "/v1/incidents": {
+      "get": {
+        "operationId": "get_incidents",
+        "responses": {
+          "200": {
+            "description": "The incidents, newest first"
+          }
+        },
+        "summary": "Incidents opened for the caller's tenant",
+        "tags": [
+          "Incidents"
+        ]
+      }
+    },
+    "/v1/incidents/{id}": {
+      "get": {
+        "operationId": "get_incidents_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The incident, its timeline and which section 49 questions it answers"
+          },
+          "404": {
+            "description": "No such incident for this tenant"
+          }
+        },
+        "summary": "One incident with its timeline, reconstructed from evidence",
+        "tags": [
+          "Incidents"
+        ]
+      }
+    },
+    "/v1/intents": {
+      "get": {
+        "operationId": "get_intents",
+        "responses": {
+          "200": {
+            "description": "The intents in the window"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        },
+        "summary": "List recent intents for the caller's tenant, refusals included",
+        "tags": [
+          "Enforcement"
+        ]
+      },
+      "post": {
+        "operationId": "post_intents",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/agent-execution-envelope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The order reached the venue"
+          },
+          "202": {
+            "description": "Accepted; the outcome is not yet known (INV-004)"
+          },
+          "400": {
+            "description": "The envelope did not validate"
+          },
+          "401": {
+            "description": "Nothing authenticated the caller, or the claim exceeded the evidence"
+          },
+          "403": {
+            "description": "Authority, a fleet control or hard policy refused"
+          },
+          "413": {
+            "description": "The envelope exceeds the accepted size"
+          },
+          "422": {
+            "description": "The intent could not be executed"
+          }
+        },
+        "summary": "Submit an agent execution intent through the enforcement plane",
+        "tags": [
+          "Enforcement"
+        ]
+      }
+    },
+    "/v1/intents/{id}": {
+      "get": {
+        "operationId": "get_intents_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Executed, pending, or refused with the chain that refused it"
+          },
+          "404": {
+            "description": "No such intent for this tenant"
+          }
+        },
+        "summary": "The status of one intent by envelope id",
+        "tags": [
+          "Enforcement"
+        ]
+      }
+    },
+    "/v1/intents/{id}/evidence": {
+      "get": {
+        "operationId": "get_intents_id_evidence",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/internal-event"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "The chain, exactly as stored"
+          }
+        },
+        "summary": "The evidence chain for one intent",
+        "tags": [
+          "Evidence"
+        ]
+      }
+    },
+    "/v1/simulations": {
+      "get": {
+        "operationId": "get_simulations",
+        "responses": {
+          "200": {
+            "description": "The runs, newest first, without their records"
+          }
+        },
+        "summary": "List the tenant's simulation runs",
+        "tags": [
+          "Lab"
+        ]
+      },
+      "post": {
+        "operationId": "post_simulations",
+        "responses": {
+          "202": {
+            "description": "Accepted and durable; Location carries the run"
+          },
+          "400": {
+            "description": "Not a runnable request"
+          },
+          "404": {
+            "description": "No scenario by that name"
+          }
+        },
+        "summary": "Start a Digital Twin experiment",
+        "tags": [
+          "Lab"
+        ]
+      }
+    },
+    "/v1/simulations/{id}": {
+      "get": {
+        "operationId": "get_simulations_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run"
+          },
+          "404": {
+            "description": "No such run for this tenant"
+          }
+        },
+        "summary": "One simulation run with its record",
+        "tags": [
+          "Lab"
+        ]
+      }
+    },
+    "/v1/simulations/{id}/cancel": {
+      "post": {
+        "operationId": "post_simulations_id_cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stopped"
+          },
+          "400": {
+            "description": "cancelled_by is required"
+          },
+          "404": {
+            "description": "No such run for this tenant"
+          },
+          "409": {
+            "description": "The run had already finished"
+          }
+        },
+        "summary": "Cancel a queued or running experiment",
+        "tags": [
+          "Lab"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}
