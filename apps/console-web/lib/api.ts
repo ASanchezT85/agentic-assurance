@@ -185,6 +185,23 @@ export const controls = () =>
 export const incidents = () =>
   read<IncidentRow>(`${FLEET_ENGINE_URL}/v1/incidents`, "Incidents", "incidents");
 
+export type SimulationRow = {
+  run_id: string;
+  scenario: string;
+  seed: number;
+  requested_by: string;
+  status: string;
+  requested_at: string;
+  completed_at?: string;
+  experiment_id?: string;
+  result_fingerprint?: string;
+  scenario_source_hash?: string;
+};
+
+/** Digital Twin runs. The two hashes are what make a run arguable rather than trusted. */
+export const simulations = () =>
+  read<SimulationRow>(`${FLEET_ENGINE_URL}/v1/simulations`, "Simulations", "runs");
+
 export const evidenceFor = (correlationId: string) =>
   read<EvidenceEvent>(
     `${GATEWAY_URL}/v1/evidence?correlation_id=${encodeURIComponent(correlationId)}`,

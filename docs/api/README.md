@@ -74,8 +74,11 @@ The endpoint is **absent, not failing**, when the enforcement plane is not fully
 configured. A gateway with no signed policy bundle, no venue and no credentials
 answers 404 here rather than accepting intents it cannot evaluate.
 
-OpenAPI is generated from the canonical schemas in `packages/` rather than
-hand-written (§60). Nothing is generated in Phase 0 because no endpoint exists yet.
+**No OpenAPI document is generated today.** Section 60 asks for one, built from the
+canonical schemas in `packages/` rather than hand-written, and nothing builds it: this
+file and the route table above are the reference. That sentence used to say nothing was
+generated "because no endpoint exists yet", which stopped being true around fifteen
+endpoints ago and kept being read as an explanation.
 
 ## Evidence endpoints (Phase 6)
 

@@ -6,9 +6,10 @@ export const dynamic = "force-dynamic";
 /**
  * Flow (spec section 48.2).
  *
- * Live intents with their authority and policy results need `GET /v1/intents`, which
- * spec section 46 lists and no phase has built: the submission path is not wired, so
- * there are no live intents to list.
+ * Listing live intents needs a `GET /v1/intents` collection, which nothing serves: the
+ * submission path is wired and every intent it decides is in the evidence store, but
+ * there is no endpoint that returns them as a list. This comment used to say the
+ * submission path was not wired at all, which stopped being true and kept being read.
  *
  * What does exist is the evidence chain, so this surface reads that. Paste a
  * correlation id and the page walks agent → intent → authority → policy → broker
