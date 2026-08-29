@@ -24,7 +24,9 @@ GET  /v1/controls                       DONE (internal/gateway)
 POST /v1/controls/{id}/revoke           DONE (internal/gateway)
 
 POST /v1/simulations                    DONE (internal/simulation)
+GET  /v1/simulations                    DONE (internal/simulation)
 GET  /v1/simulations/{id}               DONE (internal/simulation)
+POST /v1/simulations/{id}/cancel        DONE (internal/simulation)
 ```
 
 **Every endpoint that carries tenant data authenticates**, not only the mutating ones.
