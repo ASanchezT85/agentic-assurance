@@ -88,7 +88,7 @@ func (s *Store) Save(ctx context.Context, g *Grant) error {
 	return s.withTenant(ctx, g.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO authority_grants (`+grantColumns+`)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 			ON CONFLICT (tenant_id, grant_id) DO UPDATE SET
 				valid_until = EXCLUDED.valid_until,
 				allowed_operations = EXCLUDED.allowed_operations,

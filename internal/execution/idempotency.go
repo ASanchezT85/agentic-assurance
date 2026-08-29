@@ -63,6 +63,18 @@ type Outcome struct {
 	// produced by a call to the venue. The caller needs to know, and the audit
 	// trail needs to say so.
 	Replayed bool
+
+	// Reconciled marks an outcome the platform learned by asking the venue what
+	// happened, rather than by sending anything.
+	//
+	// It exists because the two are indistinguishable from the outside and must not be
+	// from the inside: a process recovering a PENDING record after a crash produces a
+	// fresh, non-replayed outcome without making a single submission, and evidence that
+	// cannot tell the difference records an attempt that nobody made.
+	//
+	// Never persisted, like Replayed. How an outcome was obtained is a property of the
+	// call that obtained it, not of the outcome.
+	Reconciled bool
 }
 
 // Record is the authoritative idempotency record.

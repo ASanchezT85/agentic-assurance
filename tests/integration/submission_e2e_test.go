@@ -62,6 +62,66 @@ type e2eRig struct {
 	evidence *evidence.Store
 
 	signingKey ed25519.PrivateKey
+
+	// What a second replica of the same deployment needs. A replica is not a second
+	// tenant: same grant, same keys, same policy on disk, same venue — a different
+	// process, with its own connection pool, sharing one database. That is where the
+	// authority ceiling has to hold, because the only thing the two share is
+	// PostgreSQL.
+	bundleDir    string
+	symbolPath   string
+	publicKeyHex string
+	credential   string
+	now          func() time.Time
+}
+
+// replica starts a second gateway over the same database, as a separate process would.
+func (r *e2eRig) replica(t *testing.T) *e2eRig {
+	t.Helper()
+
+	// Its own pool, which is the part that matters: two pools cannot coordinate in
+	// process memory, so any limit that holds here holds because the database made it
+	// hold.
+	pool := usagePool(t)
+
+	bundles, err := gateway.NewFileBundles(r.bundleDir, r.publicKeyHex)
+	if err != nil {
+		t.Fatalf("replica bundles: %v", err)
+	}
+	symbols, err := gateway.LoadSymbols(r.symbolPath)
+	if err != nil {
+		t.Fatalf("replica symbols: %v", err)
+	}
+	usage := authority.NewPostgresUsage(pool)
+	pipeline := &gateway.Pipeline{
+		Identity: &identity.Verifier{},
+		Grants:   gateway.StoreGrants{Store: authority.NewStore(pool)},
+		Policies: bundles,
+		Usage:    usage,
+		Reserve:  usage,
+		Keys:     identity.NewKeyStore(pool),
+		Execution: &execution.Service{
+			Broker: r.broker,
+			Store:  execution.NewPostgresStore(pool),
+			Now:    r.now,
+		},
+		Symbols:  symbols,
+		Evidence: evidence.NewStore(pool),
+		Parent:   gateway.NewParentTracker(intent.DefaultClusterConfig),
+		Now:      r.now,
+	}
+	creds, err := identity.ParseCredentials(r.credential)
+	if err != nil {
+		t.Fatalf("replica credentials: %v", err)
+	}
+	srv := httptest.NewServer(gateway.SubmitHandler(pipeline, creds))
+	t.Cleanup(srv.Close)
+
+	second := *r
+	second.pool = pool
+	second.server = srv
+	second.evidence = evidence.NewStore(pool)
+	return &second
 }
 
 func newE2ERig(t *testing.T, now time.Time) *e2eRig {
@@ -168,7 +228,10 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 	t.Cleanup(srv.Close)
 
 	return &e2eRig{pool: pool, server: srv, broker: venue, tenant: tenant,
-		grantID: grantID, evidence: evStore, signingKey: privKey}
+		grantID: grantID, evidence: evStore, signingKey: privKey,
+		bundleDir: dir, symbolPath: symbolPath, publicKeyHex: hex.EncodeToString(pub),
+		credential: "svc_e2e@" + tenant + "=" + e2eToken,
+		now:        func() time.Time { return now }}
 }
 
 func writeSignedBundle(t *testing.T, dir, tenant string, now time.Time) ed25519.PublicKey {
@@ -342,7 +405,13 @@ func TestSubmissionEndToEnd(t *testing.T) {
 		evidence.IdentityVerified,
 		evidence.AuthorityEvaluated,
 		evidence.PolicyEvaluated,
-		evidence.OrderSubmitted,
+		// Capacity held, then the receipt, then what the platform knows after trying.
+		// The receipt used to say broker.order.submitted before the broker was called.
+		evidence.AuthorityReserved,
+		evidence.DecisionCommitted,
+		evidence.SubmissionAttempted,
+		evidence.AuthorityReservationCommitted,
+		evidence.OrderAccepted,
 	}
 	seen := map[evidence.EventName]bool{}
 	for _, e := range chain {

@@ -551,9 +551,12 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	// venue received it is what the outcome says, and an ambiguous timeout means nobody
 	// knows (INV-004).
 	//
-	// Not recorded for a refused claim or a replay. Both return before the venue, and an
-	// attempt that stopped inside the platform was not an attempt on a venue.
-	if !outcome.Replayed && !errors.Is(err, execution.ErrEnvelopeReused) &&
+	// Not recorded for a refused claim, a replay, or a reconciliation. A refused claim
+	// and a replay return before the venue, and a reconciliation asks the venue what
+	// already happened — a process recovering a crashed submission sends nothing, and
+	// an attempt that stopped inside the platform was not an attempt on a venue.
+	if !outcome.Replayed && !outcome.Reconciled &&
+		!errors.Is(err, execution.ErrEnvelopeReused) &&
 		!errors.Is(err, execution.ErrKeyReused) {
 		p.record(ctx, env, evidence.SubmissionAttempted, at, map[string]any{
 			"client_order_id": req.ClientOrderID,

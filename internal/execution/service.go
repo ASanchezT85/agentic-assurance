@@ -167,6 +167,9 @@ func (s *Service) reconcileAndResolve(ctx context.Context, tenantID, key, client
 		if resolveErr := s.resolve(ctx, tenantID, key, outcome); resolveErr != nil {
 			return outcome, resolveErr
 		}
+		// Learned by asking, not by sending. The caller records evidence from this and
+		// must not write down an attempt that was never made.
+		outcome.Reconciled = true
 		return outcome, nil
 
 	case errors.Is(err, broker.ErrOrderNotFound):

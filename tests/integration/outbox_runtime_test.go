@@ -57,6 +57,19 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 	// read another tenant's queue (migration 0025), and draining is exactly that read.
 	drainer := evidence.NewStore(outboxPool(t))
 
+	// Earlier runs leave a backlog, and the queue is read oldest first, so this run's
+	// event would sit behind rows that have nothing to do with it. Drained to empty
+	// first: what this test asserts is that a committed event reaches the bus, not
+	// where it sits in a queue nobody has been draining.
+	backlog := &evidence.OutboxPublisher{
+		Store: drainer, Publisher: evidence.NewPublisher(js), Batch: 500,
+	}
+	for range 200 {
+		if backlog.Drain(ctx) == 0 {
+			break
+		}
+	}
+
 	// Committed the way the pipeline commits: a batch, in one transaction, which is
 	// also where the outbox row is written.
 	event := evidence.Event{
@@ -75,9 +88,11 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 		t.Fatalf("append: %v", err)
 	}
 
+	const wholeQueue = 500
+
 	// The row exists because the decision committed, not because a publisher was
 	// running: that is what makes publication safe rather than best effort.
-	entries, err := drainer.Unpublished(ctx, 100)
+	entries, err := drainer.Unpublished(ctx, wholeQueue)
 	if err != nil {
 		t.Fatalf("unpublished: %v", err)
 	}
@@ -109,7 +124,7 @@ func TestCommittedEvidenceReachesTheStreamAndTheProjection(t *testing.T) {
 	}
 
 	// Marked, so a restart does not republish everything.
-	after, err := drainer.Unpublished(ctx, 100)
+	after, err := drainer.Unpublished(ctx, wholeQueue)
 	if err != nil {
 		t.Fatalf("unpublished after drain: %v", err)
 	}
