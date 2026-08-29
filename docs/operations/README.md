@@ -278,6 +278,50 @@ refused" and looks exactly like a platform that stopped deciding; sockets are ca
 Application Control on this host blocks freshly built test binaries under
 `AppData\Local\Temp`.
 
+### Archiving evidence, and what an archive has to survive
+
+Evidence retention had the policy rules, the manifest shape and the hash chain, each
+with a passing test, and nothing that moved a month of evidence anywhere or read it
+back. The acceptance gate said "archive export, restore, tamper verification, legal
+hold" against primitives that had never met a bucket.
+
+The path is now: a period out of `evidence_events`, JSON Lines into an S3-compatible
+bucket, a manifest in `archive_manifests` holding the event count and the chain head.
+
+Nothing archives on a schedule and nothing is ever destroyed. `Exporter.Destroy` is the
+gate a future purge has to pass, and it performs no deletion; V0 keeps destructive purge
+disabled, deliberately.
+
+What the restore path refuses, and why each one is separate:
+
+- **An edited payload.** The chain covers the whole record including the payload, so
+  flipping an authority decision from `allowed: true` to `false` changes every hash
+  after it. An earlier version of the hash covered only identity fields and that exact
+  edit verified clean.
+- **A truncated archive.** Every hash left in a truncated file is still valid, so the
+  event count is checked before the chain. Dropping the last events of a month is the
+  cheapest way to make an incident disappear.
+- **The wrong manifest.** A manifest describes one archive. Verifying against another is
+  how last month's archive gets accepted as this month's.
+- **A failed upload.** The manifest is written last, so an upload that failed leaves no
+  manifest and no deletion is ever authorized against an archive nobody can read.
+- **A legal hold.** It outranks everything, including an approved deletion
+  authorization: a hold is a legal instruction about specific evidence and an
+  authorization is an internal approval, and a system where the second overrides the
+  first has no legal hold. A hold lookup that *fails* is also a refusal — unknown is not
+  "none".
+
+The bucket is not created by the platform. Where a customer's evidence is archived, and
+under what lifecycle and object-lock settings, is their decision; a process that makes
+its own bucket makes one with defaults, and defaults are how an archive ends up
+deletable. `scripts/migrate.sh` creates the local MinIO bucket for tests only.
+
+| Variable | If it is missing |
+| --- | --- |
+| `OBJECT_STORE_ENDPOINT` | No archive destination; the export path is inert and the retention integration tests skip. |
+| `OBJECT_STORE_BUCKET` | As above. |
+| `OBJECT_STORE_ACCESS_KEY` / `OBJECT_STORE_SECRET_KEY` | The bucket refuses at startup rather than at retention time. |
+
 ### Idempotency retention, and a check that could not fail
 
 Spec section 19 lists bounded retention beside a unique envelope id and deterministic

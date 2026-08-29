@@ -26,6 +26,9 @@ GRANT CONNECT ON DATABASE assurance TO assurance_outbox;
 GRANT USAGE ON SCHEMA public TO assurance_outbox;
 
 DROP POLICY IF EXISTS evidence_outbox_tenant_isolation ON evidence_outbox;
+-- Dropped so a replay of the migration set re-creates them rather than failing.
+DROP POLICY IF EXISTS evidence_outbox_app_isolation ON evidence_outbox;
+DROP POLICY IF EXISTS evidence_outbox_publisher ON evidence_outbox;
 
 -- The application: its own tenant, in both directions. Same rule as every other table.
 CREATE POLICY evidence_outbox_app_isolation ON evidence_outbox

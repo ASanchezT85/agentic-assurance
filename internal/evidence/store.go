@@ -185,6 +185,24 @@ func (s *Store) ByAggregate(ctx context.Context, tenantID, aggregateID string) (
 		tenantID, aggregateID)
 }
 
+// ByPeriod returns every event a tenant produced in a half-open window, in the order
+// an archive of it has to be read back.
+//
+// Deterministic ordering is the point rather than a convenience: the archive's hash
+// chain is computed over this sequence, and a query that returned the same rows in a
+// different order would produce a different chain head and make a faithful archive look
+// tampered with.
+func (s *Store) ByPeriod(ctx context.Context, tenantID string, from, to time.Time) ([]Event, error) {
+	return s.query(ctx, tenantID, `
+		SELECT event_id, schema_version, event_name, tenant_id, aggregate_id,
+		       correlation_id, causation_id, occurred_at, produced_at, producer,
+		       sequence, corrects_event_id, payload
+		  FROM evidence_events
+		 WHERE tenant_id = $1 AND occurred_at >= $2 AND occurred_at < $3
+		 ORDER BY occurred_at ASC, sequence ASC, event_id ASC`,
+		tenantID, from.UTC(), to.UTC())
+}
+
 // RecentAggregates returns every event of the most recently active aggregates for a
 // tenant, newest aggregate first and each one's events in order.
 //
