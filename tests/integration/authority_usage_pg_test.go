@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -71,7 +72,12 @@ func TestPostgresUsageWindowsAndIsolation(t *testing.T) {
 	// be proving very little.
 	now = time.Date(now.Year(), now.Month(), now.Day(), 15, 0, 0, 0, time.UTC)
 
-	tenant := "tenant_usage_" + now.Format("150405.000000000")
+	// Unique per run. The name used to be derived from the anchored clock, so every
+	// run wrote under the same tenant with the same idempotency keys — and Record's
+	// ON CONFLICT DO NOTHING then silently dropped today's rows on top of yesterday's,
+	// which a run interrupted before its cleanup had left behind. The test measured
+	// windows against data from another day and reported zero.
+	tenant := fmt.Sprintf("tenant_usage_%d", time.Now().UnixNano())
 	other := tenant + "_other"
 	grant := "grant_usage"
 
