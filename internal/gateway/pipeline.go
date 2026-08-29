@@ -122,9 +122,17 @@ type ControlSource interface {
 		idempotencyKey string, at time.Time) (bool, int, error)
 }
 
-// EvidenceSink records what happened. It is deliberately fire-and-forget from the
-// pipeline's point of view: spec section 17 requires production to continue when
-// telemetry is unavailable, so a failure to record must never fail a decision.
+// EvidenceSink records what happened.
+//
+// Two classes, and conflating them was a defect an audit named. The decision receipt —
+// everything up to and including the order being sent — is authoritative: it is
+// committed before the venue is called, and a submission whose decision cannot be
+// recorded does not happen. What follows the venue's answer is recoverable from that
+// receipt plus reconciliation, so losing it costs the account of an outcome rather than
+// the ability to reconstruct it.
+//
+// Neither is telemetry. Spec section 17's "production continues when telemetry is
+// unavailable" covers the analytical plane, not the record of a financial decision.
 type EvidenceSink interface {
 	Append(ctx context.Context, e evidence.Event) (bool, error)
 
@@ -500,6 +508,13 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		"client_order_id": req.ClientOrderID,
 	})
 
+	// The durable boundary. Nothing reaches a venue until the decision that permits it
+	// is committed.
+	if err := p.receipt(ctx, buffered); err != nil {
+		return p.deny(result, StageExecution, "EVIDENCE_UNAVAILABLE",
+			"the decision could not be recorded, so it was not acted on: "+err.Error())
+	}
+
 	outcome, err := p.Execution.Submit(ctx, env, req)
 	result.Outcome = &outcome
 	result.Replayed = outcome.Replayed
@@ -761,6 +776,15 @@ func (p *Pipeline) record(ctx context.Context, env *intent.AgentExecutionEnvelop
 		Payload:       payload,
 	}
 
+	// Each event names the one before it. The store has carried CausationID since
+	// Phase 6 and the real producer never populated it: an integration test built a
+	// chain by hand and passed, so the field was supported by everything except the
+	// thing that emits events. A timeline whose links exist only in a test is a
+	// timeline nobody can walk.
+	if buffered := recorderFrom(ctx); buffered != nil && len(buffered.events) > 0 {
+		event.CausationID = buffered.events[len(buffered.events)-1].EventID
+	}
+
 	// Buffered for this submission and written once, at the end. Six events written
 	// one at a time were six transactions on the hot path; the decision they describe
 	// takes microseconds. A crash before the flush loses the account of a decision
@@ -774,8 +798,13 @@ func (p *Pipeline) record(ctx context.Context, env *intent.AgentExecutionEnvelop
 }
 
 // recorder buffers one submission's evidence.
+//
+// flushed is how many events have already reached the store. The decision receipt is
+// written before the venue is called and the rest afterwards, so the buffer has to
+// know where the boundary was.
 type recorder struct {
-	events []evidence.Event
+	events  []evidence.Event
+	flushed int
 }
 
 type recorderKey struct{}
@@ -791,13 +820,41 @@ func recorderFrom(ctx context.Context) *recorder {
 
 func (r *recorder) add(e evidence.Event) { r.events = append(r.events, e) }
 
-// flush writes what the submission recorded. Failure costs the audit trail and never
-// the decision (spec section 17), so it is logged by the store and dropped here.
+// flush writes what has not been written yet.
+//
+// After the venue has answered, this is the post-execution half: losing it costs the
+// account of an outcome that can still be reconstructed from the durable receipt below
+// plus reconciliation with the venue, so it does not fail the decision.
 func (p *Pipeline) flush(ctx context.Context, r *recorder) {
-	if p.Evidence == nil || r == nil || len(r.events) == 0 {
+	if p.Evidence == nil || r == nil || len(r.events) <= r.flushed {
 		return
 	}
-	_ = p.Evidence.AppendBatch(ctx, r.events)
+	if err := p.Evidence.AppendBatch(ctx, r.events[r.flushed:]); err == nil {
+		r.flushed = len(r.events)
+	}
+}
+
+// receipt writes the decision durably, before anything is sent to a venue.
+//
+// This half is not telemetry, and treating it as such was the defect. Everything up to
+// here — who was authenticated, which key signed, which grant allowed, what the policy
+// decided, what reservation was taken — is the account of a financial decision that is
+// about to move money. If it cannot be committed, the decision does not happen: an
+// order at a venue that the platform has no record of deciding is precisely the state
+// an assurance layer exists to make impossible.
+//
+// What may still be lost afterwards is the outcome, and that is recoverable: the
+// idempotency record is claimed before the venue call and reconciliation asks the venue
+// what happened (spec section 19, ADR-015).
+func (p *Pipeline) receipt(ctx context.Context, r *recorder) error {
+	if p.Evidence == nil || r == nil || len(r.events) <= r.flushed {
+		return nil
+	}
+	if err := p.Evidence.AppendBatch(ctx, r.events[r.flushed:]); err != nil {
+		return err
+	}
+	r.flushed = len(r.events)
+	return nil
 }
 
 // correlationOf falls back to the envelope id.

@@ -215,3 +215,54 @@ func TestVerificationIsDeterministic(t *testing.T) {
 	}
 	_ = p
 }
+
+// Every event names the one before it.
+//
+// evidence.Event has carried CausationID since Phase 6 and the real producer never set
+// it: an integration test built a chain by hand and passed, so the field was supported
+// by everything except the thing that emits events.
+func TestTheChainOfEventsNamesItsPredecessor(t *testing.T) {
+	p, _, ev := harness(t)
+
+	if result := p.Submit(context.Background(), envelope(nil), presentedAPI()); !result.Accepted {
+		t.Fatalf("refused at %s: %s", result.Stage, result.Reason)
+	}
+
+	events := ev.all()
+	if len(events) < 3 {
+		t.Fatalf("%d events recorded; a submission produces a chain", len(events))
+	}
+	if events[0].CausationID != "" {
+		t.Errorf("the first event names a predecessor %q; nothing came before it",
+			events[0].CausationID)
+	}
+	for i := 1; i < len(events); i++ {
+		if events[i].CausationID != events[i-1].EventID {
+			t.Errorf("event %d (%s) is caused by %q, want %q (%s)",
+				i, events[i].EventName, events[i].CausationID,
+				events[i-1].EventID, events[i-1].EventName)
+		}
+	}
+}
+
+// A decision that cannot be recorded is not acted on.
+//
+// Evidence used to be written after the fact and its failure ignored, with a comment
+// calling it telemetry. An order at a venue that the platform has no record of deciding
+// is the state an assurance layer exists to make impossible — so the receipt is
+// committed first, and if it cannot be, nothing is sent.
+func TestAnUnrecordableDecisionNeverReachesTheVenue(t *testing.T) {
+	p, fake, _ := harness(t)
+	p.Evidence = failingSink{}
+
+	result := p.Submit(context.Background(), envelope(nil), presentedAPI())
+	if result.Accepted {
+		t.Fatal("an intent was accepted while its decision could not be recorded")
+	}
+	if result.Code != "EVIDENCE_UNAVAILABLE" {
+		t.Errorf("code = %s, want EVIDENCE_UNAVAILABLE", result.Code)
+	}
+	if fake.Submissions("coid-idem-01J8Z3K9QW") != 0 {
+		t.Error("the order reached the venue with no durable record of the decision")
+	}
+}

@@ -72,6 +72,14 @@ func (m *memEvidence) AppendBatch(_ context.Context, events []evidence.Event) er
 	return nil
 }
 
+func (m *memEvidence) all() []evidence.Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]evidence.Event, len(m.events))
+	copy(out, m.events)
+	return out
+}
+
 func (m *memEvidence) names() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -444,16 +452,44 @@ func (failingBundles) Active(context.Context, string) (*policy.Bundle, error) {
 	return nil, constError("the bundle store is down")
 }
 
-// Losing evidence must not lose enforcement. Spec section 17: telemetry unavailable
-// means buffer locally, not stop deciding.
-func TestAFailingEvidenceSinkDoesNotStopEnforcement(t *testing.T) {
-	p, _, _ := harness(t)
-	p.Evidence = failingSink{}
+// Losing the account of an outcome must not undo the outcome.
+//
+// This test used to assert the opposite of what it asserts now: that a decision
+// proceeds with the evidence store down, on the reading that evidence is telemetry and
+// section 17 says telemetry may fail open. An audit called that conflation what it was.
+// The decision receipt is authoritative and is committed before a venue is called —
+// TestAnUnrecordableDecisionNeverReachesTheVenue covers that half — while what may
+// still be lost is the outcome, which reconciliation and the idempotency record can
+// reconstruct.
+func TestLosingThePostExecutionRecordDoesNotUndoTheOrder(t *testing.T) {
+	p, fake, _ := harness(t)
+	p.Evidence = failAfterReceipt{}
 
 	result := p.Submit(context.Background(), envelope(nil), presentedAPI())
 	if !result.Accepted {
-		t.Errorf("a decision failed because the audit trail was down: %s", result.Reason)
+		t.Fatalf("an order was refused because the record of its outcome failed: %s",
+			result.Reason)
 	}
+	if fake.Submissions("coid-idem-01J8Z3K9QW") != 1 {
+		t.Error("the order did not reach the venue")
+	}
+}
+
+// failAfterReceipt accepts the decision receipt and fails everything after it.
+type failAfterReceipt struct{ wrote bool }
+
+func (f failAfterReceipt) Append(context.Context, evidence.Event) (bool, error) {
+	return true, nil
+}
+
+func (f failAfterReceipt) AppendBatch(_ context.Context, events []evidence.Event) error {
+	for _, e := range events {
+		if e.EventName == evidence.OrderAccepted || e.EventName == evidence.OrderFilled ||
+			e.EventName == evidence.OrderRejected {
+			return constError("evidence store unavailable")
+		}
+	}
+	return nil
 }
 
 type failingSink struct{}
