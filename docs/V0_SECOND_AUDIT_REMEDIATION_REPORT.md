@@ -338,16 +338,19 @@ authority precision property                                   PASS
 state catalog + state mapping completeness                     PASS
 event producer completeness                                    PASS
 Alpaca Paper (tags=live)                                       PASS
+chaos suite (make test-chaos), 8 cases                         PASS
+SPIRE / mTLS submission, 10 cases                              PASS
 ```
+
+The chaos suite stops real containers and runs alone: enforcement survives outages of
+ClickHouse, NATS, Redis and the intelligence plane; PostgreSQL fails **closed**; a missing
+policy bundle denies; a broker timeout does not duplicate; a gateway restart loses nothing
+that matters.
 
 **FAIL** — none outstanding.
 
-**SKIPPED**
-
-```
-chaos suite (make test-chaos)     stops containers, runs alone; not run this round
-SPIRE mTLS submission             runs when SPIRE is up; the boot script does not start it
-```
+**SKIPPED** — none. Both items skipped in the first draft of this matrix were run
+afterwards and are recorded above.
 
 **NOT RUN**
 
