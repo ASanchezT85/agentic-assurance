@@ -3,6 +3,7 @@ package security
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"strings"
@@ -76,6 +77,16 @@ func newPathRig(t *testing.T) *pathRig {
 	grants := pathGrants{"grant_path": pathGrant()}
 	usage := authority.NewMemoryUsage()
 
+	// The signing key this rig's envelopes are signed with. Registered rather than
+	// bypassed: a path test that skipped signature verification would be testing a
+	// pipeline nobody runs.
+	keys := identity.NewMemoryKeys()
+	keys.Add(identity.AgentKey{
+		TenantID: "tenant_path", AgentID: "agent_path", KeyID: "key_path",
+		Algorithm: identity.AlgorithmEd25519, PublicKey: pathPub,
+		Status: "ACTIVE", ValidFrom: pathAt.Add(-time.Hour),
+	})
+
 	return &pathRig{
 		broker: venue,
 		usage:  usage,
@@ -86,6 +97,7 @@ func newPathRig(t *testing.T) *pathRig {
 			Policies: pathBundles{pathBundle(t)},
 			Usage:    usage,
 			Reserve:  usage,
+			Keys:     keys,
 			Execution: &execution.Service{
 				Broker: venue,
 				Store:  execution.NewMemoryStore(),
@@ -176,8 +188,26 @@ func pathEnvelope(mutate func(map[string]any)) []byte {
 		mutate(m)
 	}
 	raw, _ := json.Marshal(m)
-	return raw
+
+	value, err := identity.SignEnvelope(raw, pathPriv)
+	if err != nil {
+		panic(err)
+	}
+	m["signature"] = map[string]any{
+		"algorithm": identity.AlgorithmEd25519, "key_id": "key_path", "value": value,
+	}
+	signed, _ := json.Marshal(m)
+	return signed
 }
+
+// One key for this file's envelopes.
+var pathPub, pathPriv = func() (ed25519.PublicKey, ed25519.PrivateKey) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return pub, priv
+}()
 
 func pathCaller() identity.Presented {
 	return identity.Presented{APIIdentity: "svc_path", TenantID: "tenant_path"}

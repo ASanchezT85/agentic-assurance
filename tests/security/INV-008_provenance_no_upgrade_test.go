@@ -26,6 +26,9 @@ func baseEnvelope() intent.AgentExecutionEnvelope {
 		TenantID:         "tenant_a",
 		AuthorityGrantID: "grant_1",
 		Principal:        intent.Principal{PrincipalID: "principal_1", AccountID: "account_1"},
+		// Structurally signed: these tests are about provenance of model claims, and
+		// an executable envelope carries a signature now.
+		Signature: intent.Signature{Algorithm: "Ed25519", KeyID: "agent-key-01", Value: "aa"},
 		Agent: intent.Agent{
 			AgentID:     "agent_1",
 			Attestation: intent.Attestation{Level: intent.AttestationA1},

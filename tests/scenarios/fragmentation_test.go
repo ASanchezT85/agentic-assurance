@@ -55,8 +55,13 @@ func envelope(c child) *intent.AgentExecutionEnvelope {
 		AuthorityGrantID: grant,
 		Principal:        intent.Principal{PrincipalID: "principal_7781", AccountID: "account_4410"},
 		Agent:            intent.Agent{AgentID: c.agentID},
-		Lineage:          intent.Lineage{StrategyID: c.strategyID},
-		Context:          intent.Context{MarketSnapshotID: "ms_41"},
+		// Structurally signed. These scenarios are about clustering and policy rather
+		// than cryptography, and an executable envelope carries a signature now.
+		Signature: intent.Signature{
+			Algorithm: "Ed25519", KeyID: "agent-key-01", Value: "aa",
+		},
+		Lineage: intent.Lineage{StrategyID: c.strategyID},
+		Context: intent.Context{MarketSnapshotID: "ms_41"},
 		Intent: intent.Intent{
 			AssetClass:   intent.AssetEquity,
 			InstrumentID: instrument,

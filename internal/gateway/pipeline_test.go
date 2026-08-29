@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -156,6 +157,7 @@ func harness(t *testing.T) (*Pipeline, *fakebroker.Broker, *memEvidence) {
 		Grants:    memGrants{"grant_test": grant()},
 		Usage:     usage,
 		Reserve:   usage,
+		Keys:      testKeys(),
 		Policies:  memBundles{activeBundle(t)},
 		Execution: &execution.Service{Broker: fake, Store: execution.NewMemoryStore(), Now: func() time.Time { return at }},
 		Symbols:   StaticSymbols{"instr_us_equity_00206R102": "AAPL", "instr_us_equity_PENNY": "PNY"},
@@ -164,6 +166,49 @@ func harness(t *testing.T) (*Pipeline, *fakebroker.Broker, *memEvidence) {
 		Now:       func() time.Time { return at },
 	}
 	return p, fake, ev
+}
+
+// testAgentKey is the signing key every envelope in this package is signed with. The
+// harness registers it, so the tests exercise the real verification rather than a
+// pipeline with signature checking switched off.
+var testAgentKey = func() (ed25519.PublicKey, ed25519.PrivateKey) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return pub, priv
+}
+
+var testPub, testPriv = testAgentKey()
+
+func testKeys() *identity.MemoryKeys {
+	keys := identity.NewMemoryKeys()
+	keys.Add(identity.AgentKey{
+		TenantID: "tenant_test", AgentID: "agent_test", KeyID: "key_test",
+		Algorithm: identity.AlgorithmEd25519, PublicKey: testPub,
+		Status: "ACTIVE", ValidFrom: at.Add(-24 * time.Hour),
+	})
+	return keys
+}
+
+// sign attaches a signature over the canonical form, the way an agent would.
+func sign(raw []byte, priv ed25519.PrivateKey, keyID string) []byte {
+	value, err := identity.SignEnvelope(raw, priv)
+	if err != nil {
+		panic(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		panic(err)
+	}
+	m["signature"] = map[string]any{
+		"algorithm": identity.AlgorithmEd25519, "key_id": keyID, "value": value,
+	}
+	signed, err := json.Marshal(m)
+	if err != nil {
+		panic(err)
+	}
+	return signed
 }
 
 func envelope(mutate func(m map[string]any)) []byte {
@@ -196,7 +241,7 @@ func envelope(mutate func(m map[string]any)) []byte {
 		mutate(m)
 	}
 	raw, _ := json.Marshal(m)
-	return raw
+	return sign(raw, testPriv, "key_test")
 }
 
 func presentedAPI() identity.Presented {

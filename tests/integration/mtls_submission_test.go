@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -144,6 +145,7 @@ func newMTLSRig(t *testing.T, workloads string) *mtlsRig {
 		Policies: mtlsBundles{},
 		Usage:    usage,
 		Reserve:  usage,
+		Keys:     mtlsKeys,
 		Execution: &execution.Service{
 			Broker: venue,
 			Store:  execution.NewMemoryStore(),
@@ -259,6 +261,14 @@ func mtlsEnvelope(at time.Time, key, tenant, level string) string {
 		},
 	}
 	raw, _ := json.Marshal(m)
+	value, err := identity.SignEnvelope(raw, mtlsPriv)
+	if err != nil {
+		panic(err)
+	}
+	m["signature"] = map[string]any{
+		"algorithm": identity.AlgorithmEd25519, "key_id": "key_mtls", "value": value,
+	}
+	raw, _ = json.Marshal(m)
 	return string(raw)
 }
 
@@ -363,3 +373,23 @@ func buildMTLSBundle(t *testing.T, at time.Time) *policy.Bundle {
 	}
 	return bundle
 }
+
+// The agent's signing key for this file. An A2 caller still signs: a verified workload
+// certificate proves which process is calling, and the envelope's agent id is a claim
+// about which agent it acts as — two distinct provenance facts.
+var mtlsPub, mtlsPriv = func() (ed25519.PublicKey, ed25519.PrivateKey) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return pub, priv
+}()
+
+var mtlsKeys = func() *identity.MemoryKeys {
+	keys := identity.NewMemoryKeys()
+	keys.Add(identity.AgentKey{
+		TenantID: "tenant_momentum", AgentID: "agent_momentum", KeyID: "key_mtls",
+		Algorithm: identity.AlgorithmEd25519, PublicKey: mtlsPub, Status: "ACTIVE",
+	})
+	return keys
+}()

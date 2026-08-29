@@ -78,6 +78,28 @@ func Decode(data []byte) (*AgentExecutionEnvelope, error) {
 func (e *AgentExecutionEnvelope) Validate() error {
 	var errs ValidationErrors
 
+	// The signature's shape, not its cryptography. Verification needs a key registry
+	// and belongs on the enforcement path; what belongs here is that an executable
+	// envelope carries one at all, because section 12.2 makes it part of the
+	// contract and the schema marks it required.
+	//
+	// Without it `agent_id` is a claim the body makes about itself, while the
+	// authority grant is scoped to exactly that agent.
+	if e.Signature.Value == "" {
+		errs = append(errs, ValidationError{"signature.value", "SIGNATURE_REQUIRED",
+			"an executable intent must be signed; the signature binds this envelope to " +
+				"the agent it claims to come from"})
+	}
+	if e.Signature.KeyID == "" {
+		errs = append(errs, ValidationError{"signature.key_id", "SIGNATURE_KEY_ID_REQUIRED",
+			"the signature must name the key that produced it; a key is registered to " +
+				"one tenant and one agent, and that is what makes the binding checkable"})
+	}
+	if e.Signature.Algorithm == "" {
+		errs = append(errs, ValidationError{"signature.algorithm", "SIGNATURE_ALGORITHM_REQUIRED",
+			"the signature must name its algorithm"})
+	}
+
 	if e.SchemaVersion == "" {
 		errs = append(errs, ValidationError{"schema_version", "SCHEMA_VERSION_MISSING",
 			"schema_version is required; there is no unversioned envelope"})

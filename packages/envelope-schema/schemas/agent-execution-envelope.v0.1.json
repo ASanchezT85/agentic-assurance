@@ -14,7 +14,8 @@
     "authority_grant_id",
     "principal",
     "agent",
-    "intent"
+    "intent",
+    "signature"
   ],
   "properties": {
     "schema_version": {
@@ -148,9 +149,12 @@
     },
     "signature": {
       "type": "object",
+      "description": "Binds this envelope to an agent's registered signing key. Required for an executable intent: transport identity establishes the tenant, and without a signature agent_id is a claim the body makes about itself while the authority grant is scoped to exactly that agent (section 12.2).",
+      "required": ["algorithm", "key_id", "value"],
       "properties": {
-        "algorithm": { "type": "string" },
-        "value": { "type": "string" }
+        "algorithm": { "const": "Ed25519", "description": "One algorithm. A negotiated set the caller chooses from is a downgrade attack unless the platform decides which values are acceptable." },
+        "key_id": { "type": "string", "minLength": 1, "description": "Which registered key signed. A key is registered to one tenant and one agent, so this is what makes the binding checkable." },
+        "value": { "type": "string", "minLength": 1, "description": "Hex Ed25519 signature over the canonical form: the envelope without its signature member, keys sorted, minified, number literals verbatim." }
       }
     }
   },

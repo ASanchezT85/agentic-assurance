@@ -371,11 +371,14 @@ func TestDeniedInstrumentBeatsAllowList(t *testing.T) {
 // Rows of the section 53 matrix that Phase 3 does not own. They are named here rather
 // than omitted, so the gap is visible in test output instead of living in someone's
 // memory.
-func TestSignatureVerificationIsNotYetImplemented(t *testing.T) {
-	t.Skip("envelope signature verification has no owning phase yet; " +
-		"it needs a per-agent key registry that spec section 12.2 leaves implementation-defined")
-}
+// Envelope signature verification lives in internal/identity and is exercised on the
+// pipeline in internal/gateway/signature_test.go: registered key, wrong agent's key,
+// revoked, expired, unsupported algorithm, and every field changed after signing.
+//
+// This used to be a t.Skip saying the feature had no owning phase. It had one by the
+// time an outside audit read it and called the skip what it was: a security invariant
+// the repository had agreed not to check.
 
-func TestReplayHandlingIsPhase5(t *testing.T) {
-	t.Skip("deterministic duplicate handling is idempotency, delivered in Phase 5 (ADR-015)")
-}
+// Deterministic duplicate handling is idempotency, delivered in Phase 5 and covered by
+// tests/integration/idempotency_pg_test.go and the replay tests in internal/gateway.
+// The placeholder that named a future phase outlived the phase.

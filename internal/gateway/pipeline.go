@@ -35,6 +35,7 @@ import (
 const (
 	StageValidation  = "VALIDATION"
 	StageIdentity    = "IDENTITY"
+	StageSignature   = "SIGNATURE"
 	StageIdempotency = "IDEMPOTENCY"
 	StageAuthority   = "AUTHORITY"
 	StageControl     = "CONTROL"
@@ -158,6 +159,15 @@ type Pipeline struct {
 	Execution *execution.Service
 	Symbols   SymbolResolver
 
+	// Keys verify that an executable envelope was signed by the agent it claims to be
+	// from. Transport identity establishes the tenant; the agent was a body claim
+	// until this existed, and the authority grant is scoped to exactly that agent.
+	//
+	// Optional only in the sense that a pipeline without it refuses every executable
+	// intent: a platform that cannot check signatures must not decide they are all
+	// fine.
+	Keys identity.KeySource
+
 	// Controls are the fleet controls a customer authorized. Optional: without a
 	// store the pipeline enforces everything else, and no fleet control binds —
 	// which is exactly shadow mode, the state the platform was in until POST
@@ -253,10 +263,36 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 		return p.deny(result, StageIdentity, "TENANT_NOT_AUTHENTICATED", err.Error())
 	}
 
+	// 4b. The envelope's own signature.
+	//
+	// Section 12.2 says an invalid signature denies, and nothing verified one: the
+	// envelope carried a signature field that no code read. Transport identity proves
+	// the tenant, and `agent_id` was a claim in the body — so an authenticated caller
+	// could submit under any of its own agents, against grants scoped to exactly one.
+	//
+	// Before idempotency, because an unsigned envelope must not be able to claim a
+	// key, and after the tenant check, because the key registry is tenant-scoped.
+	if err := identity.VerifyEnvelopeSignature(ctx, p.Keys, raw, env, at); err != nil {
+		code := "SIGNATURE_INVALID"
+		var sigErr *identity.SignatureError
+		if errors.As(err, &sigErr) {
+			code = sigErr.Code
+		}
+		p.record(ctx, env, evidence.IdentityFailed, at, map[string]any{
+			"code":   code,
+			"key_id": env.Signature.KeyID,
+			"reason": err.Error(),
+		})
+		return p.deny(result, StageSignature, code, err.Error())
+	}
+
 	p.record(ctx, env, evidence.IntentReceived, at, map[string]any{
 		"instrument_id": env.Intent.InstrumentID,
 		"side":          string(env.Intent.Side),
 		"order_type":    string(env.Intent.OrderType),
+		// Which key signed this, so the chain says who acted rather than only which
+		// customer's credential carried it.
+		"signing_key_id": env.Signature.KeyID,
 	})
 	p.record(ctx, env, evidence.IdentityVerified, at, map[string]any{
 		"level":     string(established.Level),

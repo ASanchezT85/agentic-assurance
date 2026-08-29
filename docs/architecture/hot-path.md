@@ -13,11 +13,20 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
     - X509-SVID chain, expiry and URI SAN checked
     - attestation level resolved from evidence, not from the envelope claim
     - a claim above the established level is refused (INV-001)
+ 4b. envelope signature                                    §12.2 -> DENY
+    - verified against a key registered to this tenant AND this agent
+    - the transport establishes the tenant; agent_id is a claim the body makes about
+      itself, and the authority grant is scoped to exactly that agent
+    - the canonical form is the envelope without its signature member, keys sorted,
+      minified, number literals verbatim; signing a pretty-printer signs a formatter
  5. idempotency lookup: Redis cache, PostgreSQL truth      ADR-015
        resolved record  -> return the deterministic prior outcome, stop
        pending record   -> a previous attempt died mid-flight: reconcile, never resubmit
        store unreadable -> DENY; nothing is sent unrecorded
  6. authority grant evaluation                             §14.3 -> DENY
+    - static constraints and per-order size here; the mutable limits are reserved
+      atomically at step 8b, because a check followed later by a record is two
+      decisions reading the same remaining capacity
     - tenant checked first: a cross-tenant grant is INV-007, not a mismatch
     - lifecycle before limits, so a revoked grant never reports "limit exceeded"
     - a limit that cannot be read denies (spec §17)
@@ -36,6 +45,11 @@ decision. Everything on it is deterministic. Everything else is asynchronous.
     - most restrictive action wins, so rule order does not change outcomes
     - the decision records bundle id, version and content hash
     - no bundle loaded -> DENY
+ 8b. atomic authority reservation                          INV-002
+    - lock the grant, count what is held, decide, insert, commit
+    - nothing reaches a venue without holding one, and a reservation that cannot
+      commit denies
+    - a definite venue rejection releases it; an ambiguous outcome keeps it
  9. decision + idempotency record written to PostgreSQL    one transaction
 10. control action returned to the caller
 11. broker submission through BrokerAdapter, if ALLOW      ADR-012

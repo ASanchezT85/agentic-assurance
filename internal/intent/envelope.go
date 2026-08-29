@@ -165,8 +165,16 @@ type Context struct {
 	MarketSnapshotID    string `json:"market_snapshot_id,omitempty"`
 }
 
+// Signature binds an executable envelope to an agent's signing key.
+//
+// KeyID is what makes the binding checkable: a key is registered to one tenant and one
+// agent, so a signature that names a key proves which agent signed rather than which
+// customer's transport carried it. Without it the platform knew the tenant from the
+// credential and took the envelope's word for the agent — while the authority grant is
+// scoped to exactly that agent.
 type Signature struct {
 	Algorithm string `json:"algorithm,omitempty"`
+	KeyID     string `json:"key_id,omitempty"`
 	Value     string `json:"value,omitempty"`
 }
 

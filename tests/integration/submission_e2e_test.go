@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -58,6 +59,8 @@ type e2eRig struct {
 	tenant   string
 	grantID  string
 	evidence *evidence.Store
+
+	signingKey ed25519.PrivateKey
 }
 
 func newE2ERig(t *testing.T, now time.Time) *e2eRig {
@@ -116,6 +119,22 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		t.Fatalf("load symbols: %v", err)
 	}
 
+	// The agent's signing key, registered in the database the way one would arrive.
+	// An end-to-end test that skipped signature verification would exercise a
+	// pipeline nobody runs.
+	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	keys := identity.NewKeyStore(pool)
+	if err := keys.Register(ctx, identity.AgentKey{
+		TenantID: tenant, AgentID: "agent_e2e", KeyID: "key_e2e",
+		Algorithm: identity.AlgorithmEd25519, PublicKey: pubKey,
+		Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("register key: %v", err)
+	}
+
 	venue := fakebroker.New()
 	venue.SetClock(func() time.Time { return now })
 	usage := authority.NewPostgresUsage(pool)
@@ -127,6 +146,7 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		Policies: bundles,
 		Usage:    usage,
 		Reserve:  usage,
+		Keys:     keys,
 		Execution: &execution.Service{
 			Broker: venue,
 			Store:  execution.NewPostgresStore(pool),
@@ -147,7 +167,7 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 	t.Cleanup(srv.Close)
 
 	return &e2eRig{pool: pool, server: srv, broker: venue, tenant: tenant,
-		grantID: grantID, evidence: evStore}
+		grantID: grantID, evidence: evStore, signingKey: privKey}
 }
 
 func writeSignedBundle(t *testing.T, dir, tenant string, now time.Time) ed25519.PublicKey {
@@ -242,7 +262,17 @@ func (r *e2eRig) envelope(now time.Time, key string, mutate func(map[string]any)
 		mutate(m)
 	}
 	raw, _ := json.Marshal(m)
-	return string(raw)
+
+	// Signed with the agent's registered key, over the canonical form.
+	value, err := identity.SignEnvelope(raw, r.signingKey)
+	if err != nil {
+		panic(err)
+	}
+	m["signature"] = map[string]any{
+		"algorithm": identity.AlgorithmEd25519, "key_id": "key_e2e", "value": value,
+	}
+	signed, _ := json.Marshal(m)
+	return string(signed)
 }
 
 // The whole path: HTTP in, order at the venue, and every store holding what it should.

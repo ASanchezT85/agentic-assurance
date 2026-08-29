@@ -347,6 +347,7 @@ func buildPipeline(ctx context.Context, log *slog.Logger) (*gateway.Pipeline, *i
 		Policies: bundles,
 		Usage:    usage,
 		Reserve:  usage,
+		Keys:     identity.NewKeyStore(pool),
 		Execution: &execution.Service{
 			Broker: venue,
 			Store:  execution.NewPostgresStore(pool),

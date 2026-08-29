@@ -66,8 +66,9 @@
     "market_snapshot_id": "ms_41"
   },
   "signature": {
-    "algorithm": "ed25519",
-    "value": "c2ln..."
+    "algorithm": "Ed25519",
+    "key_id": "agent-key-01",
+    "value": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
   },
   "some_future_field": {
     "nested": true

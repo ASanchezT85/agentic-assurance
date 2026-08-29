@@ -10,6 +10,7 @@ func f(v float64) *float64 { return &v }
 // valid returns an envelope that passes, so each test can break exactly one thing.
 func valid() AgentExecutionEnvelope {
 	return AgentExecutionEnvelope{
+		Signature:        Signature{Algorithm: "Ed25519", KeyID: "agent-key-01", Value: "aa"},
 		SchemaVersion:    SchemaVersion,
 		EnvelopeID:       "env_1",
 		IdempotencyKey:   "idem_1",
@@ -180,6 +181,7 @@ func TestUnknownJSONPropertiesAreIgnored(t *testing.T) {
 	    "side": "BUY", "order_type": "MARKET", "notional": 100,
 	    "time_in_force": "DAY"
 	  },
+	  "signature": {"algorithm": "Ed25519", "key_id": "agent-key-01", "value": "aa"},
 	  "a_field_from_a_newer_producer": {"deeply": {"nested": [1, 2, 3]}}
 	}`)
 
