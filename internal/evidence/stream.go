@@ -79,6 +79,11 @@ type Handler func(ctx context.Context, e Event) error
 // Consumer reads events from JetStream.
 type Consumer struct {
 	cons jetstream.Consumer
+
+	// Report is called with the number of messages terminated as unparseable in a
+	// batch. Terminating one is a decision to lose it, and a decision to lose an event
+	// that nothing surfaces is indistinguishable from a bug.
+	Report func(poison int)
 }
 
 // NewConsumer creates or reuses a durable consumer.
@@ -134,6 +139,78 @@ func (c *Consumer) Fetch(ctx context.Context, n int, wait time.Duration, h Handl
 		processed++
 	}
 	return processed, batch.Error()
+}
+
+// BatchHandler receives a whole fetch at once.
+type BatchHandler func(ctx context.Context, events []Event) error
+
+// FetchBatch pulls up to n events, hands the whole batch to the handler, and acknowledges
+// only if the handler succeeded.
+//
+// Fetch acknowledges each message as its per-event handler returns. That is right for a
+// handler that does the durable work itself, and wrong for the projection, whose handler
+// appended to a slice and returned nil while the ClickHouse insert happened after the
+// fetch had already acknowledged everything. A failed insert then had nothing left to
+// redeliver: the events stayed in PostgreSQL, which is the record, and never reached the
+// analytical plane, which is what an incident review reads.
+//
+// An acknowledgement is a promise that the side effect it stands for has happened. This
+// makes the order match the promise.
+func (c *Consumer) FetchBatch(ctx context.Context, n int, wait time.Duration,
+	h BatchHandler) (int, error) {
+
+	batch, err := c.cons.Fetch(n, jetstream.FetchMaxWait(wait))
+	if err != nil {
+		return 0, fmt.Errorf("fetch: %w", err)
+	}
+
+	var (
+		events   []Event
+		messages []jetstream.Msg
+		poison   int
+	)
+	for msg := range batch.Messages() {
+		var e Event
+		if err := json.Unmarshal(msg.Data(), &e); err != nil {
+			// An unparseable message will never become parseable, so redelivering it
+			// forever would block every event behind it. Terminated — and counted, so
+			// the caller can say so out loud rather than discovering a silent hole in
+			// the analytical copy months later.
+			_ = msg.Term()
+			poison++
+			continue
+		}
+		events = append(events, e)
+		messages = append(messages, msg)
+	}
+	if err := batch.Error(); err != nil && len(events) == 0 {
+		return 0, err
+	}
+	if poison > 0 && c.Report != nil {
+		c.Report(poison)
+	}
+	if len(events) == 0 {
+		return 0, batch.Error()
+	}
+
+	if err := h(ctx, events); err != nil {
+		// Nothing is acknowledged. JetStream redelivers the whole batch, and the
+		// projection deduplicates by event id, so a retry overwrites itself rather than
+		// counting twice (ADR-008).
+		for _, msg := range messages {
+			_ = msg.Nak()
+		}
+		return 0, err
+	}
+
+	acked := 0
+	for _, msg := range messages {
+		if err := msg.Ack(); err != nil {
+			return acked, fmt.Errorf("ack: %w", err)
+		}
+		acked++
+	}
+	return acked, batch.Error()
 }
 
 // StoreHandler returns a Handler that records events into the append-only store.

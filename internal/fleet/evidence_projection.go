@@ -20,9 +20,19 @@ import (
 // disagree, PostgreSQL is right and this is rebuilt. Nothing here is read to authorize
 // anything, which is what keeps it on the intelligence side of INV-009.
 
+// EvidenceBatchSink is the analytical store, as this file needs it.
+//
+// An interface rather than *Sink so a test can make an insert fail on demand. Delivery
+// semantics — what is acknowledged, and when — cannot be tested against a store that
+// always succeeds, and the alternative is mocking JetStream itself, which would test the
+// mock.
+type EvidenceBatchSink interface {
+	InsertEvidence(ctx context.Context, rows ...string) error
+}
+
 // EvidenceProjection writes consumed events into the analytical store.
 type EvidenceProjection struct {
-	Sink *Sink
+	Sink EvidenceBatchSink
 	Log  *slog.Logger
 }
 
@@ -44,6 +54,18 @@ func (p *EvidenceProjection) Handle(ctx context.Context, e evidence.Event) error
 		return nil
 	}
 	return p.Sink.InsertEvidence(ctx, projectionRow(e))
+}
+
+// HandleBatch inserts a whole fetch, and is what decides whether it may be acknowledged.
+func (p *EvidenceProjection) HandleBatch(ctx context.Context, events []evidence.Event) error {
+	if p.Sink == nil || len(events) == 0 {
+		return nil
+	}
+	rows := make([]string, 0, len(events))
+	for _, e := range events {
+		rows = append(rows, projectionRow(e))
+	}
+	return p.Sink.InsertEvidence(ctx, rows...)
 }
 
 // projectionRow renders one event for the analytical store.
@@ -72,6 +94,16 @@ func RunEvidenceConsumer(ctx context.Context, consumer *evidence.Consumer,
 		log = slog.Default()
 	}
 
+	// Terminated messages are surfaced. Dropping one is a decision to lose an event, and
+	// a decision to lose an event that nothing says out loud looks exactly like a bug in
+	// the projection months later.
+	consumer.Report = func(poison int) {
+		log.Error("evidence messages discarded as unparseable",
+			"count", poison,
+			"consequence", "those events will never reach the analytical copy; "+
+				"PostgreSQL still holds them and the projection can be rebuilt")
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -79,38 +111,22 @@ func RunEvidenceConsumer(ctx context.Context, consumer *evidence.Consumer,
 		default:
 		}
 
-		// Batched into one insert per fetch rather than one per event.
+		// One insert per fetch, and the acknowledgement comes after it.
 		//
-		// It was one HTTP round trip per event, so the projection's throughput was
-		// bounded by the round-trip time to ClickHouse — a few hundred a second on this
-		// host — while the outbox now delivers well over a thousand. The queue in front
-		// of it drained and the consumer behind it became the bottleneck, which is the
-		// same defect one hop further along: the analytical plane lagged a busy period
-		// by the time an incident review would want to read it.
+		// It used to append rows to a slice inside a per-event handler that returned
+		// nil, so Fetch acknowledged every message, and the insert ran afterwards. A
+		// failed insert had nothing left to redeliver: the events stayed in PostgreSQL,
+		// which is the record, and never reached the analytical plane, which is what an
+		// incident review reads. An acknowledgement is a promise that the side effect it
+		// stands for has happened.
 		//
-		// A failed batch is retried by redelivery. The table deduplicates by event id,
-		// so a redelivered batch overwrites itself rather than counting twice (ADR-008).
-		batch := make([]string, 0, 500)
-		count, err := consumer.Fetch(ctx, 500, 2*time.Second,
-			func(_ context.Context, e evidence.Event) error {
-				batch = append(batch, projectionRow(e))
-				return nil
-			})
-		if len(batch) > 0 && projection.Sink != nil {
-			if insertErr := projection.Sink.InsertEvidence(ctx, batch...); insertErr != nil {
-				log.Warn("evidence projection paused", "err", insertErr, "batch", len(batch),
-					"consequence", "the analytical copy is behind; PostgreSQL still holds the evidence")
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(2 * time.Second):
-				}
-				continue
-			}
-		}
+		// A failed batch is redelivered whole. The table deduplicates by event id, so a
+		// retry overwrites itself rather than counting twice (ADR-008).
+		count, err := consumer.FetchBatch(ctx, 500, 2*time.Second, projection.HandleBatch)
 		if err != nil && ctx.Err() == nil {
 			log.Warn("evidence projection paused", "err", err,
-				"consequence", "the analytical copy is behind; PostgreSQL still holds the evidence")
+				"consequence", "the analytical copy is behind and the batch stays "+
+					"unacknowledged; PostgreSQL still holds the evidence")
 			select {
 			case <-ctx.Done():
 				return
