@@ -187,6 +187,26 @@ func RevokeGrantHandler(grants GrantRevoker, evidenceStore *evidence.Store,
 			return
 		}
 
+		// The same privilege that may widen authority is the one that may withdraw it.
+		//
+		// There was no check here at all, and nothing said that was deliberate. Revocation
+		// is the emergency lever and it has to stay fast — no signature, no second party,
+		// no dependency on the submission path being healthy — but fast is not the same as
+		// unprivileged: any credential in the tenant could cut any agent's authority, so a
+		// compromised agent could stop every other agent with a credential issued only to
+		// trade. Found by a mutation sweep that removed the issuer check from the issue
+		// path and watched every suite stay green; this path had nothing to remove.
+		if verifier == nil {
+			verifier = &identity.Verifier{}
+		}
+		if !verifier.Resolve(presentedFrom(r, creds)).MayIssueAuthority {
+			writeJSON(w, http.StatusForbidden, errorBody(
+				"this credential may not revoke authority. Withdrawing a grant is the "+
+					"same power as issuing one and is separated from submitting for the "+
+					"same reason (P-002); name the holder in GATEWAY_GRANT_ISSUERS"))
+			return
+		}
+
 		grantID := strings.TrimSpace(r.PathValue("id"))
 		if grantID == "" {
 			writeJSON(w, http.StatusBadRequest, errorBody("a grant id is required"))
