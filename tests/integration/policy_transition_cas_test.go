@@ -250,18 +250,11 @@ func TestTwoConcurrentBranchesCannotBothCommit(t *testing.T) {
 	}
 
 	// And the loser left nothing behind: no evidence, and no transition row.
-	// Row level security is per tenant and this pool has no tenant set, so the count has
-	// to name one or it reads zero and the assertion passes for the wrong reason.
-	pool := idemPool(t)
-	if _, err := pool.Exec(ctx, `SELECT set_config('app.tenant_id', $1, false)`, rig.tenant); err != nil {
-		t.Fatalf("set tenant: %v", err)
-	}
-	var rows int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM policy_activations WHERE tenant_id = $1`,
-		rig.tenant).Scan(&rows); err != nil {
-		t.Fatalf("count transitions: %v", err)
-	}
+	// In one transaction with the tenant set: a set_config on the pool applies to
+	// whichever connection took it, and the count may take another and read zero through
+	// row level security — which looks exactly like the rows not existing.
+	rows := countAsTenant(t, rig.tenant,
+		`SELECT count(*) FROM policy_activations WHERE tenant_id = $1`)
 	if rows != 2 {
 		t.Errorf("%d transition rows; the first activation and one branch make two", rows)
 	}

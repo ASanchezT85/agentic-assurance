@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"agentic-assurance/internal/broker"
+	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/execution"
 )
 
@@ -333,4 +334,56 @@ func ownerPool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+// A-6-01, end to end: a submission refused before the venue returns its capacity, and the
+// record says so.
+//
+// The pipeline releases when nothing was sent and records either
+// authority.reservation.released.v1 or, when the release fails, an event carrying
+// reservation_not_released. The evidence store held 56 of the second kind and none of the
+// first, which is the platform reporting for months that this path did not work.
+func TestARefusedSubmissionReturnsItsCapacity(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	rig := newE2ERig(t, now)
+
+	key := fmt.Sprintf("f6-release-%d", time.Now().UnixNano())
+	if status, decoded := rig.post(t, rig.envelope(now, key, nil), true); status != 200 && status != 202 {
+		t.Fatalf("the first submission was refused with %d: %v", status, decoded)
+	}
+
+	// The same envelope under a new key: refused by the execution claim, before the venue.
+	second := key + "-again"
+	reused := rig.envelope(now, second, func(m map[string]any) {
+		m["envelope_id"] = "env_" + key
+	})
+	status, decoded := rig.post(t, reused, true)
+	if status == 200 || status == 202 {
+		t.Fatalf("the reused envelope was accepted: %d %v", status, decoded)
+	}
+
+	chain, err := rig.evidence.ByAggregate(ctx, rig.tenant, "env_"+key)
+	if err != nil {
+		t.Fatalf("evidence: %v", err)
+	}
+	released, failed := false, ""
+	for _, e := range chain {
+		if e.EventName == evidence.AuthorityReservationReleased {
+			released = true
+		}
+		if why, ok := e.Payload["reservation_not_released"].(string); ok {
+			failed = why
+		}
+	}
+
+	if failed != "" {
+		t.Fatalf("the platform could not return the capacity it had reserved: %s\n\n"+
+			"Reserved capacity for an order that was never sent stays held, and the "+
+			"customer's window fills with orders that do not exist.", failed)
+	}
+	if !released {
+		t.Errorf("no %s in the chain for a submission that was refused before the venue",
+			evidence.AuthorityReservationReleased)
+	}
 }

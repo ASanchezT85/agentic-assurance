@@ -366,7 +366,6 @@ func TestDeliveredOutboxRowsArePruned(t *testing.T) {
 	tenant := fmt.Sprintf("tenant_sweep_%d", now.UnixNano())
 
 	store := evidence.NewStore(idemPool(t))
-	drainer := evidence.NewStore(outboxPool(t))
 
 	batch := make([]evidence.Event, 0, 4)
 	for i := range 4 {
@@ -388,34 +387,86 @@ func TestDeliveredOutboxRowsArePruned(t *testing.T) {
 		t.Fatalf("append: %v", err)
 	}
 
-	// Two of them delivered, two still owed.
-	claimed, err := drainer.Claim(ctx, 2, "sweep-test", now, time.Minute)
+	// Two of them delivered two days ago, two left alone.
+	//
+	// Backdated with a statement of its own rather than by claiming and marking: a
+	// publisher running elsewhere claims across tenants and would race the test for its
+	// own rows. A row that is already published is never claimed again, so this is stable
+	// whatever else is draining.
+	tag, err := execAsTenant(t, tenant, `
+		UPDATE evidence_outbox SET published_at = $2
+		 WHERE tenant_id = $1
+		   AND event_id = ANY($3)`,
+		tenant, now.Add(-48*time.Hour), []string{batch[0].EventID, batch[1].EventID})
 	if err != nil {
-		t.Fatalf("claim: %v", err)
+		t.Fatalf("backdate: %v", err)
 	}
-	ids := make([]int64, 0, len(claimed))
-	for _, e := range claimed {
-		ids = append(ids, e.OutboxID)
-	}
-	if err := drainer.MarkPublishedBatch(ctx, ids, now.Add(-48*time.Hour)); err != nil {
-		t.Fatalf("mark published: %v", err)
+	if tag != 2 {
+		t.Fatalf("backdated %d rows", tag)
 	}
 
 	deleted, err := store.PrunePublished(ctx, tenant, now.Add(-24*time.Hour), 5000)
 	if err != nil {
 		t.Fatalf("prune: %v", err)
 	}
-	if deleted != int64(len(ids)) {
-		t.Errorf("pruned %d of %d delivered rows", deleted, len(ids))
+	if deleted != 2 {
+		t.Errorf("pruned %d of the 2 rows delivered outside the retention window", deleted)
 	}
 
-	// What is still owed survives, at any age.
-	remaining, _, err := drainer.Depth(ctx, tenant)
+	// The rows the prune must not touch are still there, whether or not a publisher
+	// running elsewhere has delivered them in the meantime: publishing stamps them with
+	// now, which is after the cutoff. Counting rows rather than queue depth keeps this
+	// measuring retention instead of measuring what else is running.
+	remaining := countAsTenant(t, tenant,
+		`SELECT count(*) FROM evidence_outbox WHERE tenant_id = $1`)
+	if remaining != 2 {
+		t.Errorf("%d of the 2 rows inside the window survived; retention must never "+
+			"remove work the platform still owes the bus, and never a receipt younger "+
+			"than the window", remaining)
+	}
+}
+
+// execAsTenant and countAsTenant run one statement with the tenant set, in one
+// transaction.
+//
+// set_config on a pool sets it for whichever connection that call happened to take, and
+// the next query may take another: a count run that way reads through row level security
+// with no tenant and returns zero, which looks exactly like the rows having been deleted.
+// The stores do this correctly per transaction; tests have to as well.
+func execAsTenant(t *testing.T, tenant, query string, args ...any) (int64, error) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := idemPool(t).Begin(ctx)
 	if err != nil {
-		t.Fatalf("depth: %v", err)
+		return 0, err
 	}
-	if remaining != int64(4-len(ids)) {
-		t.Errorf("%d rows are still queued; retention must never remove work the "+
-			"platform still owes the bus", remaining)
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenant); err != nil {
+		return 0, err
 	}
+	tag, err := tx.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
+}
+
+func countAsTenant(t *testing.T, tenant, query string) int {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := idemPool(t).Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, tenant); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	var n int
+	if err := tx.QueryRow(ctx, query, tenant).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	return n
 }

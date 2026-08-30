@@ -375,28 +375,14 @@ func (r *activationAPIRig) countBootstrapGrants(t *testing.T) int {
 
 func (r *activationAPIRig) count(t *testing.T, query string) int {
 	t.Helper()
-	ctx := context.Background()
-	pool := idemPool(t)
-	if _, err := pool.Exec(ctx, `SELECT set_config('app.tenant_id', $1, false)`, r.tenant); err != nil {
-		t.Fatalf("set tenant: %v", err)
-	}
-	var n int
-	if err := pool.QueryRow(ctx, query, r.tenant).Scan(&n); err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	return n
+	return countAsTenant(t, r.tenant, query)
 }
 
 // expire makes a key unusable without revoking it, which is the state the last-key guard
 // used to miss.
 func (r *activationAPIRig) expire(t *testing.T, keyID string) {
 	t.Helper()
-	ctx := context.Background()
-	pool := idemPool(t)
-	if _, err := pool.Exec(ctx, `SELECT set_config('app.tenant_id', $1, false)`, r.tenant); err != nil {
-		t.Fatalf("set tenant: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := execAsTenant(t, r.tenant, `
 		UPDATE policy_activation_keys SET valid_until = now() - interval '1 hour'
 		 WHERE tenant_id = $1 AND key_id = $2`, r.tenant, keyID); err != nil {
 		t.Fatalf("expire %s: %v", keyID, err)

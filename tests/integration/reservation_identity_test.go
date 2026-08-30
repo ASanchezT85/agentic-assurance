@@ -259,3 +259,54 @@ func TestAPrunedRecordDoesNotReopenItsKey(t *testing.T) {
 			"send a new key rather than retry", decision.Code)
 	}
 }
+
+// A-6-01: capacity reserved for an order that was never sent comes back.
+//
+// PostgresUsage.Release is a DELETE, deliberately — a released row is capacity returned
+// and removing it leaves the key genuinely free for a later, properly evaluated request.
+// assurance_app was never granted DELETE on authority_usage, so every release since the
+// table existed has failed with "permission denied" and the capacity stayed held.
+//
+// The platform had been saying so all along. The pipeline records the failure as evidence
+// when Release returns an error, and the evidence store held 56 of them and not one
+// successful release. Nobody read it, through five audits, because nothing asked the
+// platform what it had already written down about itself.
+func TestCapacityIsReturnedWhenNothingWasSent(t *testing.T) {
+	ctx := context.Background()
+	pool := usagePool(t)
+	now := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_release_%d", now.UnixNano())
+	key := fmt.Sprintf("release-%d", now.UnixNano())
+
+	grant := reservationGrant(tenant, "grant_release", money.MustParse("10000"), now)
+	usage := authority.NewPostgresUsage(pool)
+	who := authority.ReservationIdentity{
+		EnvelopeID: "env_release", PrincipalID: grant.PrincipalID, AccountID: grant.AccountID,
+	}
+
+	if d, err := usage.Reserve(ctx, grant, key, money.MustParse("4000"), who, now); err != nil || !d.Allowed {
+		t.Fatalf("reserve: %v %s", err, d.Code)
+	}
+
+	// Nothing was sent, so the capacity is returned.
+	if err := usage.Release(ctx, tenant, key, now); err != nil {
+		t.Fatalf("release: %v\n\nCapacity reserved for an order that never reached a "+
+			"venue stays consumed for ever. A customer's rolling window fills with "+
+			"orders that do not exist, and legitimate ones are refused against a limit "+
+			"nobody spent.", err)
+	}
+
+	// And the window shows it: a second 4,000 order plus a 6,000 one fit in 10,000 only
+	// if the first reservation really went back.
+	second := authority.ReservationIdentity{
+		EnvelopeID: "env_release_2", PrincipalID: grant.PrincipalID, AccountID: grant.AccountID,
+	}
+	d, err := usage.Reserve(ctx, grant, key+"-2", money.MustParse("9000"), second, now)
+	if err != nil {
+		t.Fatalf("reserve after release: %v", err)
+	}
+	if !d.Allowed {
+		t.Errorf("9,000 was refused (%s) against a 10,000 window whose only other "+
+			"reservation was released", d.Code)
+	}
+}
