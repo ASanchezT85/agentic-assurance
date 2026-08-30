@@ -220,8 +220,15 @@ TestBrokerTimeoutDoesNotDuplicate            PASS
 TestGatewayRestartLosesNothingThatMatters    PASS
 ```
 
-Run in isolation; the suite stops real containers. It also ran during the second
-remediation round and the report's matrix has said PASS since then.
+Run in isolation; the suite stops real containers.
+
+**History, corrected.** The second remediation report was delivered with this line reading
+"stops containers, runs alone; not run this round". The suite was run afterwards, in commit
+`cd97393`, and that report's matrix was amended to PASS — after the audit had already read
+it. So an auditor holding the delivered second report is right that it says not run, and
+this report's earlier sentence ("it also ran during the second remediation round and the
+report's matrix has said PASS since then") read as though the matrix had always said so.
+The result above is from this build and this round.
 
 ---
 
@@ -440,7 +447,7 @@ c9d6246  the projection was the next bottleneck
    generation.
 3. **The two-process test uses ephemeral ports**, not fixed 8073/8074, so it can run
    beside a live gateway.
-4. **`money.Amount` reaches about 922 trillion.** The handoff's example value,
+4. **`money.Amount` reaches about 461 trillion.** The handoff's example value,
    `1234567890123456.7890`, is outside that range; the colliding pair used in the
    reproduction is inside it and demonstrates the same defect.
 5. **Quantity scale is 8, price and notional scale is 4.** Stated because the handoff

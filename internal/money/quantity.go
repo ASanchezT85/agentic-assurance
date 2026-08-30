@@ -19,8 +19,10 @@ import (
 // equity to nine decimal places. Sharing one type would force either money to carry a
 // share's precision or a share to be rounded to money's.
 //
-// Eight decimal places, in an int64, which reaches about 92 billion units. A position
-// larger than that is not a rounding problem.
+// Eight decimal places, in an int64. Supported magnitudes reach about 46 billion units
+// rather than the 92 billion an int64 would hold, for the same reason as Amount: the
+// parser refuses a whole part above 2^62 divided by the scale so the conversion cannot
+// overflow. A position larger than that is not a rounding problem.
 type Quantity int64
 
 // QuantityScale is the number of decimal places a quantity carries.

@@ -54,17 +54,31 @@
     },
     "principal": {
       "type": "object",
-      "required": ["principal_id", "account_id"],
+      "required": [
+        "principal_id",
+        "account_id"
+      ],
       "properties": {
-        "principal_id": { "type": "string", "minLength": 1 },
-        "account_id": { "type": "string", "minLength": 1 }
+        "principal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "account_id": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "agent": {
       "type": "object",
-      "required": ["agent_id"],
+      "required": [
+        "agent_id"
+      ],
       "properties": {
-        "agent_id": { "type": "string", "minLength": 1 },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
         "workload_identity": {
           "type": "object",
           "properties": {
@@ -78,11 +92,20 @@
           "type": "object",
           "properties": {
             "level": {
-              "enum": ["A0", "A1", "A2", "A3"],
+              "enum": [
+                "A0",
+                "A1",
+                "A2",
+                "A3"
+              ],
               "description": "A0 unknown origin, A1 authenticated app identity, A2 workload-attested, A3 provider-attested. V0 rejects A3: it has no provider attestation mechanism and will not record an unverifiable claim."
             },
-            "method": { "type": "string" },
-            "evidence_ref": { "type": "string" }
+            "method": {
+              "type": "string"
+            },
+            "evidence_ref": {
+              "type": "string"
+            }
           }
         }
       }
@@ -91,85 +114,223 @@
       "type": "object",
       "description": "What the agent says about itself. DECLARED at best unless a provider attests it.",
       "properties": {
-        "model_provider": { "$ref": "#/$defs/claim" },
-        "model_family": { "$ref": "#/$defs/claim" },
-        "model_version": { "$ref": "#/$defs/claim" }
+        "model_provider": {
+          "$ref": "#/$defs/claim"
+        },
+        "model_family": {
+          "$ref": "#/$defs/claim"
+        },
+        "model_version": {
+          "$ref": "#/$defs/claim"
+        }
       }
     },
     "dependencies": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["type", "id", "observed_at"],
+        "required": [
+          "type",
+          "id",
+          "observed_at"
+        ],
         "properties": {
           "type": {
-            "enum": ["MARKET_DATA", "NEWS", "MODEL", "STRATEGY", "RUNTIME", "EXECUTION_ADAPTER"]
+            "enum": [
+              "MARKET_DATA",
+              "NEWS",
+              "MODEL",
+              "STRATEGY",
+              "RUNTIME",
+              "EXECUTION_ADAPTER"
+            ]
           },
-          "id": { "type": "string", "minLength": 1 },
-          "verification": { "$ref": "#/$defs/verificationLevel" },
-          "observed_at": { "type": "string", "format": "date-time" },
-          "evidence_ref": { "type": "string" }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification": {
+            "$ref": "#/$defs/verificationLevel"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "evidence_ref": {
+            "type": "string"
+          }
         }
       }
     },
     "intent": {
       "type": "object",
-      "required": ["asset_class", "instrument_id", "side", "order_type", "time_in_force"],
+      "required": [
+        "asset_class",
+        "instrument_id",
+        "side",
+        "order_type",
+        "time_in_force"
+      ],
       "description": "Exactly one of quantity or notional is the primary sizing field, and which one is permitted depends on order_type (ADR-020): MARKET accepts either; LIMIT, STOP and STOP_LIMIT require quantity and forbid notional. The platform does not derive a share count from a quoted price, because that is a trading decision.",
       "properties": {
-        "asset_class": { "enum": ["EQUITY", "ETF", "OPTION", "CRYPTO"] },
+        "asset_class": {
+          "enum": [
+            "EQUITY",
+            "ETF",
+            "OPTION",
+            "CRYPTO"
+          ]
+        },
         "instrument_id": {
           "type": "string",
           "pattern": "^instr_[A-Za-z0-9][A-Za-z0-9_.:-]{2,63}$",
           "description": "Canonical identity. A ticker symbol is not one."
         },
-        "side": { "enum": ["BUY", "SELL"] },
-        "order_type": { "enum": ["MARKET", "LIMIT", "STOP", "STOP_LIMIT"] },
-        "notional": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-        "quantity": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-        "limit_price": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-        "stop_price": { "type": ["number", "null"], "exclusiveMinimum": 0 },
-        "time_in_force": { "enum": ["DAY", "GTC", "IOC", "FOK"] },
-        "extended_hours": { "type": "boolean" }
+        "side": {
+          "enum": [
+            "BUY",
+            "SELL"
+          ]
+        },
+        "order_type": {
+          "enum": [
+            "MARKET",
+            "LIMIT",
+            "STOP",
+            "STOP_LIMIT"
+          ]
+        },
+        "notional": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ],
+          "pattern": "^-?[0-9]+(\\.[0-9]{1,4})?$",
+          "description": "An exact decimal with a scale of 4 (0.0001). Accepted as a JSON number or as a quoted decimal string: the string form exists because several languages cannot render every supported decimal exactly as a JSON number, and the platform reads the literal rather than a float either way. Exponent notation is refused. More than 4 decimal places is refused rather than rounded, because only the caller can say which of the two neighbouring amounts they meant (AMOUNT_PRECISION_UNSUPPORTED). Magnitudes above about 461 trillion are refused."
+        },
+        "quantity": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ],
+          "pattern": "^-?[0-9]+(\\.[0-9]{1,8})?$",
+          "description": "An exact decimal with a scale of 8 (0.00000001), for a count of shares. Accepted as a JSON number or as a quoted decimal string. Exponent notation is refused, more than 8 decimal places is refused rather than rounded, and magnitudes above about 46 billion are refused."
+        },
+        "limit_price": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ],
+          "pattern": "^-?[0-9]+(\\.[0-9]{1,4})?$",
+          "description": "An exact decimal with a scale of 4 (0.0001). Accepted as a JSON number or as a quoted decimal string: the string form exists because several languages cannot render every supported decimal exactly as a JSON number, and the platform reads the literal rather than a float either way. Exponent notation is refused. More than 4 decimal places is refused rather than rounded, because only the caller can say which of the two neighbouring amounts they meant (AMOUNT_PRECISION_UNSUPPORTED). Magnitudes above about 461 trillion are refused."
+        },
+        "stop_price": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ],
+          "pattern": "^-?[0-9]+(\\.[0-9]{1,4})?$",
+          "description": "An exact decimal with a scale of 4 (0.0001). Accepted as a JSON number or as a quoted decimal string: the string form exists because several languages cannot render every supported decimal exactly as a JSON number, and the platform reads the literal rather than a float either way. Exponent notation is refused. More than 4 decimal places is refused rather than rounded, because only the caller can say which of the two neighbouring amounts they meant (AMOUNT_PRECISION_UNSUPPORTED). Magnitudes above about 461 trillion are refused."
+        },
+        "time_in_force": {
+          "enum": [
+            "DAY",
+            "GTC",
+            "IOC",
+            "FOK"
+          ]
+        },
+        "extended_hours": {
+          "type": "boolean"
+        }
       }
     },
     "lineage": {
       "type": "object",
       "properties": {
-        "parent_intent_id": { "type": ["string", "null"] },
-        "strategy_id": { "type": ["string", "null"] }
+        "parent_intent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "strategy_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "context": {
       "type": "object",
       "properties": {
-        "portfolio_snapshot_id": { "type": ["string", "null"] },
-        "market_snapshot_id": { "type": ["string", "null"] }
+        "portfolio_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "market_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "signature": {
       "type": "object",
       "description": "Binds this envelope to an agent's registered signing key. Required for an executable intent: transport identity establishes the tenant, and without a signature agent_id is a claim the body makes about itself while the authority grant is scoped to exactly that agent (section 12.2).",
-      "required": ["algorithm", "key_id", "value"],
+      "required": [
+        "algorithm",
+        "key_id",
+        "value"
+      ],
       "properties": {
-        "algorithm": { "const": "Ed25519", "description": "One algorithm. A negotiated set the caller chooses from is a downgrade attack unless the platform decides which values are acceptable." },
-        "key_id": { "type": "string", "minLength": 1, "description": "Which registered key signed. A key is registered to one tenant and one agent, so this is what makes the binding checkable." },
-        "value": { "type": "string", "minLength": 1, "description": "Hex Ed25519 signature over the canonical form: the envelope without its signature member, keys sorted, minified, number literals verbatim." }
+        "algorithm": {
+          "const": "Ed25519",
+          "description": "One algorithm. A negotiated set the caller chooses from is a downgrade attack unless the platform decides which values are acceptable."
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Which registered key signed. A key is registered to one tenant and one agent, so this is what makes the binding checkable."
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hex Ed25519 signature over the canonical form: the envelope without its signature member, keys sorted, minified, number literals verbatim."
+        }
       }
     }
   },
   "$defs": {
     "verificationLevel": {
-      "enum": ["UNKNOWN", "DECLARED", "VERIFIED"],
+      "enum": [
+        "UNKNOWN",
+        "DECLARED",
+        "VERIFIED"
+      ],
       "description": "Exactly three levels. An absent level is UNKNOWN, never DECLARED, and nothing is ever silently promoted (INV-008)."
     },
     "claim": {
       "type": "object",
       "description": "An assertion carrying provenance. VERIFIED requires an evidence_ref: nothing verifies itself.",
       "properties": {
-        "value": { "type": "string" },
-        "verification": { "$ref": "#/$defs/verificationLevel" },
-        "evidence_ref": { "type": "string" }
+        "value": {
+          "type": "string"
+        },
+        "verification": {
+          "$ref": "#/$defs/verificationLevel"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
       }
     }
   }

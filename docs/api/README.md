@@ -479,3 +479,30 @@ it is done rather than handed an error to interpret.
 It is served whenever the database is reachable, independently of whether a venue and a
 policy bundle are configured. The lever must not depend on the submission path being
 healthy: it is what an operator reaches for when it is not.
+
+## Exact decimals on the wire
+
+Money and quantities are exact decimals, not floats, from the wire to the broker request.
+The envelope schema and `openapi.json` now say so; until the fourth remediation they
+described plain JSON numbers and the runtime quietly accepted more than that.
+
+```text
+notional, limit_price, stop_price   scale 4   (0.0001)
+quantity                            scale 8   (0.00000001)
+```
+
+Both forms are supported, deliberately:
+
+- a **JSON number** — `1000.0001` — read as the literal it is, never through binary64;
+- a **quoted decimal string** — `"1000.0001"` — because several languages cannot render
+  every supported decimal exactly as a JSON number, and a caller who has the right value
+  should not have to lose it to the encoder.
+
+What is refused rather than rounded:
+
+- more than the field's scale (`AMOUNT_PRECISION_UNSUPPORTED`). `900000000000.0002` and
+  `900000000000.0003` are different amounts, and only the caller can say which they meant;
+- exponent notation;
+- magnitudes above about 461 trillion for money and 46 billion for quantities. The parser
+  refuses a whole part above 2^62 divided by the scale so the conversion cannot overflow —
+  half of what an int64 would hold, and the half nobody has an order in.

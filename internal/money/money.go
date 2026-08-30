@@ -7,8 +7,13 @@
 // ceiling that is approximately enforced is not a ceiling.
 //
 // One unit is 0.0001 of a currency unit. Four decimal places, the same scale as the
-// database, held in an int64 — which reaches about 922 trillion, and a platform that
-// needs more than that has a bigger problem than this type.
+// database, held in an int64.
+//
+// Supported magnitudes reach about 461 trillion, not the 922 trillion an int64 would
+// hold: the parser refuses anything whose whole part exceeds 2^62 divided by the scale,
+// so that multiplying by the scale and adding the fraction cannot overflow on the way in.
+// The guard costs half the range and it is the half nobody has an order in. This comment
+// said 922 trillion for a while, which was the type's range rather than the platform's.
 //
 // Analytics may keep using floats. A risk score that is off in the twelfth decimal is
 // a risk score; a ceiling that is off in the twelfth decimal has been exceeded.
