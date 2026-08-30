@@ -97,6 +97,10 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 			return
 		}
 
+		// "May this tenant still be bootstrapped" — never bootstrapped, and holding no
+		// activation key however it was provisioned. The store checks the same thing
+		// inside the transaction that commits; this read only decides which shape of
+		// request to expect.
 		bootstrapped, err := keys.Bootstrapped(r.Context(), tenant)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody(

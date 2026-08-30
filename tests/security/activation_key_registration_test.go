@@ -53,7 +53,8 @@ func (r *activationRegistry) Bootstrapped(context.Context, string) (bool, error)
 			return true, nil
 		}
 	}
-	return false, nil
+	// A key registered by something other than this endpoint closes the bootstrap too.
+	return len(r.keys) > 0, nil
 }
 
 // usable counts the keys that could authorize something now, as the store does.

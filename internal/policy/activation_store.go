@@ -173,16 +173,23 @@ func (s *ActivationStore) UsableKeys(ctx context.Context, tenantID string) (int,
 
 // Bootstrapped reports whether this tenant has ever bootstrapped its policy authority.
 //
-// Ever, not "has a usable key now". A bootstrap is a one-time authority event: if it
-// reopened whenever nothing could sign, an operator could wait for an expiry and mint
-// themselves a signer for a customer who already owns their policy authority.
+// Two facts, either of which closes the bootstrap: this tenant has bootstrapped before, or
+// it holds an activation key however that key got there.
+//
+// Ever, not "has a usable key now": if the bootstrap reopened whenever nothing could sign,
+// an operator could wait for an expiry and mint themselves a signer for a customer who
+// already owns their policy authority. And keys registered by something other than this
+// endpoint count — a setup tool, a migration, a support script — or bootstrapping a tenant
+// provisioned that way would hand it a second authority it never asked for.
 func (s *ActivationStore) Bootstrapped(ctx context.Context, tenantID string) (bool, error) {
 	var exists bool
 	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM policy_activation_key_grants
-				 WHERE tenant_id = $1 AND action = 'BOOTSTRAP_ACTIVATION_KEY')`,
+				 WHERE tenant_id = $1 AND action = 'BOOTSTRAP_ACTIVATION_KEY')
+			    OR EXISTS (
+				SELECT 1 FROM policy_activation_keys WHERE tenant_id = $1)`,
 			tenantID).Scan(&exists)
 	})
 	return exists, err
@@ -239,6 +246,27 @@ func (s *ActivationStore) RegisterKeyAuthorized(ctx context.Context, k Activatio
 			}
 			if err := signer.Usable(at); err != nil {
 				return err
+			}
+		}
+
+		if signedBy == "" {
+			// A bootstrap. Available only to a tenant that has never bootstrapped AND
+			// holds no activation key at all.
+			//
+			// Both conditions, and both here. "Has never bootstrapped" alone would let an
+			// operator bootstrap a tenant whose keys were provisioned some other way —
+			// the local setup tool writes one directly, and so would any migration or
+			// support script — handing that customer a second policy authority they
+			// never asked for. "Holds no key" alone would reopen the bootstrap whenever
+			// the last key was revoked, which is F4-K001's other half.
+			var keys int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM policy_activation_keys WHERE tenant_id = $1`,
+				k.TenantID).Scan(&keys); err != nil {
+				return err
+			}
+			if keys > 0 {
+				return ErrBootstrapSpent
 			}
 		}
 
