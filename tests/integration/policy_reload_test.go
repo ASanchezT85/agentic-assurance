@@ -39,15 +39,21 @@ func newReloadAuthority(t *testing.T, tenant string) *reloadAuthority {
 	if err != nil {
 		t.Fatalf("activation keygen: %v", err)
 	}
+	// A distinct key id per authority. They shared one, and while RegisterKey upserted
+	// that was invisible: a second authority for the same tenant replaced the first key,
+	// and the last one created was the one that verified. Now a key is never overwritten,
+	// so two authorities sharing an id would mean the second one's signatures are checked
+	// against the first one's key.
+	keyID := fmt.Sprintf("reload_key_%d", time.Now().UnixNano())
 	store := policy.NewActivationStore(idemPool(t))
-	if err := store.RegisterKey(context.Background(), policy.ActivationKey{
-		TenantID: tenant, KeyID: "reload_key", PublicKey: pub,
+	if _, err := store.RegisterKey(context.Background(), policy.ActivationKey{
+		TenantID: tenant, KeyID: keyID, PublicKey: pub,
 		Holder: "ops@example.test", Status: "ACTIVE",
 		ValidFrom: time.Now().UTC().Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("register activation key: %v", err)
 	}
-	return &reloadAuthority{store: store, priv: priv, keyID: "reload_key"}
+	return &reloadAuthority{store: store, priv: priv, keyID: keyID}
 }
 
 // writeBundle stages a signed bundle and, when an authority is supplied, the customer

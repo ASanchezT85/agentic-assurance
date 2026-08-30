@@ -31,6 +31,10 @@ type Presented struct {
 	// MayRegisterKeys carries the key-registrar privilege. Separate from the issuer
 	// privilege: one says what an agent may do, the other says which key is that agent.
 	MayRegisterKeys bool
+
+	// MayRegisterActivationKeys carries the activation-key privilege: the authority to
+	// bootstrap the key that says which policy enforces.
+	MayRegisterActivationKeys bool
 }
 
 // Attested is the level the platform established, together with why it is not
@@ -57,6 +61,12 @@ type Attested struct {
 	// intents: whoever can register a key can act as any agent in the tenant, including
 	// one whose grant they never issued.
 	MayRegisterKeys bool
+
+	// MayRegisterActivationKeys is whether this caller may bootstrap a key that
+	// authorizes policy activations. Off for everything not named: an activation key
+	// decides which bundle constrains every agent in the tenant, so it is the one
+	// privilege that can reach every ceiling at once.
+	MayRegisterActivationKeys bool
 
 	Method     string
 	VerifiedAt time.Time
@@ -118,10 +128,11 @@ func (v *Verifier) Resolve(p Presented) Attested {
 				// A workload-attested caller carries no operator privilege. Registering
 				// a key is a person's act, and an SVID says which workload is running,
 				// not which person authorized it.
-				MayRegisterKeys: false,
-				Method:          verified.Method,
-				VerifiedAt:      verified.VerifiedAt,
-				SerialHex:       verified.SerialHex,
+				MayRegisterKeys:           false,
+				MayRegisterActivationKeys: false,
+				Method:                    verified.Method,
+				VerifiedAt:                verified.VerifiedAt,
+				SerialHex:                 verified.SerialHex,
 			}
 		}
 
@@ -138,14 +149,15 @@ func (v *Verifier) Resolve(p Presented) Attested {
 func degraded(p Presented, now time.Time, failure *VerificationFailure) Attested {
 	if p.APIIdentity != "" {
 		return Attested{
-			Level:             intent.AttestationA1,
-			APIIdentity:       p.APIIdentity,
-			TenantID:          p.TenantID,
-			MayIssueAuthority: p.MayIssueAuthority,
-			MayRegisterKeys:   p.MayRegisterKeys,
-			Method:            "AUTHENTICATED_API_IDENTITY",
-			VerifiedAt:        now,
-			Downgrade:         failure,
+			Level:                     intent.AttestationA1,
+			APIIdentity:               p.APIIdentity,
+			TenantID:                  p.TenantID,
+			MayIssueAuthority:         p.MayIssueAuthority,
+			MayRegisterKeys:           p.MayRegisterKeys,
+			MayRegisterActivationKeys: p.MayRegisterActivationKeys,
+			Method:                    "AUTHENTICATED_API_IDENTITY",
+			VerifiedAt:                now,
+			Downgrade:                 failure,
 		}
 	}
 	return Attested{

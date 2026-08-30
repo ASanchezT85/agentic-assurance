@@ -197,7 +197,7 @@ func run(dir string, fleet, tenantCount int) error {
 		}
 
 		// The customer's authorization to activate it, and the key it is signed with.
-		if err := activations.RegisterKey(ctx, policy.ActivationKey{
+		if _, err := activations.RegisterKey(ctx, policy.ActivationKey{
 			TenantID: name, KeyID: "act_live", PublicKey: activationPub,
 			Holder: "live-setup", Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),
 		}); err != nil {
@@ -232,8 +232,12 @@ func run(dir string, fleet, tenantCount int) error {
 	issuerToken := randomToken()
 
 	registrarToken := randomToken()
-	credentials := fmt.Sprintf("svc_issuer@%s=%s,svc_registrar@%s=%s",
-		tenant, issuerToken, tenant, registrarToken)
+	// A fourth identity, for the strongest privilege: bootstrapping the key that
+	// authorizes a policy into force. Separate from the registrar for the same reason
+	// the registrar is separate from the issuer.
+	policyToken := randomToken()
+	credentials := fmt.Sprintf("svc_issuer@%s=%s,svc_registrar@%s=%s,svc_policy@%s=%s",
+		tenant, issuerToken, tenant, registrarToken, tenant, policyToken)
 	loadTenants := ""
 	for i, name := range names {
 		credentials += fmt.Sprintf(",svc_live_%d@%s=%s", i, name, tokens[i])

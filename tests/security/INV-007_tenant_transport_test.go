@@ -210,6 +210,9 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 			if i := strings.IndexAny(name, "("); i > 0 {
 				name = name[:i]
 			}
+			// The gateway passes its handlers in a struct rather than as a run of
+			// positional parameters, so the registration reads h.submit.
+			name = strings.TrimPrefix(name, "h.")
 
 			if why, ok := unauthenticated[name]; ok {
 				if strings.Contains(route, "/v1/") {
@@ -233,6 +236,12 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 				"listControls":  "../../internal/gateway/controls_lifecycle.go:ListControlsHandler",
 				"registerKey":   "../../internal/gateway/agentkeys.go:RegisterAgentKeyHandler",
 				"revokeKey":     "../../internal/gateway/agentkeys.go:RevokeAgentKeyHandler",
+				"revokeGrant":   "../../internal/gateway/intents.go:RevokeGrantHandler",
+				"issueGrant":    "../../internal/gateway/grants.go:IssueGrantHandler",
+				"registerActivationKey": "../../internal/gateway/activationkeys.go:" +
+					"RegisterActivationKeyHandler",
+				"revokeActivationKey": "../../internal/gateway/activationkeys.go:" +
+					"RevokeActivationKeyHandler",
 			}
 
 			target, fn := path, name

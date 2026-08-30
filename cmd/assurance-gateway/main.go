@@ -52,8 +52,30 @@ type evidenceReader interface {
 	ByAggregate(ctx context.Context, tenantID, aggregateID string) ([]evidence.Event, error)
 }
 
-func newMux(reader evidenceReader, submit, status, list, revoke, issue, applyControl,
-	revokeControl, listControls, registerKey, revokeKey http.HandlerFunc,
+// routes are the handlers the mux serves when they are configured.
+//
+// A struct rather than a positional list. It was eleven bare http.HandlerFunc parameters
+// and every caller passed a run of nils; adding the activation-key endpoints would have
+// made it thirteen, and a mis-ordered pair in that run would wire the wrong endpoint to
+// the wrong privilege check without failing to compile.
+type routes struct {
+	submit        http.HandlerFunc
+	status        http.HandlerFunc
+	list          http.HandlerFunc
+	revokeGrant   http.HandlerFunc
+	issueGrant    http.HandlerFunc
+	applyControl  http.HandlerFunc
+	revokeControl http.HandlerFunc
+	listControls  http.HandlerFunc
+
+	registerKey http.HandlerFunc
+	revokeKey   http.HandlerFunc
+
+	registerActivationKey http.HandlerFunc
+	revokeActivationKey   http.HandlerFunc
+}
+
+func newMux(reader evidenceReader, h routes,
 	creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -76,37 +98,43 @@ func newMux(reader evidenceReader, submit, status, list, revoke, issue, applyCon
 	// The write path. Absent rather than answering when the enforcement plane is not
 	// fully configured: a 404 is honest, and a handler that accepted intents it
 	// could not evaluate would be worse than no handler.
-	if submit != nil {
-		mux.HandleFunc("POST /v1/intents", submit)
+	if h.submit != nil {
+		mux.HandleFunc("POST /v1/intents", h.submit)
 	}
-	if status != nil {
-		mux.HandleFunc("GET /v1/intents/{id}", status)
+	if h.status != nil {
+		mux.HandleFunc("GET /v1/intents/{id}", h.status)
 	}
-	if list != nil {
-		mux.HandleFunc("GET /v1/intents", list)
+	if h.list != nil {
+		mux.HandleFunc("GET /v1/intents", h.list)
 	}
-	if revoke != nil {
-		mux.HandleFunc("POST /v1/authority-grants/{id}/revoke", revoke)
+	if h.revokeGrant != nil {
+		mux.HandleFunc("POST /v1/authority-grants/{id}/revoke", h.revokeGrant)
 	}
-	if issue != nil {
-		mux.HandleFunc("POST /v1/authority-grants", issue)
+	if h.issueGrant != nil {
+		mux.HandleFunc("POST /v1/authority-grants", h.issueGrant)
 	}
-	if applyControl != nil {
-		mux.HandleFunc("POST /v1/controls", applyControl)
+	if h.applyControl != nil {
+		mux.HandleFunc("POST /v1/controls", h.applyControl)
 	}
 	// Revoke is registered before register, so the more specific pattern is the one a
 	// path with a suffix matches.
-	if revokeKey != nil {
-		mux.HandleFunc("POST /v1/agent-keys/revoke", revokeKey)
+	if h.revokeKey != nil {
+		mux.HandleFunc("POST /v1/agent-keys/revoke", h.revokeKey)
 	}
-	if registerKey != nil {
-		mux.HandleFunc("POST /v1/agent-keys", registerKey)
+	if h.registerKey != nil {
+		mux.HandleFunc("POST /v1/agent-keys", h.registerKey)
 	}
-	if revokeControl != nil {
-		mux.HandleFunc("POST /v1/controls/{id}/revoke", revokeControl)
+	if h.revokeActivationKey != nil {
+		mux.HandleFunc("POST /v1/policy-activation-keys/revoke", h.revokeActivationKey)
 	}
-	if listControls != nil {
-		mux.HandleFunc("GET /v1/controls", listControls)
+	if h.registerActivationKey != nil {
+		mux.HandleFunc("POST /v1/policy-activation-keys", h.registerActivationKey)
+	}
+	if h.revokeControl != nil {
+		mux.HandleFunc("POST /v1/controls/{id}/revoke", h.revokeControl)
+	}
+	if h.listControls != nil {
+		mux.HandleFunc("GET /v1/controls", h.listControls)
 	}
 
 	return mux
@@ -546,6 +574,13 @@ func main() {
 		// which key is that agent — and whoever can do the second can act as any agent
 		// in the tenant, grants included.
 		creds.AllowKeyRegistrars(os.Getenv("GATEWAY_KEY_REGISTRARS"))
+		// And which may bootstrap the key that authorizes a policy into force. A third
+		// list, because it is the strongest of the three: an activation key decides
+		// which bundle enforces, and so what every agent in the tenant may not do. It
+		// gates the first key only — a tenant that already holds one extends its own
+		// authority with a signed authorization, and no operator credential can mint
+		// policy authority for it (INV-009).
+		creds.AllowActivationKeyRegistrars(os.Getenv("GATEWAY_ACTIVATION_KEY_REGISTRARS"))
 	}
 	pipeline, _ := buildPipeline(ctx, log)
 	verifier := identityVerifier()
@@ -556,6 +591,7 @@ func main() {
 	// an operator reaches for when it is not.
 	var status, list, revoke, issue, applyControl, revokeControl, listControls http.HandlerFunc
 	var registerKey, revokeKey http.HandlerFunc
+	var registerActivationKey, revokeActivationKey http.HandlerFunc
 	if pool := openPool(ctx, log); pool != nil {
 		status = gateway.IntentStatusHandler(execution.NewPostgresStore(pool),
 			evidence.NewStore(pool), creds, verifier)
@@ -573,11 +609,16 @@ func main() {
 			evidence.NewStore(pool), creds, verifier, nil)
 		revokeKey = gateway.RevokeAgentKeyHandler(identity.NewKeyStore(pool),
 			evidence.NewStore(pool), creds, verifier, nil)
+		registerActivationKey = gateway.RegisterActivationKeyHandler(
+			policy.NewActivationStore(pool), evidence.NewStore(pool), creds, verifier, nil)
+		revokeActivationKey = gateway.RevokeActivationKeyHandler(
+			policy.NewActivationStore(pool), evidence.NewStore(pool), creds, verifier, nil)
 		log.Info("intent status and grant lifecycle served",
 			"routes", "GET /v1/intents, GET /v1/intents/{id}, POST /v1/authority-grants, "+
 				"POST /v1/authority-grants/{id}/revoke, GET|POST /v1/controls, "+
 				"POST /v1/controls/{id}/revoke, POST /v1/agent-keys, "+
-				"POST /v1/agent-keys/revoke")
+				"POST /v1/agent-keys/revoke, POST /v1/policy-activation-keys, "+
+				"POST /v1/policy-activation-keys/revoke")
 	}
 	// Bounded retention for idempotency records (spec section 19), which the section
 	// asks for beside a unique envelope id and deterministic duplicate handling and
@@ -673,8 +714,15 @@ func main() {
 
 	srv := &http.Server{
 		Addr: addr(),
-		Handler: newMux(openEvidence(ctx, log), submit, status, list, revoke, issue, applyControl,
-			revokeControl, listControls, registerKey, revokeKey, creds, verifier),
+		Handler: newMux(openEvidence(ctx, log), routes{
+			submit: submit, status: status, list: list,
+			revokeGrant: revoke, issueGrant: issue,
+			applyControl: applyControl, revokeControl: revokeControl,
+			listControls: listControls,
+			registerKey:  registerKey, revokeKey: revokeKey,
+			registerActivationKey: registerActivationKey,
+			revokeActivationKey:   revokeActivationKey,
+		}, creds, verifier),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

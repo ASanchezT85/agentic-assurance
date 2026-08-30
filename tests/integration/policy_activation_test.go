@@ -57,7 +57,7 @@ func newActivationRig(t *testing.T) *activationRig {
 	}
 
 	store := policy.NewActivationStore(pool)
-	if err := store.RegisterKey(context.Background(), policy.ActivationKey{
+	if _, err := store.RegisterKey(context.Background(), policy.ActivationKey{
 		TenantID: tenant, KeyID: "act_key_1",
 		PublicKey: authPub, Holder: "ops@example.test",
 		Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),
@@ -313,7 +313,22 @@ func TestARevokedKeyCannotActivate(t *testing.T) {
 	bundle := r.stageBundle(t, "bundle_revoked", activationPolicy, policy.StatusActive)
 	r.authorize(t, bundle, nil)
 
-	if err := r.store.RevokeKey(ctx, r.tenant, r.keyID, "security@example.test",
+	// A replacement first. The store refuses to revoke a tenant's last active key, so
+	// that it can never be left unable to authorize a policy change — the rollback an
+	// incident needs included (ADR-028).
+	spare, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	if _, err := r.store.RegisterKey(ctx, policy.ActivationKey{
+		TenantID: r.tenant, KeyID: "act_key_spare", PublicKey: spare,
+		Holder: "ops@example.test", Status: "ACTIVE",
+		ValidFrom: time.Now().UTC().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("register the replacement: %v", err)
+	}
+
+	if _, err := r.store.RevokeKey(ctx, r.tenant, r.keyID, "security@example.test",
 		time.Now().UTC()); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}

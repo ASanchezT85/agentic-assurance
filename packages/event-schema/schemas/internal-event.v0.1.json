@@ -33,6 +33,8 @@
         "agent.identity.failed.v1",
         "agent.signing_key.registered.v1",
         "agent.signing_key.revoked.v1",
+        "policy.activation_key.registered.v1",
+        "policy.activation_key.revoked.v1",
         "authority.evaluated.v1",
         "authority.reserved.v1",
         "authority.reservation.committed.v1",

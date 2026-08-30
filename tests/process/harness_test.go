@@ -177,7 +177,7 @@ func (d *deployment) stagePolicy(t *testing.T, now time.Time) {
 		t.Fatalf("activation keygen: %v", err)
 	}
 	activations := policy.NewActivationStore(d.pool)
-	if err := activations.RegisterKey(ctx, policy.ActivationKey{
+	if _, err := activations.RegisterKey(ctx, policy.ActivationKey{
 		TenantID: d.tenant, KeyID: "act_proc", PublicKey: activationPub,
 		Holder: "process-test", Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),
 	}); err != nil {

@@ -369,6 +369,8 @@
               "agent.identity.failed.v1",
               "agent.signing_key.registered.v1",
               "agent.signing_key.revoked.v1",
+              "policy.activation_key.registered.v1",
+              "policy.activation_key.revoked.v1",
               "authority.evaluated.v1",
               "authority.reserved.v1",
               "authority.reservation.committed.v1",
@@ -1116,6 +1118,67 @@
         "summary": "The evidence chain for one intent",
         "tags": [
           "Evidence"
+        ]
+      }
+    },
+    "/v1/policy-activation-keys": {
+      "post": {
+        "operationId": "post_policy_activation_keys",
+        "responses": {
+          "201": {
+            "description": "Registered; bootstrap says whether a signature authorized it"
+          },
+          "400": {
+            "description": "The key would not be usable, a private key was sent, or the tenant already holds a key and no signed authorization was given"
+          },
+          "401": {
+            "description": "Nothing authenticated the caller"
+          },
+          "403": {
+            "description": "This credential may not register activation keys, or the authorization was signed by a key this tenant did not grant"
+          },
+          "409": {
+            "description": "That key id exists, or the authorization has already been accepted"
+          },
+          "503": {
+            "description": "The key could not be recorded, so it was not registered"
+          }
+        },
+        "summary": "Bootstrap or extend the authority that may activate policy",
+        "tags": [
+          "Policy"
+        ]
+      }
+    },
+    "/v1/policy-activation-keys/revoke": {
+      "post": {
+        "operationId": "post_policy_activation_keys_revoke",
+        "responses": {
+          "200": {
+            "description": "Revoked; the row is kept so past activations stay explainable"
+          },
+          "400": {
+            "description": "The revocation names no key, or no author"
+          },
+          "401": {
+            "description": "Nothing authenticated the caller"
+          },
+          "403": {
+            "description": "This credential may not revoke activation keys"
+          },
+          "404": {
+            "description": "No active key by that id is registered for this tenant"
+          },
+          "409": {
+            "description": "It is the tenant's last active key; register the replacement first"
+          },
+          "503": {
+            "description": "The revocation could not be recorded, so the key is still trusted"
+          }
+        },
+        "summary": "Stop trusting a policy activation key",
+        "tags": [
+          "Policy"
         ]
       }
     },

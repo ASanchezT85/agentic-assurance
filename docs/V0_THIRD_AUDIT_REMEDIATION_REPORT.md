@@ -450,10 +450,13 @@ c9d6246  the projection was the next bottleneck
 
 ## OPEN RISKS
 
-1. **No endpoint registers an agent signing key or a policy activation key.** Onboarding
-   either requires database access. The platform is not operable by a customer without
-   it. Named in the second report and still true; adding an API is a new surface and was
-   not in this pass.
+1. ~~**No endpoint registers an agent signing key or a policy activation key.**~~
+   **CLOSED after this report.** `POST /v1/agent-keys` and `POST
+   /v1/policy-activation-keys` (with their revocations) were built on 2026-08-30, each
+   behind a privilege of its own: `GATEWAY_KEY_REGISTRARS` and
+   `GATEWAY_ACTIVATION_KEY_REGISTRARS`, both separate from `GATEWAY_GRANT_ISSUERS`.
+   Activation keys additionally bootstrap once and thereafter extend only by the
+   customer's own signature (ADR-028). Neither onboarding needs database access.
 2. **Sustained peak still exceeds one publisher.** The controlled measurement shows depth
    staying at 5% and catching up in 195 ms; the synthetic load harness drives far more
    traffic than the platform is sized for, and at that rate a single publisher falls

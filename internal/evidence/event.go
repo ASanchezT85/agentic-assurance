@@ -43,6 +43,12 @@ const (
 	AgentKeyRegistered EventName = "agent.signing_key.registered.v1"
 	AgentKeyRevoked    EventName = "agent.signing_key.revoked.v1"
 
+	// The keys that may authorize a policy activation. A key that decides which
+	// bundle enforces decides what every agent in the tenant may not do, so the set
+	// of them changing is itself an event an incident review has to be able to read.
+	ActivationKeyRegistered EventName = "policy.activation_key.registered.v1"
+	ActivationKeyRevoked    EventName = "policy.activation_key.revoked.v1"
+
 	// AuthorityRevoked is not in the section 32 catalog. It is added because cutting
 	// an agent's authority is the emergency action of spec section 14, and one that
 	// left no record would be the hardest thing to explain afterwards.
@@ -133,6 +139,7 @@ var catalog = map[EventName]bool{
 	IntentReceived: true, IdentityVerified: true, IdentityFailed: true,
 	AuthorityEvaluated: true, AuthorityRevoked: true, AuthorityIssued: true,
 	AgentKeyRegistered: true, AgentKeyRevoked: true,
+	ActivationKeyRegistered: true, ActivationKeyRevoked: true,
 	AuthorityReserved: true, AuthorityReservationCommitted: true,
 	AuthorityReservationReleased: true,
 	DecisionCommitted:            true, SubmissionAttempted: true,

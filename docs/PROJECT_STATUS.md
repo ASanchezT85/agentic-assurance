@@ -134,6 +134,11 @@ GET  /v1/evidence?correlation_id={id}   the chain for one correlation id
 POST /v1/authority-grants               issue authority (separate privilege)
 POST /v1/authority-grants/{id}/revoke   the emergency lever
 
+POST /v1/agent-keys                     which key IS an agent (separate privilege)
+POST /v1/agent-keys/revoke              rotation, and compromise
+POST /v1/policy-activation-keys         who may put a policy into force (ADR-028)
+POST /v1/policy-activation-keys/revoke  retire one, never the last
+
 POST /v1/controls                       authorize a fleet control (INV-009)
 GET  /v1/controls                       what is in force, and what was
 POST /v1/controls/{id}/revoke           lift one
@@ -154,12 +159,19 @@ POST /v1/simulations/{id}/cancel        stop a queued or running experiment
 The tenant comes from the credential (`identity@tenant=token`), never from a header or
 a body field; a header that disagrees is `403` rather than ignored.
 
-Three separations are deliberate and each has a reason that cost something to learn:
+Four separations are deliberate and each has a reason that cost something to learn:
 
 - **Issuing authority is not submitting intents.** A credential that could do both
   would let an agent raise its own ceiling, and INV-002 would be enforced against a
   limit the party under it can move (P-002). Issuers are named in
   `GATEWAY_GRANT_ISSUERS`.
+- **Registering a key is not issuing authority, and registering a *policy* key is
+  neither.** A grant says what an agent may do; an agent key says which key IS that
+  agent; an activation key says which policy constrains every agent. Three powers, three
+  lists — `GATEWAY_GRANT_ISSUERS`, `GATEWAY_KEY_REGISTRARS`,
+  `GATEWAY_ACTIVATION_KEY_REGISTRARS` — because holding one must not confer the others.
+  The third is bounded further: it bootstraps a tenant's first activation key and can
+  never add a second, which only the customer's own signature can do (ADR-028, INV-009).
 - **Authorizing a fleet control lives on the gateway, not the fleet engine.** A control
   is enforcement. An endpoint that let the intelligence plane produce one would break
   INV-009 by deployment topology while every type signature still looked right.

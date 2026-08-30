@@ -110,39 +110,154 @@ func (s *ActivationStore) withTenant(ctx context.Context, tenantID string,
 }
 
 // RegisterKey records a key that may authorize activations.
-func (s *ActivationStore) RegisterKey(ctx context.Context, k ActivationKey) error {
+//
+// It reports whether it registered. An existing key is never replaced: overwriting the
+// public key under a key id would let one request substitute the authority that decides
+// which policy enforces, and every document signed by the previous key would stop
+// verifying at the same moment. Rotation is a new key id, then a revocation.
+//
+// This used to upsert, and a caller who registered a key that was already taken was told
+// nothing at all while somebody else's key stayed in force.
+func (s *ActivationStore) RegisterKey(ctx context.Context, k ActivationKey) (bool, error) {
 	if len(k.PublicKey) != ed25519.PublicKeySize {
-		return fmt.Errorf("an activation key must be a 32-byte ed25519 public key")
+		return false, fmt.Errorf("an activation key must be a 32-byte ed25519 public key")
 	}
-	return s.withTenant(ctx, k.TenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
+	registered := false
+	err := s.withTenant(ctx, k.TenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
 			INSERT INTO policy_activation_keys
 				(tenant_id, key_id, algorithm, public_key, holder, status, valid_from, valid_until)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			ON CONFLICT (tenant_id, key_id) DO UPDATE SET
-				public_key  = EXCLUDED.public_key,
-				holder      = EXCLUDED.holder,
-				status      = EXCLUDED.status,
-				valid_from  = EXCLUDED.valid_from,
-				valid_until = EXCLUDED.valid_until`,
+			ON CONFLICT (tenant_id, key_id) DO NOTHING`,
 			k.TenantID, k.KeyID, AlgorithmEd25519, []byte(k.PublicKey), k.Holder,
 			nonEmpty(k.Status, "ACTIVE"), k.ValidFrom.UTC(), k.ValidUntil)
+		registered = err == nil && tag.RowsAffected() == 1
 		return err
 	})
+	return registered, err
 }
 
-// RevokeKey stops a key authorizing anything further.
-func (s *ActivationStore) RevokeKey(ctx context.Context, tenantID, keyID, by string,
-	at time.Time) error {
+// ActiveKeys counts the keys that could authorize something now.
+//
+// It decides whether a registration is a bootstrap or an extension of existing authority:
+// a tenant with no key cannot sign for the first one.
+func (s *ActivationStore) ActiveKeys(ctx context.Context, tenantID string) (int, error) {
+	var count int
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT count(*) FROM policy_activation_keys
+			 WHERE tenant_id = $1 AND status = 'ACTIVE' AND revoked_at IS NULL`,
+			tenantID).Scan(&count)
+	})
+	return count, err
+}
 
-	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
+// RegisterKeyAuthorized registers a key and records what authorized it, in one
+// transaction, with its evidence.
+//
+// Both or neither, for the reason Accept gives: a key able to decide which policy
+// enforces must not become usable through a commit that did not also record who granted
+// it. The nonce is the primary key of the record, so a replayed authorization is refused
+// by the database on every replica rather than by whichever process happened to remember.
+//
+// signedBy is empty for the bootstrap — the first key of a tenant, which nothing could
+// have signed for — and the record says so.
+func (s *ActivationStore) RegisterKeyAuthorized(ctx context.Context, k ActivationKey,
+	nonce, action, actor, signedBy string, authorizedAt time.Time, event evidence.Event,
+	at time.Time) (bool, error) {
+
+	if len(k.PublicKey) != ed25519.PublicKeySize {
+		return false, fmt.Errorf("an activation key must be a 32-byte ed25519 public key")
+	}
+
+	registered := false
+	err := s.withTenant(ctx, k.TenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO policy_activation_key_grants
+				(tenant_id, nonce, action, subject_key_id, actor, signed_by_key_id,
+				 authorized_at, accepted_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			ON CONFLICT (tenant_id, nonce) DO NOTHING`,
+			k.TenantID, nonce, action, k.KeyID, actor, nullIfEmpty(signedBy),
+			authorizedAt.UTC(), at.UTC())
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrReplayed
+		}
+
+		tag, err = tx.Exec(ctx, `
+			INSERT INTO policy_activation_keys
+				(tenant_id, key_id, algorithm, public_key, holder, status, valid_from, valid_until)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT (tenant_id, key_id) DO NOTHING`,
+			k.TenantID, k.KeyID, AlgorithmEd25519, []byte(k.PublicKey), k.Holder,
+			nonEmpty(k.Status, "ACTIVE"), k.ValidFrom.UTC(), k.ValidUntil)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			// The key id is taken. Not registered, and the grant record must not stand
+			// either: rolling back leaves the nonce unused, so the same authorization
+			// can be presented again once the conflict is resolved.
+			return errKeyExists
+		}
+		registered = true
+
+		return appendEventTx(ctx, tx, event)
+	})
+	if errors.Is(err, errKeyExists) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return registered, nil
+}
+
+// errKeyExists is internal: it rolls the transaction back and is reported to the caller
+// as "not registered" rather than as a failure.
+var errKeyExists = errors.New("the key id is already registered")
+
+// RevokeKey stops a key authorizing anything further.
+//
+// It refuses the last active key. A tenant with no usable activation key can never
+// authorize another policy change — not a rollback during an incident, not a new key —
+// and recovering from that needs database access, which is the state this whole endpoint
+// exists to remove. Register the replacement first, then revoke.
+//
+// Revocation itself is deliberately not signed for. Containment has to be fast, and the
+// case that matters is a key believed compromised: requiring that key's own cooperation
+// to retire it would be requiring the attacker's cooperation.
+func (s *ActivationStore) RevokeKey(ctx context.Context, tenantID, keyID, by string,
+	at time.Time) (bool, error) {
+
+	revoked := false
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		var active int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM policy_activation_keys
+			 WHERE tenant_id = $1 AND status = 'ACTIVE' AND revoked_at IS NULL`,
+			tenantID).Scan(&active); err != nil {
+			return err
+		}
+		if active <= 1 {
+			return activationErr("ACTIVATION_KEY_LAST",
+				"key %s is the only active activation key for this tenant. Revoking it "+
+					"would leave nobody able to authorize a policy change, including the "+
+					"rollback an incident needs. Register the replacement first.", keyID)
+		}
+
+		tag, err := tx.Exec(ctx, `
 			UPDATE policy_activation_keys
 			   SET status = 'REVOKED', revoked_at = $3, revoked_by = $4
-			 WHERE tenant_id = $1 AND key_id = $2`,
+			 WHERE tenant_id = $1 AND key_id = $2 AND status = 'ACTIVE'`,
 			tenantID, keyID, at.UTC(), by)
+		revoked = err == nil && tag.RowsAffected() == 1
 		return err
 	})
+	return revoked, err
 }
 
 // Key returns one activation key.
@@ -262,50 +377,55 @@ func (s *ActivationStore) Accept(ctx context.Context, a Authorization, b *Bundle
 			return ErrReplayed
 		}
 
-		// Two different serialisations, deliberately. evidence_events stores the
-		// payload column; the outbox carries the whole event, because the publisher
-		// unmarshals a row back into an Event and puts it on the bus.
-		//
-		// They were the same value here, so every activation event was queued as a bare
-		// payload, failed validation on "schema_version: required", and stayed in the
-		// queue forever. The events were recorded correctly and none of them ever
-		// reached the analytical plane.
-		payload, err := json.Marshal(event.Payload)
-		if err != nil {
-			return err
-		}
-		queued, err := json.Marshal(event)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO evidence_events
-				(event_id, schema_version, event_name, tenant_id, aggregate_id,
-				 correlation_id, causation_id, occurred_at, produced_at, producer,
-				 sequence, payload)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-			ON CONFLICT (event_id, occurred_at) DO NOTHING`,
-			event.EventID, event.SchemaVersion, string(event.EventName), event.TenantID,
-			event.AggregateID, event.CorrelationID, nullIfEmpty(event.CausationID),
-			event.OccurredAt.UTC(), event.ProducedAt.UTC(), event.Producer,
-			event.Sequence, payload)
-		if err != nil {
-			return err
-		}
-
-		// The outbox row, in the same transaction, so the analytical plane learns about
-		// the change through the same commit that made it.
-		_, err = tx.Exec(ctx, `
-			INSERT INTO evidence_outbox (tenant_id, event_id, subject, payload)
-			VALUES ($1, $2, $3, $4)
-			ON CONFLICT (event_id) DO NOTHING`,
-			event.TenantID, event.EventID, event.Subject(), queued)
-		return err
+		return appendEventTx(ctx, tx, event)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// appendEventTx writes one evidence event and its outbox row inside a caller's
+// transaction.
+//
+// Two different serialisations, deliberately. evidence_events stores the payload column;
+// the outbox carries the whole event, because the publisher unmarshals a row back into an
+// Event and puts it on the bus.
+//
+// They were the same value once, so every activation event was queued as a bare payload,
+// failed validation on "schema_version: required", and stayed in the queue forever. The
+// events were recorded correctly and none of them ever reached the analytical plane.
+func appendEventTx(ctx context.Context, tx pgx.Tx, event evidence.Event) error {
+	payload, err := json.Marshal(event.Payload)
+	if err != nil {
+		return err
+	}
+	queued, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO evidence_events
+			(event_id, schema_version, event_name, tenant_id, aggregate_id,
+			 correlation_id, causation_id, occurred_at, produced_at, producer,
+			 sequence, payload)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		ON CONFLICT (event_id, occurred_at) DO NOTHING`,
+		event.EventID, event.SchemaVersion, string(event.EventName), event.TenantID,
+		event.AggregateID, event.CorrelationID, nullIfEmpty(event.CausationID),
+		event.OccurredAt.UTC(), event.ProducedAt.UTC(), event.Producer,
+		event.Sequence, payload); err != nil {
+		return err
+	}
+
+	// The outbox row, in the same transaction, so the analytical plane learns about the
+	// change through the same commit that made it.
+	_, err = tx.Exec(ctx, `
+		INSERT INTO evidence_outbox (tenant_id, event_id, subject, payload)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (event_id) DO NOTHING`,
+		event.TenantID, event.EventID, event.Subject(), queued)
+	return err
 }
 
 func nullIfEmpty(s string) any {

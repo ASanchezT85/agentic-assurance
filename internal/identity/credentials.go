@@ -57,6 +57,21 @@ type Caller struct {
 	//
 	// Off by default, named in GATEWAY_KEY_REGISTRARS.
 	MayRegisterKeys bool
+
+	// MayRegisterActivationKeys separates saying which key is an agent from saying
+	// which key may decide what constrains every agent.
+	//
+	// An activation key authorizes a policy bundle into force, so whoever can add one
+	// can hand themselves the power to lift every ceiling the customer set — without
+	// touching a grant or an agent key. It is the strongest privilege here and it is
+	// separate from all the others, including the agent-key registrar.
+	//
+	// It gates the bootstrap only. Once a tenant holds one activation key, a further
+	// key needs an authorization signed by an existing one: this credential can never
+	// mint policy authority for a customer who already has some.
+	//
+	// Off by default, named in GATEWAY_ACTIVATION_KEY_REGISTRARS.
+	MayRegisterActivationKeys bool
 }
 
 // AllowIssuers marks the named identities as able to issue authority grants.
@@ -100,6 +115,31 @@ func (c *Credentials) AllowKeyRegistrars(raw string) {
 	for token, caller := range c.byToken {
 		if allowed[caller.Identity] {
 			caller.MayRegisterKeys = true
+			c.byToken[token] = caller
+		}
+	}
+}
+
+// AllowActivationKeyRegistrars marks the named identities as able to bootstrap and
+// revoke policy activation keys.
+//
+// A third list, and deliberately not folded into the second. Registering an agent key
+// says which key is an agent; registering an activation key says which key decides what
+// every agent may not do. An operator granted the first should not silently hold the
+// second.
+func (c *Credentials) AllowActivationKeyRegistrars(raw string) {
+	if c == nil {
+		return
+	}
+	allowed := map[string]bool{}
+	for _, name := range strings.Split(raw, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			allowed[name] = true
+		}
+	}
+	for token, caller := range c.byToken {
+		if allowed[caller.Identity] {
+			caller.MayRegisterActivationKeys = true
 			c.byToken[token] = caller
 		}
 	}
@@ -219,6 +259,7 @@ func FromTransport(authorization string, peerCertificates []*x509.Certificate, c
 			p.TenantID = caller.TenantID
 			p.MayIssueAuthority = caller.MayIssueAuthority
 			p.MayRegisterKeys = caller.MayRegisterKeys
+			p.MayRegisterActivationKeys = caller.MayRegisterActivationKeys
 		}
 	}
 	return p

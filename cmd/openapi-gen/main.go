@@ -119,6 +119,33 @@ var described = map[string]route{
 			"503": "The revocation could not be recorded, so the key is still trusted",
 		},
 	},
+	"POST /v1/policy-activation-keys": {
+		Summary: "Bootstrap or extend the authority that may activate policy",
+		Tag:     "Policy",
+		Statuses: map[string]string{
+			"201": "Registered; bootstrap says whether a signature authorized it",
+			"400": "The key would not be usable, a private key was sent, or the " +
+				"tenant already holds a key and no signed authorization was given",
+			"401": "Nothing authenticated the caller",
+			"403": "This credential may not register activation keys, or the " +
+				"authorization was signed by a key this tenant did not grant",
+			"409": "That key id exists, or the authorization has already been accepted",
+			"503": "The key could not be recorded, so it was not registered",
+		},
+	},
+	"POST /v1/policy-activation-keys/revoke": {
+		Summary: "Stop trusting a policy activation key",
+		Tag:     "Policy",
+		Statuses: map[string]string{
+			"200": "Revoked; the row is kept so past activations stay explainable",
+			"400": "The revocation names no key, or no author",
+			"401": "Nothing authenticated the caller",
+			"403": "This credential may not revoke activation keys",
+			"404": "No active key by that id is registered for this tenant",
+			"409": "It is the tenant's last active key; register the replacement first",
+			"503": "The revocation could not be recorded, so the key is still trusted",
+		},
+	},
 	"POST /v1/authority-grants": {
 		Summary: "Issue an authority grant",
 		Tag:     "Authority",
