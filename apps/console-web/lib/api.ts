@@ -72,6 +72,17 @@ async function read<T>(url: string, what: string, key = "rows"): Promise<Result<
         reason: `${what} refused the console's credential (${response.status}); check CONSOLE_API_TOKEN`,
       };
     }
+    if (response.status === 404) {
+      // A route this deployment does not serve, which is a configuration state rather
+      // than a failure. The fleet engine leaves the simulation API unrouted when no
+      // engine is configured, and "Simulations returned 404" told an operator a number
+      // and nothing about the cause — the exact thing the 401 branch above exists to
+      // avoid, repeated one status code along.
+      return {
+        available: false,
+        reason: `${what} is not served by this deployment; the endpoint is not routed`,
+      };
+    }
     if (!response.ok) {
       return { available: false, reason: `${what} returned ${response.status}` };
     }

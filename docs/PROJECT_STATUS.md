@@ -257,6 +257,40 @@ orders of magnitude smaller than the round trips around it.
 
 ---
 
+## 5b. Identity and product design
+
+The platform has a commercial identity, and it is version-controlled rather than
+described.
+
+`brand/exoryn/` is the masterbrand: SVG logo masters, the palette, typography direction
+and messaging, under `BRAND_AUTHORITY.md` and a SHA-256 manifest. `design/exoryn/` sits
+under it and defines how those constraints appear in software — product principles, design
+tokens, the data language for attestation, provenance, evidence, controls and severity,
+component contracts, and a specification per console surface.
+
+Neither renamed anything technical. `assurance-gateway`, `fleet-engine`, `console-web`,
+every package, table, API path and event name are unchanged: a commercial identity and an
+internal name are separate concerns, and the brand authority says so explicitly.
+
+The Console consumes the tokens. Three guards keep that from drifting: its `tokens.css`
+must match the design system's byte for byte, its stylesheet may contain no colour
+literal, and the logo it serves must equal the brand master. Each was verified failing
+before it was trusted.
+
+What the surfaces gained is not decoration. Each one now states which endpoint it read and
+whether that source was LIVE, EMPTY or UNAVAILABLE — and each carries a note naming what
+it deliberately does not show: no dependency graph, because the endpoint reports how many
+agents share a dependency and never which dependencies relate; no fleet KPIs, because
+`/v1/fleet/state` does not supply them; no compare-runs view, because the list carries a
+fingerprint rather than a result. The mockups in the design package show all three. The
+platform cannot support them, so they are absent and the absence is explained.
+
+STALE is in the data language and not on any surface. It means "older than this surface's
+freshness threshold" and no such threshold is defined anywhere in the platform; inventing
+one in a stylesheet would be an operational contract nobody agreed to.
+
+---
+
 ## 6. Defect log
 
 The interesting half of this document. Each entry is something that was wrong, how it
