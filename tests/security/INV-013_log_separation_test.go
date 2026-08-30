@@ -18,6 +18,49 @@ import (
 // failure mode is a system that writes a decision to stdout and calls it an audit
 // trail.
 
+// Nor for anything else that writes an event where a human reads text.
+//
+// The import guard below is the obvious half, and it is partly the compiler's anyway: an
+// unused import does not build. A mutation sweep put `println("audit:", e.EventID)` inside
+// Store.Append — the decision written to stderr, no import required — and every suite
+// stayed green. Printing a decision instead of recording it is exactly the failure §51
+// describes, and it does not need a logger to happen.
+func TestEvidencePackageDoesNotPrint(t *testing.T) {
+	banned := []string{"println(", "print(", "fmt.Print", "os.Stdout", "os.Stderr"}
+
+	entries, err := os.ReadDir("../../internal/evidence")
+	if err != nil {
+		t.Fatalf("read the package: %v", err)
+	}
+	checked := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile("../../internal/evidence/" + name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		checked++
+		for _, line := range strings.Split(string(raw), "\n") {
+			code, _, _ := strings.Cut(line, "//")
+			for _, b := range banned {
+				if strings.Contains(code, b) {
+					t.Errorf("internal/evidence/%s writes to a stream: %q\n\n"+
+						"Evidence is recorded, never printed. A decision on stdout is "+
+						"sampled, rotated, dropped under pressure and unqueryable — "+
+						"which is the difference INV-013 exists to keep.",
+						name, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	if checked < 3 {
+		t.Fatalf("only %d files were checked; the guard is looking in the wrong place", checked)
+	}
+}
+
 // The evidence package must not reach for a logger. If recording evidence could be
 // satisfied by logging, someone eventually would.
 func TestEvidencePackageDoesNotLog(t *testing.T) {

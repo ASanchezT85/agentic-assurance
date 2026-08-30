@@ -49,6 +49,44 @@ func TestAttestationDoesNotTouchModelClaims(t *testing.T) {
 	}
 }
 
+// The same, with nothing to overwrite.
+//
+// The test above passes claims that are already filled in, so an inference that only fills
+// a *missing* claim slips past it — and filling in what the caller left empty is exactly
+// what a well-meaning enrichment does. A mutation sweep put four lines in ModelClaims that
+// set the provider from the SVID when the caller sent none, marked VERIFIED, and every
+// suite stayed green.
+func TestAnEmptyModelClaimIsNotFilledInFromTheWorkload(t *testing.T) {
+	empty := intent.RuntimeClaims{}
+
+	established := identity.Attested{
+		Level:    intent.AttestationA2,
+		SpiffeID: identity.SPIFFEID{TrustDomain: "acme.example", Path: "/ns/agents/sa/momentum"},
+		Method:   "SPIFFE_X509_SVID",
+	}
+
+	got := identity.ModelClaims(established, empty)
+
+	if !reflect.DeepEqual(got, empty) {
+		t.Fatalf("a claim the caller did not make was filled in from the workload "+
+			"identity (INV-014): %+v.\n\nA verified workload says which process "+
+			"connected. Naming a model on its behalf turns an absence into a claim, and "+
+			"marking that claim verified turns it into evidence nobody produced.", got)
+	}
+	for name, claim := range map[string]intent.Claim{
+		"model_provider": got.ModelProvider,
+		"model_family":   got.ModelFamily,
+		"model_version":  got.ModelVersion,
+	} {
+		if claim.Value != "" {
+			t.Errorf("%s came back as %q from an envelope that declared nothing", name, claim.Value)
+		}
+		if claim.Verified() {
+			t.Errorf("%s reported itself verified with no evidence reference", name)
+		}
+	}
+}
+
 // The established identity carries no model field at all. An absence is hard to
 // test, so this asserts the shape: if someone adds ModelFamily to Attested, this
 // fails and points at the invariant before the field acquires callers.

@@ -2,106 +2,191 @@
   {
     "id": "BASELINE (no mutation)",
     "claim": "the suite is green to begin with",
-    "outcome": "green"
+    "outcome": "NOT GREEN",
+    "detail": []
   },
   {
     "id": "INV-002 authority ceiling",
     "claim": "no order exceeds the authority the customer granted",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/internal/authority",
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "INV-004 duplicate submission",
     "claim": "an ambiguous outcome never produces a second submission",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/internal/execution",
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "INV-007 tenant from the credential",
     "claim": "the tenant comes from the credential and never from the request",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/internal/gateway",
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "INV-009 activation signature",
     "claim": "a bundle enforces only when the customer authorized the activation",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "envelope signature verification",
     "claim": "an envelope is verified against the agent's registered key",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/internal/gateway"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "F4-B002 policy predecessor",
     "claim": "a transition names the policy it replaces, by id and by content",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "F4-B001 idempotency tombstone",
     "claim": "a pruned request cannot reach a venue again",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "exact money on the wire",
     "claim": "excess precision is refused rather than rounded",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/internal/money",
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "agent key registrar privilege",
     "claim": "only a named registrar may bind a public key to an agent",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "activation key registrar privilege",
     "claim": "only a named holder may bootstrap policy authority",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "A-5-01 evidence is queued for the bus",
     "claim": "every recorded event is owed to the bus",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   },
   {
     "id": "grant issuer privilege",
     "claim": "issuing authority is not submitting intents",
-    "outcome": "caught",
-    "by": [
-      "agentic-assurance/tests/security"
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-001 executable order needs an established identity",
+    "claim": "an unauthenticated workload can never create an executable order",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-003 policy is always evaluated",
+    "claim": "no LLM output can bypass deterministic policy",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-005 an unreadable control store denies",
+    "claim": "loss of the intelligence cloud cannot disable local hard limits",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-008 a degraded identity is not upgraded",
+    "claim": "unknown provenance can never be represented as verified provenance",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-010 a bundle must be ACTIVE to enforce",
+    "claim": "a new policy cannot reach production without versioning and validation",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-011 the cache never decides a claim",
+    "claim": "Redis loss cannot destroy authoritative financial-control state",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-014 model identity is not inferred",
+    "claim": "model identity must never be inferred from workload identity",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-015 an unmapped instrument does not reach a venue",
+    "claim": "an invalid instrument normalization result cannot proceed to executable policy",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-012 a broker failure does not become a fill",
+    "claim": "an ambiguous venue timeout is not turned into a definite rejection (INV-012, INV-004)",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-013 evidence has no logger",
+    "claim": "audit logs and application logs are not interchangeable: the evidence package holds no logger",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
+    ]
+  },
+  {
+    "id": "INV-013 evidence writes to a log",
+    "claim": "evidence is recorded, never logged",
+    "outcome": "DID NOT COMPILE",
+    "detail": [
+      "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine; check if the path is correct and if the daemon is running: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified."
     ]
   }
 ]

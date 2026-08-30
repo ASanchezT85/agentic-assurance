@@ -85,6 +85,22 @@ def apply(mutation: dict[str, str]) -> bool:
     return True
 
 
+def unusable(output: str) -> bool:
+    """Whether the container could not run at all.
+
+    Docker Desktop stopped in the middle of a sweep once, and every row came back "DID NOT
+    COMPILE" — twenty-three of them, including the baseline. A harness that reports a dead
+    daemon as a compilation failure is the defect these audits keep finding, one level up,
+    which is why this is a case of its own.
+    """
+    return "docker API" in output or "daemon is running" in output
+
+
+def write_results(results: list[dict[str, Any]]) -> None:
+    body = json.dumps(results, indent=2) + "\n"
+    (HERE / "last-results.json").write_text(body, encoding="utf-8", newline="\n")
+
+
 def failing_packages(output: str) -> list[str]:
     return sorted(
         {line.split()[1] for line in output.splitlines()
@@ -93,6 +109,19 @@ def failing_packages(output: str) -> list[str]:
 
 
 def main() -> None:
+    """Run the sweep, and put the tree back whatever happens.
+
+    Twice now a run has ended between applying a mutation and reverting it — once killed on
+    a timeout, once interrupted — and left the enforcement point removed in the working
+    tree. A harness that can leave the code sabotaged is worse than no harness.
+    """
+    try:
+        sweep()
+    finally:
+        revert()
+
+
+def sweep() -> None:
     mutations: list[dict[str, str]] = json.loads(
         (HERE / "mutations.json").read_text(encoding="utf-8")
     )
@@ -108,6 +137,14 @@ def main() -> None:
         baseline["detail"] = failing_packages(out)
     results: list[dict[str, Any]] = [baseline]
     print(json.dumps(baseline), flush=True)
+    if code != 0:
+        # Nothing measured after this point would mean anything: a mutation is only
+        # interesting against a suite that was green without it.
+        if unusable(out):
+            baseline["outcome"] = "CONTAINER UNAVAILABLE"
+            baseline["detail"] = out.strip().splitlines()[:2]
+        write_results(results)
+        raise SystemExit(json.dumps(baseline))
 
     for mutation in mutations:
         revert()
@@ -117,7 +154,7 @@ def main() -> None:
         else:
             code, out = in_container("go build ./...")
             if code != 0:
-                row["outcome"] = "DID NOT COMPILE"
+                row["outcome"] = "CONTAINER UNAVAILABLE" if unusable(out) else "DID NOT COMPILE"
                 row["detail"] = out.strip().splitlines()[:3]
             else:
                 code, out = in_container(f"go test -count=1 {TARGETS}")
@@ -130,9 +167,7 @@ def main() -> None:
         print(json.dumps(row), flush=True)
 
     revert()
-    (HERE / "last-results.json").write_text(
-        json.dumps(results, indent=2), encoding="utf-8", newline="\n"
-    )
+    write_results(results)
 
 
 if __name__ == "__main__":

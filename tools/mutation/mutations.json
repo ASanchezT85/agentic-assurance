@@ -82,5 +82,82 @@
   "old": "\t\tif !verifier.Resolve(presentedFrom(r, creds)).MayIssueAuthority {",
   "new": "\t\tif false {",
   "claim": "issuing authority is not submitting intents"
+ },
+ {
+  "id": "INV-001 executable order needs an established identity",
+  "file": "internal/gateway/pipeline.go",
+  "old": "\tif err := identity.RequireExecutable(established); err != nil {",
+  "new": "\tif err := error(nil); err != nil {\n\t\t_ = identity.RequireExecutable",
+  "claim": "an unauthenticated workload can never create an executable order"
+ },
+ {
+  "id": "INV-003 policy is always evaluated",
+  "file": "internal/gateway/pipeline.go",
+  "old": "\tpolicyDecision := policy.Evaluate(bundle, env, at)",
+  "new": "\tpolicyDecision := policy.Decision{Action: policy.ActionAllow, BundleID: bundle.BundleID}\n\t_ = policy.Evaluate",
+  "claim": "no LLM output can bypass deterministic policy"
+ },
+ {
+  "id": "INV-005 an unreadable control store denies",
+  "file": "internal/gateway/pipeline.go",
+  "old": "\t\t\treturn p.deny(result, StageControl, \"CONTROL_UNAVAILABLE\",\n\t\t\t\t\"fleet controls could not be read: \"+err.Error())",
+  "new": "\t\t\tinForce = nil",
+  "claim": "loss of the intelligence cloud cannot disable local hard limits"
+ },
+ {
+  "id": "INV-008 a degraded identity is not upgraded",
+  "file": "internal/identity/attestation.go",
+  "old": "\t\t\tLevel:                     intent.AttestationA1,",
+  "new": "\t\t\tLevel:                     intent.AttestationA2,",
+  "claim": "unknown provenance can never be represented as verified provenance"
+ },
+ {
+  "id": "INV-010 a bundle must be ACTIVE to enforce",
+  "file": "internal/gateway/http.go",
+  "old": "\tif !bundle.Enforcing() {",
+  "new": "\tif false && !bundle.Enforcing() {",
+  "claim": "a new policy cannot reach production without versioning and validation"
+ },
+ {
+  "id": "INV-011 the cache never decides a claim",
+  "file": "internal/execution/service.go",
+  "old": "\tif cached := s.fromCache(ctx, env.TenantID, env.IdempotencyKey); cached != nil {",
+  "new": "\tif cached := s.fromCache(ctx, env.TenantID, env.IdempotencyKey); cached == nil {\n\t\treturn s.submitOnce(ctx, env, req)\n\t} else if cached != nil {",
+  "claim": "Redis loss cannot destroy authoritative financial-control state"
+ },
+ {
+  "id": "INV-014 model identity is not inferred",
+  "file": "internal/identity/attestation.go",
+  "old": "func ModelClaims(_ Attested, claims intent.RuntimeClaims) intent.RuntimeClaims {\n\treturn claims\n}",
+  "new": "func ModelClaims(a Attested, claims intent.RuntimeClaims) intent.RuntimeClaims {\n\tif claims.ModelProvider.Value == \"\" && !a.SpiffeID.IsZero() {\n\t\tclaims.ModelProvider = intent.Claim{Value: a.SpiffeID.String(), Verification: intent.VerificationVerified}\n\t}\n\treturn claims\n}",
+  "claim": "model identity must never be inferred from workload identity"
+ },
+ {
+  "id": "INV-015 an unmapped instrument does not reach a venue",
+  "file": "internal/gateway/pipeline.go",
+  "old": "\tsymbol, ok := p.Symbols.SymbolFor(env.Intent.InstrumentID)\n\tif !ok {",
+  "new": "\tsymbol, ok := p.Symbols.SymbolFor(env.Intent.InstrumentID)\n\tif false && !ok {",
+  "claim": "an invalid instrument normalization result cannot proceed to executable policy"
+ },
+ {
+  "id": "INV-012 a broker failure does not become a fill",
+  "file": "internal/execution/service.go",
+  "old": "\t\tif errors.Is(err, broker.ErrTimeout) {\n\t\t\t// The outcome is unknown. Not failed, not succeeded: unknown.\n\t\t\treturn s.reconcileAndResolve(ctx, env.TenantID, env.IdempotencyKey, req.ClientOrderID)\n\t\t}",
+  "new": "\t\tif false && errors.Is(err, broker.ErrTimeout) {\n\t\t\treturn s.reconcileAndResolve(ctx, env.TenantID, env.IdempotencyKey, req.ClientOrderID)\n\t\t}",
+  "claim": "an ambiguous venue timeout is not turned into a definite rejection (INV-012, INV-004)"
+ },
+ {
+  "id": "INV-013 evidence has no logger",
+  "file": "internal/evidence/store.go",
+  "old": "import (\n\t\"context\"\n\t\"encoding/json\"",
+  "new": "import (\n\t\"context\"\n\t\"encoding/json\"\n\t\"log/slog\"",
+  "claim": "audit logs and application logs are not interchangeable: the evidence package holds no logger"
+ },
+ {
+  "id": "INV-013 evidence writes to a log",
+  "file": "internal/evidence/store.go",
+  "old": "\tif err := e.Validate(); err != nil {\n\t\treturn false, err\n\t}",
+  "new": "\tif err := e.Validate(); err != nil {\n\t\treturn false, err\n\t}\n\tprintln(\"audit:\", e.EventID)",
+  "claim": "evidence is recorded, never logged"
  }
 ]
