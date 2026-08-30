@@ -35,6 +35,16 @@ var ErrKeyReused = errors.New("this idempotency key was claimed by a different e
 
 var ErrEnvelopeReused = errors.New("this envelope id was already submitted under a different idempotency key")
 
+// ErrKeyRetired means the key belonged to a request whose record retention has pruned.
+//
+// Distinct from ErrKeyReused, which is a live record claimed by another envelope. This is
+// the state ADR-027 describes and the fourth audit found unenforced: the outcome was
+// deliberately deleted, so there is nothing to replay, and the request it identified was
+// completed once. Executing it again would be a second venue submission for one economic
+// request (INV-004); replaying it would mean inventing an outcome the platform threw away.
+// The only honest answer is a refusal that says the key is spent.
+var ErrKeyRetired = errors.New("this idempotency key belongs to a request that has already been completed and whose outcome has been pruned")
+
 // RecordState is the lifecycle of an idempotency record.
 type RecordState string
 

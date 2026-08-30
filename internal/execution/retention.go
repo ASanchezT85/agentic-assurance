@@ -25,14 +25,16 @@ import (
 //
 // And pruning a resolved record does not reopen its key (ADR-027). What is deleted is the
 // cached outcome and the ability to replay it; what the key means is held elsewhere and
-// permanently. authority_usage keeps one row per economic request and is not pruned, so a
-// key presented again — at any age, under any envelope — is refused as a reuse.
+// permanently: the key and the envelope move into idempotency_tombstones in the same
+// transaction that deletes the record, so a key presented again — at any age, under any
+// envelope — is refused as retired.
 //
-// This file used to say the opposite: that pruning reopened the key and a later caller
-// got a fresh execution. authority_usage disagreed and refused, so the platform stated
-// both "fresh again" and "permanently spent" and which one a caller met depended on which
-// layer answered first. The window bounds storage. It does not bound what the platform
-// remembers about a key.
+// This file used to say the opposite: that pruning reopened the key and a later caller got
+// a fresh execution. It was then corrected to say authority_usage remembered instead, and
+// that was true only for requests authority could price. An identical request re-presented
+// after the prune read as a retry that may proceed, and reached the venue a second time
+// (F4-B001); a quantity-sized market order has no reservation row at all. The window
+// bounds storage. It does not bound what the platform remembers about a key.
 
 // DefaultRetention is how long a resolved record is kept.
 //
@@ -55,13 +57,57 @@ const PruneBatch = 5000
 func (s *PostgresStore) Prune(ctx context.Context, tenantID string, before time.Time) (int64, error) {
 	var deleted int64
 	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		// The identity moves to the tombstone in the same transaction that deletes the
+		// record. There is no instant at which the outcome is gone and the key is
+		// forgotten: a caller arriving between the two would be a fresh request under a
+		// key that had already reached a venue.
+		//
+		// The batch is chosen once and both statements operate on exactly that set, so
+		// nothing is deleted whose identity was not first retired.
+		rows, err := tx.Query(ctx, `
+			WITH doomed AS (
+			    SELECT tenant_id, idempotency_key, envelope_id, client_order_id,
+			           COALESCE(outcome_state, 'UNKNOWN') AS final_state
+			      FROM idempotency_records
+			     WHERE state = $1 AND updated_at < $2
+			     ORDER BY updated_at
+			     LIMIT $3
+			     FOR UPDATE
+			), retired AS (
+			    INSERT INTO idempotency_tombstones
+			        (tenant_id, idempotency_key, envelope_id, client_order_id,
+			         final_state, retired_at)
+			    SELECT tenant_id, idempotency_key, envelope_id, client_order_id,
+			           final_state, $4
+			      FROM doomed
+			    ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+			)
+			SELECT idempotency_key FROM doomed`,
+			string(RecordResolved), before.UTC(), PruneBatch, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		var keys []string
+		for rows.Next() {
+			var k string
+			if err := rows.Scan(&k); err != nil {
+				rows.Close()
+				return err
+			}
+			keys = append(keys, k)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(keys) == 0 {
+			return nil
+		}
+
 		tag, err := tx.Exec(ctx, `
 			DELETE FROM idempotency_records
-			 WHERE ctid IN (
-			       SELECT ctid FROM idempotency_records
-			        WHERE state = $1 AND updated_at < $2
-			        LIMIT $3)`,
-			string(RecordResolved), before.UTC(), PruneBatch)
+			 WHERE tenant_id = $1 AND idempotency_key = ANY($2)`,
+			tenantID, keys)
 		if err != nil {
 			return err
 		}

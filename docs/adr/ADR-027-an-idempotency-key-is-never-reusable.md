@@ -31,10 +31,30 @@ rely on.
 
 - Retention prunes the *record* — the cached outcome and the ability to replay it — and
   does not reopen the *key*.
-- `authority_usage` is the tombstone. It is not pruned, and a key it holds is refused for
-  any request whose identity differs from the one it was taken for.
+- `idempotency_tombstones` is the tombstone (migration 0029, added by the fourth
+  remediation). Retention moves the key, the envelope and the client order id into it in
+  the same transaction that deletes the record, so there is no instant at which the
+  outcome is gone and the identity is forgotten.
+- A retired key is refused with `IDEMPOTENCY_KEY_RETIRED`; a retired envelope presented
+  under a new key with `ENVELOPE_REUSED`.
 - After retention, a caller presenting an old key gets a refusal rather than a fresh
   execution. It is not a replay either: the outcome it would have replayed is gone.
+
+`authority_usage` was the tombstone for one release and was not enough. It refused a key
+whose *identity* differed and allowed the identical request through as a retry, which is
+right while the record exists and is how a retry keeps the capacity it holds — and after
+the prune it meant the venue was called a second time for one economic request (F4-B001).
+It also cannot cover an order the platform cannot price: a quantity-sized market order has
+no reservation row at all. Envelope uniqueness is an execution concern (§12.2) that
+authority has no reason to hold. It remains what it is — the record of capacity taken —
+and permanence now lives in the idempotency domain.
+
+**Before the claim is durable, a request may be retried.** Pre-broker `Release()` deletes
+the authority row for a request that never reached a venue, and that is what makes a
+refused or abandoned attempt retryable. The boundary is the durable execution claim: once
+`idempotency_records` holds the key, its identity is permanent, and a *different* economic
+request may never inherit it. Authority reservation deletion does not define idempotency
+semantics; it never did, and stating it here keeps the two from drifting apart again.
 
 The alternative — reuse permitted after a window — was rejected. It requires the
 authority ledger to forget a key at the same moment the execution store does, in every

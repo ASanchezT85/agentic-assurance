@@ -21,12 +21,21 @@ type MemoryStore struct {
 	// idempotency_envelope_idx exists to refuse.
 	envelopes map[string]string
 
+	// retiredKeys and retiredEnvelopes mirror idempotency_tombstones: what the platform
+	// remembers after retention has pruned an outcome. Without them this store lets a
+	// spent key through and every test using it proves the opposite of production.
+	retiredKeys      map[string]string
+	retiredEnvelopes map[string]string
+
 	// FailWith makes the fail-closed path testable without breaking a database.
 	FailWith error
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{records: map[string]*Record{}, envelopes: map[string]string{}}
+	return &MemoryStore{
+		records: map[string]*Record{}, envelopes: map[string]string{},
+		retiredKeys: map[string]string{}, retiredEnvelopes: map[string]string{},
+	}
 }
 
 func key(tenantID, idempotencyKey string) string {
@@ -41,6 +50,15 @@ func (m *MemoryStore) Claim(_ context.Context, rec Record) (*Record, bool, error
 	defer m.mu.Unlock()
 
 	k := key(rec.TenantID, rec.IdempotencyKey)
+	if _, retired := m.retiredKeys[k]; retired {
+		return nil, false, ErrKeyRetired
+	}
+	if rec.EnvelopeID != "" {
+		if held, retired := m.retiredEnvelopes[key(rec.TenantID, rec.EnvelopeID)]; retired &&
+			held != rec.IdempotencyKey {
+			return nil, false, ErrEnvelopeReused
+		}
+	}
 	if existing, ok := m.records[k]; ok {
 		copied := *existing
 		return &copied, false, nil
@@ -134,4 +152,26 @@ func (c *MemoryCache) Flush() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.records = map[string]Record{}
+}
+
+// Retire is what retention does: the outcome goes, the identity stays.
+//
+// Deleting the record without this would reopen the key, which is the production defect
+// F4-B001 named. The two happen together here for the same reason they share a
+// transaction in PostgreSQL.
+func (m *MemoryStore) Retire(tenantID, idempotencyKey string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	k := key(tenantID, idempotencyKey)
+	rec, ok := m.records[k]
+	if !ok {
+		return
+	}
+	m.retiredKeys[k] = idempotencyKey
+	if rec.EnvelopeID != "" {
+		m.retiredEnvelopes[key(tenantID, rec.EnvelopeID)] = idempotencyKey
+		delete(m.envelopes, key(tenantID, rec.EnvelopeID))
+	}
+	delete(m.records, k)
 }

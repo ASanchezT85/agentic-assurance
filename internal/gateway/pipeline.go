@@ -557,17 +557,32 @@ func (p *Pipeline) Submit(ctx context.Context, raw []byte, presented identity.Pr
 	// an attempt that stopped inside the platform was not an attempt on a venue.
 	if !outcome.Replayed && !outcome.Reconciled &&
 		!errors.Is(err, execution.ErrEnvelopeReused) &&
-		!errors.Is(err, execution.ErrKeyReused) {
+		!errors.Is(err, execution.ErrKeyReused) &&
+		!errors.Is(err, execution.ErrKeyRetired) {
 		p.record(ctx, env, evidence.SubmissionAttempted, at, map[string]any{
 			"client_order_id": req.ClientOrderID,
 		})
 	}
 
-	if errors.Is(err, execution.ErrEnvelopeReused) || errors.Is(err, execution.ErrKeyReused) {
+	if errors.Is(err, execution.ErrEnvelopeReused) || errors.Is(err, execution.ErrKeyReused) ||
+		errors.Is(err, execution.ErrKeyRetired) {
 		// Nothing was sent: the claim refused before the venue. Release, or the losing
 		// side of an envelope race leaves an orphan reservation behind — capacity held
 		// for an order that does not exist, under a key with no idempotency record.
 		p.releaseReservation(ctx, env, at)
+	}
+
+	if errors.Is(err, execution.ErrKeyRetired) {
+		// The key belonged to a request that was completed and whose outcome retention
+		// has pruned. Nothing was sent, and nothing can be replayed: the outcome was
+		// deliberately deleted. Accepting it would be a second venue submission for one
+		// economic request, and replaying it would mean inventing what was thrown away
+		// (INV-004, ADR-027).
+		result.Stage = StageExecution
+		result.Code = "IDEMPOTENCY_KEY_RETIRED"
+		result.Reason = err.Error()
+		result.Accepted = false
+		return p.observed(env, result)
 	}
 
 	if errors.Is(err, execution.ErrEnvelopeReused) {

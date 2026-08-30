@@ -74,6 +74,16 @@ func (s *PostgresStore) Claim(ctx context.Context, rec Record) (*Record, bool, e
 	)
 
 	err := s.withTenant(ctx, rec.TenantID, func(tx pgx.Tx) error {
+		// What the platform remembers after retention has pruned the outcome.
+		//
+		// Checked before the insert and in the same transaction, because this is the one
+		// place a spent key could reach a venue again: the record is gone, so the unique
+		// key and the unique envelope index it carried are gone with it, and authority
+		// reads an identical request as a retry that may proceed.
+		if err := retiredInTx(ctx, tx, rec); err != nil {
+			return err
+		}
+
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO idempotency_records
 				(tenant_id, idempotency_key, envelope_id, client_order_id, state, created_at, updated_at)
@@ -105,6 +115,48 @@ func (s *PostgresStore) Claim(ctx context.Context, rec Record) (*Record, bool, e
 		return nil, false, err
 	}
 	return existing, claimed, nil
+}
+
+// retiredInTx refuses a key or an envelope the platform has already spent.
+//
+// One query for both identities. They are different refusals: a retired key is a request
+// that was completed and whose outcome was pruned, and a retired envelope is a caller
+// asking for a second order under an intent that already has one (§12.2).
+func retiredInTx(ctx context.Context, tx pgx.Tx, rec Record) error {
+	rows, err := tx.Query(ctx, `
+		SELECT idempotency_key, envelope_id
+		  FROM idempotency_tombstones
+		 WHERE tenant_id = $1 AND (idempotency_key = $2 OR envelope_id = $3)`,
+		rec.TenantID, rec.IdempotencyKey, rec.EnvelopeID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	keyRetired, envelopeRetired := false, false
+	for rows.Next() {
+		var k, e string
+		if err := rows.Scan(&k, &e); err != nil {
+			return err
+		}
+		if k == rec.IdempotencyKey {
+			keyRetired = true
+		}
+		if rec.EnvelopeID != "" && e == rec.EnvelopeID && k != rec.IdempotencyKey {
+			envelopeRetired = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	switch {
+	case keyRetired:
+		return ErrKeyRetired
+	case envelopeRetired:
+		return ErrEnvelopeReused
+	}
+	return nil
 }
 
 // Resolve writes the final outcome.
