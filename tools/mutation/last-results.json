@@ -1,0 +1,107 @@
+[
+  {
+    "id": "BASELINE (no mutation)",
+    "claim": "the suite is green to begin with",
+    "outcome": "green"
+  },
+  {
+    "id": "INV-002 authority ceiling",
+    "claim": "no order exceeds the authority the customer granted",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/internal/authority",
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "INV-004 duplicate submission",
+    "claim": "an ambiguous outcome never produces a second submission",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/internal/execution",
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "INV-007 tenant from the credential",
+    "claim": "the tenant comes from the credential and never from the request",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/internal/gateway",
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "INV-009 activation signature",
+    "claim": "a bundle enforces only when the customer authorized the activation",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "envelope signature verification",
+    "claim": "an envelope is verified against the agent's registered key",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/internal/gateway"
+    ]
+  },
+  {
+    "id": "F4-B002 policy predecessor",
+    "claim": "a transition names the policy it replaces, by id and by content",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "F4-B001 idempotency tombstone",
+    "claim": "a pruned request cannot reach a venue again",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "exact money on the wire",
+    "claim": "excess precision is refused rather than rounded",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/internal/money",
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "agent key registrar privilege",
+    "claim": "only a named registrar may bind a public key to an agent",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "activation key registrar privilege",
+    "claim": "only a named holder may bootstrap policy authority",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "A-5-01 evidence is queued for the bus",
+    "claim": "every recorded event is owed to the bus",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/tests/security"
+    ]
+  },
+  {
+    "id": "grant issuer privilege",
+    "claim": "issuing authority is not submitting intents",
+    "outcome": "caught",
+    "by": [
+      "agentic-assurance/tests/security"
+    ]
+  }
+]

@@ -34,8 +34,12 @@ done
 echo "==> python: $PY"
 
 echo "==> gofmt"
-if [ -n "$(gofmt -l .)" ]; then
-  echo "gofmt needed:"; gofmt -l .; exit 1
+# Excluding the build scratch directory, which is inside the repository on this host and
+# holds generated files gofmt has opinions about. It appeared the moment the gate started
+# setting GOTMPDIR here: every run after a build failed on _testmain.go files nobody wrote.
+unformatted=$(gofmt -l . | grep -v '^\.gotmp' || true)
+if [ -n "$unformatted" ]; then
+  echo "gofmt needed:"; echo "$unformatted"; exit 1
 fi
 
 echo "==> go vet"
