@@ -397,21 +397,25 @@ func (f *FileBundles) authorize(ctx context.Context, tenantID, authPath string,
 		return nil, err
 	}
 
+	// Read for the evidence event only. What decides whether this transition may happen
+	// is the predecessor check inside Accept, under the tenant's lock: reading here and
+	// comparing here would be a check against a value that can change before the commit,
+	// which is how two replicas each accepted a different transition from one predecessor.
 	prior, err := f.Activations.Current(ctx, tenantID)
 	if err != nil && !errors.Is(err, policy.ErrNoTransition) {
 		return nil, fmt.Errorf("the current policy transition could not be read: %w", err)
 	}
-	if authorization.Action == policy.ActionRollback && prior != nil &&
-		authorization.PriorBundleID != prior.BundleID {
-		// A rollback names both sides. One that names a predecessor other than what is
-		// actually in force is describing a transition that is not the one about to
-		// happen, and an audit trail built from it would be fiction.
-		return nil, fmt.Errorf("the rollback names %s as the bundle in force and %s is",
-			authorization.PriorBundleID, prior.BundleID)
-	}
 
 	event := f.activationEvent(authorization, bundle, prior, at)
-	if _, err := f.Activations.Accept(ctx, authorization, bundle, prior, event, at); err != nil {
+	if _, err := f.Activations.Accept(ctx, authorization, bundle, event, at); err != nil {
+		if errors.Is(err, policy.ErrStalePredecessor) {
+			// The customer signed a transition from a policy that is not the one in
+			// force. Refused rather than applied: whatever is enforcing now was
+			// authorized by a document that named its own predecessor correctly, and
+			// this one would undo it on the strength of a signature made before that
+			// happened.
+			return nil, err
+		}
 		if errors.Is(err, policy.ErrReplayed) {
 			// The nonce is recorded. Either another process accepted this very
 			// authorization — in which case the bundle it names is in force and this

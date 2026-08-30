@@ -358,7 +358,7 @@ func TestAReplayedAuthorizationIsRefused(t *testing.T) {
 	// case. The interesting one is the original authorization presented again after the
 	// customer has moved on, which is what a captured file allows.
 	second := r.stageBundle(t, "bundle_replay_b", stricterPolicy, policy.StatusActive)
-	r.authorize(t, second, nil)
+	r.authorize(t, second, from(first))
 	if _, err := bundles.Active(ctx, r.tenant); err != nil {
 		t.Fatalf("second activation: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestARollbackIsSeparatelyAuthorized(t *testing.T) {
 	}
 
 	second := r.stageBundle(t, "bundle_v2", stricterPolicy, policy.StatusActive)
-	r.authorize(t, second, nil)
+	r.authorize(t, second, from(first))
 	if _, err := bundles.Active(ctx, r.tenant); err != nil {
 		t.Fatalf("activate v2: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestARollbackIsSeparatelyAuthorized(t *testing.T) {
 	r.write(t, r.tenant+".json", first)
 	r.authorize(t, first, func(a *policy.Authorization) {
 		a.Action = policy.ActionRollback
-		a.PriorBundleID = "bundle_v2"
+		a.PriorBundleID = second.BundleID
 		a.PriorBundleContentHash = second.ContentHash
 		a.Reason = "incident 4471: v2 refused legitimate orders"
 	})

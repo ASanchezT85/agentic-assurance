@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -93,12 +94,21 @@ const AlgorithmEd25519 = "Ed25519"
 type ActivationError struct {
 	Code    string
 	Message string
+
+	// Cause carries a sentinel when the message wrapped one, so a caller can ask what
+	// kind of refusal this is rather than matching on the code as a string.
+	Cause error
 }
 
 func (e *ActivationError) Error() string { return e.Code + ": " + e.Message }
 
+func (e *ActivationError) Unwrap() error { return e.Cause }
+
 func activationErr(code, format string, args ...any) *ActivationError {
-	return &ActivationError{Code: code, Message: fmt.Sprintf(format, args...)}
+	wrapped := fmt.Errorf(format, args...)
+	return &ActivationError{
+		Code: code, Message: wrapped.Error(), Cause: errors.Unwrap(wrapped),
+	}
 }
 
 // Canonical returns the bytes the signature covers: the whole document except its own

@@ -110,6 +110,13 @@ func writeBundle(t *testing.T, dir, tenant, id string, priv ed25519.PrivateKey,
 		AuthorizedAt:      time.Now().UTC(),
 		Nonce:             fmt.Sprintf("reload_%s_%d", id, time.Now().UnixNano()),
 	}
+	// The predecessor, read from the store the way a customer's tooling reads what is in
+	// force before signing a change. A transition names both of its ends, and one that
+	// does not is refused (F4-B002).
+	if current, err := authority.store.Current(context.Background(), tenant); err == nil {
+		authorization.PriorBundleID = current.BundleID
+		authorization.PriorBundleContentHash = current.BundleContentHash
+	}
 	if err := authorization.Sign(authority.priv, authority.keyID); err != nil {
 		t.Fatalf("sign authorization: %v", err)
 	}
@@ -307,6 +314,12 @@ func writeRollback(t *testing.T, dir, tenant, id string, priv ed25519.PrivateKey
 		Reason:            "restoring the previous bundle",
 		AuthorizedAt:      time.Now().UTC(),
 		Nonce:             fmt.Sprintf("rollback_%s_%d", id, time.Now().UnixNano()),
+	}
+	// A rollback names both ends, by id and by content. The id is a name a customer
+	// chooses; the hash is what the rules are.
+	if current, err := authority.store.Current(context.Background(), tenant); err == nil {
+		authorization.PriorBundleID = current.BundleID
+		authorization.PriorBundleContentHash = current.BundleContentHash
 	}
 	if err := authorization.Sign(authority.priv, authority.keyID); err != nil {
 		t.Fatalf("sign rollback: %v", err)

@@ -75,6 +75,16 @@ type Transition struct {
 // ErrNoTransition means this tenant has never had a policy activated.
 var ErrNoTransition = errors.New("no policy activation has been accepted for this tenant")
 
+// ErrStalePredecessor means the authorization describes a transition from a bundle that
+// is not the one in force.
+//
+// The signed document says "move from this to that". Verifying only the second half makes
+// every authorization valid for ever: one signed and set aside can be presented after the
+// customer has moved somewhere else, and it silently undoes the decision that overtook it.
+// It is also what let two replicas each accept a different transition from one predecessor
+// and branch a tenant's history.
+var ErrStalePredecessor = errors.New("this authorization describes a transition from a policy that is not the one in force")
+
 // ErrReplayed means the nonce has been seen. Distinct from any other conflict because it
 // is the one that matters: a captured authorization presented a second time.
 var ErrReplayed = errors.New("this authorization has already been accepted")
@@ -293,31 +303,28 @@ func (s *ActivationStore) Key(ctx context.Context, tenantID, keyID string) (*Act
 }
 
 // Current returns the transition in force.
+//
+// Read from policy_current, which is the pointer a transition updates under its own lock.
+// It used to be "the row with the greatest accepted_at", and accepted_at is a timestamp the
+// accepting gateway generated: a replica two hours behind made its own change look older
+// than the one it replaced, so what a restart read as current depended on whose clock was
+// wrong.
 func (s *ActivationStore) Current(ctx context.Context, tenantID string) (*Transition, error) {
 	var t Transition
 	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		var prior, reason *string
-		row := tx.QueryRow(ctx, `
-			SELECT tenant_id, nonce, bundle_id, bundle_content_hash, prior_bundle_id,
-			       action, actor, reason, key_id, authorized_at, accepted_at
-			  FROM policy_activations
-			 WHERE tenant_id = $1
-			 ORDER BY accepted_at DESC
-			 LIMIT 1`, tenantID)
-		if err := row.Scan(&t.TenantID, &t.Nonce, &t.BundleID, &t.BundleContentHash,
-			&prior, &t.Action, &t.Actor, &reason, &t.KeyID, &t.AuthorizedAt,
-			&t.AcceptedAt); err != nil {
+		var nonce string
+		if err := tx.QueryRow(ctx,
+			`SELECT nonce FROM policy_current WHERE tenant_id = $1`, tenantID).Scan(&nonce); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNoTransition
 			}
 			return err
 		}
-		if prior != nil {
-			t.PriorBundleID = *prior
+		loaded, err := transitionInTx(ctx, tx, tenantID, nonce)
+		if err != nil {
+			return err
 		}
-		if reason != nil {
-			t.Reason = *reason
-		}
+		t = *loaded
 		return nil
 	})
 	if err != nil {
@@ -326,14 +333,52 @@ func (s *ActivationStore) Current(ctx context.Context, tenantID string) (*Transi
 	return &t, nil
 }
 
-// Accept records a transition and its evidence in one transaction.
+// transitionInTx reads one accepted transition by its nonce.
+func transitionInTx(ctx context.Context, tx pgx.Tx, tenantID, nonce string) (*Transition, error) {
+	var t Transition
+	var prior, reason *string
+	row := tx.QueryRow(ctx, `
+		SELECT tenant_id, nonce, bundle_id, bundle_content_hash, prior_bundle_id,
+		       action, actor, reason, key_id, authorized_at, accepted_at
+		  FROM policy_activations
+		 WHERE tenant_id = $1 AND nonce = $2`, tenantID, nonce)
+	if err := row.Scan(&t.TenantID, &t.Nonce, &t.BundleID, &t.BundleContentHash,
+		&prior, &t.Action, &t.Actor, &reason, &t.KeyID, &t.AuthorizedAt,
+		&t.AcceptedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNoTransition
+		}
+		return nil, err
+	}
+	if prior != nil {
+		t.PriorBundleID = *prior
+	}
+	if reason != nil {
+		t.Reason = *reason
+	}
+	return &t, nil
+}
+
+// Accept records a transition and its evidence in one transaction, if and only if the
+// predecessor the customer signed is the one in force.
 //
-// Both or neither. The caller switches enforcement only when this returns nil, so the
-// platform cannot be enforcing a policy whose authorization went unrecorded — which is
-// exactly what happened when evidence was appended after the switch and its error
-// discarded.
+// Everything happens under the tenant's row in policy_current, so this is the point where a
+// tenant's policy history is serialized. Three things had to move inside that lock:
+//
+//   - the predecessor check. The signed document says "move from this to that"; only the
+//     second half was verified, so an authorization signed and set aside stayed valid for
+//     ever and could undo whatever had happened since;
+//
+//   - the ordering. transition_seq is assigned here rather than read from accepted_at,
+//     which is a timestamp the accepting gateway generated;
+//
+//   - the current pointer. Two replicas could each accept a different transition from one
+//     predecessor because nothing they both had to hold said what that predecessor was.
+//
+// Both or neither, as before: the caller switches enforcement only when this returns nil,
+// so the platform cannot enforce a policy whose authorization went unrecorded.
 func (s *ActivationStore) Accept(ctx context.Context, a Authorization, b *Bundle,
-	prior *Transition, event evidence.Event, at time.Time) (*Transition, error) {
+	event evidence.Event, at time.Time) (*Transition, error) {
 
 	t := Transition{
 		TenantID:          a.TenantID,
@@ -347,27 +392,52 @@ func (s *ActivationStore) Accept(ctx context.Context, a Authorization, b *Bundle
 		AuthorizedAt:      a.AuthorizedAt.UTC(),
 		AcceptedAt:        at.UTC(),
 	}
-	if prior != nil {
-		t.PriorBundleID = prior.BundleID
-	}
-
-	priorHash := ""
-	if prior != nil {
-		priorHash = prior.BundleContentHash
-	}
 
 	err := s.withTenant(ctx, a.TenantID, func(tx pgx.Tx) error {
+		// The serialization point. An advisory lock rather than SELECT FOR UPDATE alone,
+		// because the first transition of a tenant has no row to lock and that is exactly
+		// when two concurrent first activations would both insert.
+		if _, err := tx.Exec(ctx,
+			"SELECT pg_advisory_xact_lock(hashtext($1))", "policy_current:"+a.TenantID); err != nil {
+			return err
+		}
+
+		var (
+			currentNonce string
+			currentID    string
+			currentHash  string
+			seq          int64
+		)
+		err := tx.QueryRow(ctx, `
+			SELECT nonce, bundle_id, bundle_content_hash, transition_seq
+			  FROM policy_current WHERE tenant_id = $1 FOR UPDATE`,
+			a.TenantID).Scan(&currentNonce, &currentID, &currentHash, &seq)
+		hasCurrent := true
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			hasCurrent = false
+		case err != nil:
+			return err
+		}
+
+		if err := checkPredecessor(a, hasCurrent, currentID, currentHash); err != nil {
+			return err
+		}
+		if hasCurrent {
+			t.PriorBundleID = currentID
+		}
+
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO policy_activations
 				(tenant_id, nonce, bundle_id, bundle_content_hash, prior_bundle_id,
 				 prior_bundle_content_hash, action, actor, reason, key_id,
-				 authorized_at, accepted_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+				 authorized_at, accepted_at, transition_seq)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 			ON CONFLICT (tenant_id, nonce) DO NOTHING`,
 			t.TenantID, t.Nonce, t.BundleID, t.BundleContentHash,
-			nullIfEmpty(t.PriorBundleID), nullIfEmpty(priorHash),
+			nullIfEmpty(t.PriorBundleID), nullIfEmpty(currentHash),
 			string(t.Action), t.Actor, nullIfEmpty(t.Reason), t.KeyID,
-			t.AuthorizedAt, t.AcceptedAt)
+			t.AuthorizedAt, t.AcceptedAt, seq+1)
 		if err != nil {
 			return err
 		}
@@ -377,12 +447,64 @@ func (s *ActivationStore) Accept(ctx context.Context, a Authorization, b *Bundle
 			return ErrReplayed
 		}
 
-		return appendEventTx(ctx, tx, event)
+		if err := appendEventTx(ctx, tx, event); err != nil {
+			return err
+		}
+
+		// The pointer moves last and in the same commit. Enforcement becomes eligible
+		// only after this transaction commits.
+		_, err = tx.Exec(ctx, `
+			INSERT INTO policy_current
+				(tenant_id, nonce, bundle_id, bundle_content_hash, transition_seq, accepted_at)
+			VALUES ($1,$2,$3,$4,$5,$6)
+			ON CONFLICT (tenant_id) DO UPDATE SET
+				nonce               = EXCLUDED.nonce,
+				bundle_id           = EXCLUDED.bundle_id,
+				bundle_content_hash = EXCLUDED.bundle_content_hash,
+				transition_seq      = EXCLUDED.transition_seq,
+				accepted_at         = EXCLUDED.accepted_at`,
+			t.TenantID, t.Nonce, t.BundleID, t.BundleContentHash, seq+1, t.AcceptedAt)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &t, nil
+}
+
+// checkPredecessor compares what the customer signed against what is in force.
+//
+// Both the id and the content hash, for both actions. The id is a name a customer chooses
+// and can reuse; the hash is what the rules actually are, so an authorization binding only
+// the name authorizes whatever later took it.
+func checkPredecessor(a Authorization, hasCurrent bool, currentID, currentHash string) error {
+	if !hasCurrent {
+		// The tenant's first transition. Naming a predecessor it never had describes a
+		// history that did not happen.
+		if a.PriorBundleID != "" || a.PriorBundleContentHash != "" {
+			return activationErr("ACTIVATION_STALE_PREDECESSOR",
+				"the authorization names %s as the policy in force and this tenant has "+
+					"none: %w", a.PriorBundleID, ErrStalePredecessor)
+		}
+		return nil
+	}
+
+	if a.PriorBundleID == "" || a.PriorBundleContentHash == "" {
+		return activationErr("ACTIVATION_PREDECESSOR_MISSING",
+			"this tenant is enforcing %s and the authorization names no predecessor. A "+
+				"policy change is a transition from one state to another, and one that "+
+				"does not say what it is replacing cannot be checked against what it is "+
+				"actually replacing: %w", currentID, ErrStalePredecessor)
+	}
+	if a.PriorBundleID != currentID || a.PriorBundleContentHash != currentHash {
+		return activationErr("ACTIVATION_STALE_PREDECESSOR",
+			"the authorization moves from %s (%s) and this tenant is enforcing %s (%s). "+
+				"An authorization that was overtaken cannot undo the decision that "+
+				"overtook it: %w",
+			a.PriorBundleID, short(a.PriorBundleContentHash), currentID, short(currentHash),
+			ErrStalePredecessor)
+	}
+	return nil
 }
 
 // appendEventTx writes one evidence event and its outbox row inside a caller's

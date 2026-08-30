@@ -65,8 +65,14 @@ type deployment struct {
 	issuer     string
 	signingKey ed25519.PrivateKey
 	policyPub  ed25519.PublicKey
-	pool       *pgxpool.Pool
-	binary     string
+
+	// The bundle signing key and the activation key, kept so a test can stage a second,
+	// competing transition the way a customer's tooling would.
+	policyPriv     ed25519.PrivateKey
+	activationPriv ed25519.PrivateKey
+	activationKey  string
+	pool           *pgxpool.Pool
+	binary         string
 }
 
 func dsn(t *testing.T) string {
@@ -155,6 +161,7 @@ func (d *deployment) stagePolicy(t *testing.T, now time.Time) {
 		t.Fatalf("policy keygen: %v", err)
 	}
 	d.policyPub = policyPub
+	d.policyPriv = policyPriv
 	if err := bundle.Sign(policyPriv, "process-test", now); err != nil {
 		t.Fatalf("sign bundle: %v", err)
 	}
@@ -194,6 +201,8 @@ func (d *deployment) stagePolicy(t *testing.T, now time.Time) {
 		AuthorizedAt:      now,
 		Nonce:             fmt.Sprintf("proc_%s", d.tenant),
 	}
+	d.activationPriv = activationPriv
+	d.activationKey = "act_proc"
 	if err := authorization.Sign(activationPriv, "act_proc"); err != nil {
 		t.Fatalf("sign authorization: %v", err)
 	}
