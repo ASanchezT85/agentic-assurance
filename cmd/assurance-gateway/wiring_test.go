@@ -20,11 +20,10 @@ import (
 // route the privilege belongs to. A handler proved correct and reached by the wrong
 // credential is a hole with a passing test suite.
 //
-// It was going to be a smoke test against the running process. This workstation's Smart
-// App Control refuses to execute freshly built unsigned binaries — `go test` binaries run,
-// standalone builds do not — so the same wiring is asserted through the same functions
-// main calls, in a test binary. The process boundary is what is missing, and it is named
-// here rather than left implied.
+// The same properties are checked across the process boundary by
+// scripts/live-smoke-activation-keys.sh, against the running binary. This runs in the
+// ordinary gate; that one needs a booted stack, so it is the slower of the two and both
+// exist.
 
 const (
 	wiringPolicyToken    = "wiring-policy-token-of-thirty-two-plus-chars"

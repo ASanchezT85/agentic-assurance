@@ -11,14 +11,12 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-deadline=$(( $(date +%s) + ${SMOKE_WAIT_SECONDS:-5400} ))
-until ./.live/live-setup.exe -h >/dev/null 2>&1 || ./.live/live-setup.exe -h 2>&1 | grep -qi "usage of"; do
-  if [ "$(date +%s)" -gt "$deadline" ]; then
-    echo "the built binaries are still blocked by Application Control; nothing was run" >&2
-    exit 2
-  fi
-  sleep 60
-done
+# The binaries have to be built before they can be checked, and a build is cheap.
+go build -o .live/live-setup.exe ./cmd/live-setup
+if ! ./.live/live-setup.exe -h 2>&1 | grep -qi "usage of"; then
+  echo "the built binaries are blocked by Application Control; nothing was run" >&2
+  exit 2
+fi
 
 echo "==> booting"
 bash scripts/live-boot.sh >/dev/null

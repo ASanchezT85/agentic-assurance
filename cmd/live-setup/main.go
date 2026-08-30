@@ -283,6 +283,11 @@ func run(dir string, fleet, tenantCount int) error {
 	// and nothing else should have it.
 	fmt.Printf("export GATEWAY_KEY_REGISTRARS=svc_registrar\n")
 	fmt.Printf("export GATEWAY_REGISTRAR_TOKEN=%s\n", registrarToken)
+	// And the policy identity, the strongest of the three. It bootstraps this tenant's
+	// activation key — which live-setup has already registered, so over the API the
+	// bootstrap is refused, which is the property worth smoke testing.
+	fmt.Printf("export GATEWAY_ACTIVATION_KEY_REGISTRARS=svc_policy\n")
+	fmt.Printf("export GATEWAY_POLICY_TOKEN=%s\n", policyToken)
 	return nil
 }
 
