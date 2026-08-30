@@ -843,10 +843,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/internal-event"
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "events": {
+                      "items": {
+                        "$ref": "#/components/schemas/internal-event"
+                      },
+                      "type": "array"
+                    },
+                    "tenant_id": {
+                      "type": "string"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "count",
+                    "events"
+                  ],
+                  "type": "object"
                 }
               }
             },
@@ -1016,10 +1031,25 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/internal-event"
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "events": {
+                      "items": {
+                        "$ref": "#/components/schemas/internal-event"
+                      },
+                      "type": "array"
+                    },
+                    "tenant_id": {
+                      "type": "string"
+                    }
                   },
-                  "type": "array"
+                  "required": [
+                    "count",
+                    "events"
+                  ],
+                  "type": "object"
                 }
               }
             },

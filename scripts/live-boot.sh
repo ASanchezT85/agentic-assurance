@@ -30,7 +30,7 @@ export GOTMPDIR
 : "${CLICKHOUSE_PASSWORD:=assurance_dev_only}"
 : "${NATS_URL:=nats://localhost:4222}"
 : "${GATEWAY_ADDR:=127.0.0.1:8073}"
-: "${FLEET_ADDR:=127.0.0.1:8074}"
+: "${FLEET_ADDR:=127.0.0.1:8081}"
 export POSTGRES_APP_DSN POSTGRES_OUTBOX_DSN CLICKHOUSE_HTTP_URL CLICKHOUSE_USER \
        CLICKHOUSE_PASSWORD NATS_URL GATEWAY_ADDR
 
@@ -75,7 +75,11 @@ go build -o "$LIVE/fleet-engine.exe" ./cmd/fleet-engine
 echo "==> starting"
 "$LIVE/assurance-gateway.exe" > "$LIVE/gateway.log" 2>&1 &
 echo $! > "$LIVE/gateway.pid"
-GATEWAY_ADDR="$FLEET_ADDR" "$LIVE/fleet-engine.exe" > "$LIVE/fleet.log" 2>&1 &
+# The fleet engine binds FLEET_ENGINE_ADDR, not GATEWAY_ADDR, and authenticates with its
+# own credential registry. It was started with neither, so it listened on its default port
+# while this script advertised another, and every intelligence endpoint refused for want
+# of a credential — the surfaces that read it could only ever show "unavailable".
+FLEET_ENGINE_ADDR="$FLEET_ADDR" INTELLIGENCE_API_CREDENTIALS="svc_console@$LIVE_TENANT=$GATEWAY_API_TOKEN" FLEET_COHORT_TENANTS="$LIVE_TENANT"   "$LIVE/fleet-engine.exe" > "$LIVE/fleet.log" 2>&1 &
 echo $! > "$LIVE/fleet.pid"
 
 # Waited for rather than slept past: a fixed sleep is how a boot test passes on a fast
@@ -113,6 +117,7 @@ Ready. To drive it:
   export LIVE_SIGNING_KEY=$LIVE_SIGNING_KEY
   export LIVE_KEY_ID=$LIVE_KEY_ID
   export LOAD_TENANTS=$LOAD_TENANTS
+  export FLEET_ENGINE_URL=http://$FLEET_ADDR
 
 Logs: $LIVE/gateway.log, $LIVE/fleet.log
 Stop: sh scripts/live-boot.sh stop

@@ -227,4 +227,11 @@ export const evidenceFor = (correlationId: string) =>
   read<EvidenceEvent>(
     `${GATEWAY_URL}/v1/evidence?correlation_id=${encodeURIComponent(correlationId)}`,
     "Evidence",
+    // "events", not the default "rows". This asked for "rows" against an endpoint that
+    // answers with "events", so a chain of ten events read as zero and the surface said
+    // "the source answered; it had nothing to report" about a response that had
+    // everything. The comment on read() warns about exactly this and the call below it
+    // did it anyway, which is why the key is now checked by a test rather than by
+    // whoever is reading.
+    "events",
   );

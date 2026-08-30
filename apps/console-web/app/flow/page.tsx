@@ -1,4 +1,4 @@
-import { Surface, Unavailable } from "@/components/Surface";
+import { Note, Pill, SourceStrip, Surface, Table, Unavailable } from "@/components/Surface";
 import { evidenceFor, recentIntents } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -29,108 +29,137 @@ export default async function FlowPage({
       title="Flow"
       summary="The evidence chain for one correlation id, exactly as recorded."
     >
-      <form method="get" style={{ marginBottom: "1.5rem" }}>
-        <label htmlFor="correlation_id">Correlation id&nbsp;</label>
-        <input
-          id="correlation_id"
-          name="correlation_id"
-          defaultValue={correlationId}
-          style={{ padding: "0.3rem 0.5rem", minWidth: "22rem" }}
-        />
-        <button type="submit" style={{ marginLeft: "0.5rem", padding: "0.3rem 0.8rem" }}>
-          Show chain
-        </button>
+      <form method="get" className="x-search">
+        <label htmlFor="correlation_id">Correlation id</label>
+        <input id="correlation_id" name="correlation_id" defaultValue={correlationId} />
+        {/* Reading, not acting. This submits a query string; nothing on this page
+            writes, and the only reason it is a button at all is that a search needs
+            one. */}
+        <button type="submit">Show chain</button>
       </form>
 
-      {correlationId === "" ? (
-        <RecentIntents />
-      ) : (
-        <FlowChain correlationId={correlationId} />
-      )}
+      {correlationId === "" ? <RecentIntents /> : <FlowChain correlationId={correlationId} />}
+
+      <Note>
+        Outcomes are printed as the enforcement plane recorded them. The console never
+        re-derives a verdict: a refusal shown as anything other than the code that was
+        written would be a second account of the same event, and the two can disagree.
+      </Note>
+
+      <Note>
+        BUY and SELL are neutral here. Colouring a side would tell an operator that one
+        direction is the dangerous one, which is a claim about a market rather than about
+        this platform.
+      </Note>
     </Surface>
   );
 }
 
 async function RecentIntents() {
   const result = await recentIntents();
-  if (!result.available) {
-    return <Unavailable reason={result.reason} />;
-  }
-  if (result.rows.length === 0) {
-    return <p>No intent has been submitted in this tenant in the last day.</p>;
-  }
 
   return (
-    <table style={{ borderCollapse: "collapse", width: "100%" }}>
-      <thead>
-        <tr style={{ textAlign: "left" }}>
-          <th>Envelope</th>
-          <th>Intent</th>
-          <th>Last event</th>
-          <th>Outcome</th>
-          <th>Chain</th>
-        </tr>
-      </thead>
-      <tbody>
-        {result.rows.map((i) => (
-          <tr key={i.envelope_id} style={{ borderTop: "1px solid currentColor" }}>
-            <td>
+    <>
+      <SourceStrip
+        source="GET /v1/intents?limit=50"
+        availability={
+          !result.available ? "unavailable" : result.rows.length === 0 ? "empty" : "live"
+        }
+        detail={
+          result.available && result.rows.length > 0
+            ? `${result.rows.length} recent intent${result.rows.length === 1 ? "" : "s"}`
+            : undefined
+        }
+      />
+
+      {!result.available ? (
+        <Unavailable reason={result.reason} />
+      ) : result.rows.length === 0 ? (
+        <p className="x-empty">
+          No intent has been submitted in this tenant in the last day.
+        </p>
+      ) : (
+        <Table
+          columns={["envelope", "intent", "last event", "outcome", "chain"]}
+          rows={result.rows.map((i) => [
+            <span key="e">
               <code>{i.envelope_id}</code>
-              <div style={{ opacity: 0.75 }}>{i.received_at}</div>
-            </td>
-            <td>
-              {i.side} {i.instrument_id}
-            </td>
-            <td>{i.last_event}</td>
-            {/* The code as recorded, never a verdict computed here. A refusal shown
-                as anything other than what the enforcement plane wrote is a second
-                account of the same event, and the two can disagree. */}
-            <td>{i.control ?? i.code ?? i.action ?? ""}</td>
-            <td>
-              <a href={`/flow?correlation_id=${encodeURIComponent(i.correlation_id)}`}>
-                show
-              </a>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+              <div className="x-cell-sub">{i.received_at}</div>
+            </span>,
+            // Neutral. A side is a direction, not a severity.
+            <span key="i">
+              <span className="x-mono">{i.side}</span> {i.instrument_id}
+            </span>,
+            <code key="l">{i.last_event}</code>,
+            // The code as recorded, never a verdict computed here.
+            <span key="o" className="x-mono">
+              {i.control ?? i.code ?? i.action ?? ""}
+            </span>,
+            <a key="c" href={`/flow?correlation_id=${encodeURIComponent(i.correlation_id)}`}>
+              show
+            </a>,
+          ])}
+        />
+      )}
+    </>
   );
 }
 
 async function FlowChain({ correlationId }: { correlationId: string }) {
   const chain = await evidenceFor(correlationId);
-  if (!chain.available) {
-    return <Unavailable reason={chain.reason} />;
-  }
-  if (chain.rows.length === 0) {
-    return <p>No evidence for that correlation id in this tenant.</p>;
-  }
 
   return (
-    <ol style={{ paddingLeft: "1.2rem" }}>
-      {chain.rows.map((event) => (
-        <li key={event.event_id} style={{ marginBottom: "0.9rem" }}>
-          <div>
-            <strong>{event.occurred_at}</strong> {event.event_name}
-          </div>
-          <div style={{ opacity: 0.75 }}>
-            produced by {event.producer}, sequence {event.sequence}
-            {event.causation_id ? `, caused by ${event.causation_id}` : ""}
-          </div>
-          {event.corrects_event_id ? (
-            <div>
-              <strong>Correction</strong> of {event.corrects_event_id}. The earlier
-              event is still in the chain above, exactly as it was recorded.
-            </div>
-          ) : null}
-          {event.payload ? (
-            <pre style={{ margin: "0.3rem 0 0", fontSize: "0.75rem", whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(event.payload, null, 2)}
-            </pre>
-          ) : null}
-        </li>
-      ))}
-    </ol>
+    <>
+      <SourceStrip
+        source={`GET /v1/evidence?correlation_id=${correlationId}`}
+        availability={
+          !chain.available ? "unavailable" : chain.rows.length === 0 ? "empty" : "live"
+        }
+        detail={
+          chain.available && chain.rows.length > 0
+            ? `${chain.rows.length} event${chain.rows.length === 1 ? "" : "s"}`
+            : undefined
+        }
+      />
+
+      {!chain.available ? (
+        <Unavailable reason={chain.reason} />
+      ) : chain.rows.length === 0 ? (
+        <p className="x-empty">No evidence for that correlation id in this tenant.</p>
+      ) : (
+        <ol className="x-timeline">
+          {chain.rows.map((event) => (
+            <li key={event.event_id}>
+              <div className="x-timeline-head">
+                <span className="x-mono">{event.occurred_at}</span>
+                <code>{event.event_name}</code>
+                {/* A correction is its own kind of event, and the data language keeps it
+                    apart from a plain record for a reason: the original stays in the
+                    chain above, exactly as it was written, and a reader has to be able
+                    to see that both are there. */}
+                {event.corrects_event_id ? <Pill tone="warning">CORRECTION</Pill> : null}
+              </div>
+              <div className="x-cell-sub">
+                produced by {event.producer}, sequence {event.sequence}
+                {event.causation_id ? `, caused by ${event.causation_id}` : ""}
+              </div>
+              {event.corrects_event_id ? (
+                <div className="x-correction">
+                  Corrects <code>{event.corrects_event_id}</code>. The earlier event is
+                  still in the chain above, exactly as it was recorded — a correction adds
+                  to the account rather than replacing it.
+                </div>
+              ) : null}
+              {event.payload ? (
+                <details className="x-payload">
+                  <summary>payload</summary>
+                  <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                </details>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
   );
 }

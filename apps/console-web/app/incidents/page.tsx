@@ -1,4 +1,4 @@
-import { Surface, Unavailable } from "@/components/Surface";
+import { Note, Pill, SourceStrip, Surface, Table, Unavailable } from "@/components/Surface";
 import { evidenceFor, incidents } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
@@ -29,134 +29,179 @@ export default async function IncidentsPage({
       title="Incidents"
       summary="Timelines rebuilt from the append-only record. If this disagrees with anything, this is right."
     >
-      <form method="get" style={{ marginBottom: "1.5rem" }}>
-        <label htmlFor="correlation_id">Correlation id&nbsp;</label>
-        <input
-          id="correlation_id"
-          name="correlation_id"
-          defaultValue={correlationId}
-          style={{ padding: "0.3rem 0.5rem", minWidth: "22rem" }}
-        />
-        <button type="submit" style={{ marginLeft: "0.5rem", padding: "0.3rem 0.8rem" }}>
-          Rebuild timeline
-        </button>
+      <form method="get" className="x-search">
+        <label htmlFor="correlation_id">Correlation id</label>
+        <input id="correlation_id" name="correlation_id" defaultValue={correlationId} />
+        <button type="submit">Rebuild timeline</button>
       </form>
 
-      {correlationId === "" ? (
-        <OpenIncidents />
-      ) : (
-        <Timeline correlationId={correlationId} />
-      )}
+      {correlationId === "" ? <OpenIncidents /> : <Timeline correlationId={correlationId} />}
+
+      <Note>
+        A recommendation is labelled as one. The platform recommends and a customer
+        authorizes (INV-009), so nothing on this page may read as an applied control
+        unless the evidence says it was enforced — and the Controls surface, not this
+        one, lists what binds.
+      </Note>
+
+      <Note>
+        Cohort, shared dependencies and the controls that followed are not shown as
+        context panels. They would need fields the incident projection does not carry,
+        and a panel filled from what the console could reach would look like the
+        platform&apos;s account of the incident without being it.
+      </Note>
     </Surface>
   );
 }
 
 async function OpenIncidents() {
   const result = await incidents();
-  if (!result.available) {
-    return <Unavailable reason={result.reason} />;
-  }
-  if (result.rows.length === 0) {
-    return (
-      <p>
-        No incident has been opened in this tenant. Enter a correlation id above to
-        rebuild a timeline from evidence anyway — the chain outlives the projection.
-      </p>
-    );
-  }
 
   return (
-    <table style={{ borderCollapse: "collapse", width: "100%" }}>
-      <thead>
-        <tr style={{ textAlign: "left" }}>
-          <th>Opened</th>
-          <th>Severity</th>
-          <th>Why</th>
-          <th>Recommended</th>
-          <th>Timeline</th>
-        </tr>
-      </thead>
-      <tbody>
-        {result.rows.map((i) => (
-          <tr key={i.incident_id} style={{ borderTop: "1px solid currentColor" }}>
-            <td>{i.opened_at}</td>
-            <td>
-              {i.severity}
-              <div style={{ opacity: 0.75 }}>{i.severity_rule}</div>
-            </td>
-            <td>{i.anomaly_rules.join(", ")}</td>
-            {/* Recommended, never "applied". The platform recommends and a customer
-                authorizes (INV-009); the Controls surface lists what actually binds. */}
-            <td style={{ opacity: 0.75 }}>{i.recommended}</td>
-            <td>
-              <a href={`/incidents?correlation_id=${encodeURIComponent(i.correlation_id)}`}>
-                rebuild
-              </a>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <SourceStrip
+        source="GET /v1/incidents"
+        availability={
+          !result.available ? "unavailable" : result.rows.length === 0 ? "empty" : "live"
+        }
+        detail={
+          result.available && result.rows.length > 0
+            ? `${result.rows.length} incident${result.rows.length === 1 ? "" : "s"}`
+            : undefined
+        }
+      />
+
+      {!result.available ? (
+        <Unavailable reason={result.reason} />
+      ) : result.rows.length === 0 ? (
+        <p className="x-empty">
+          No incident has been opened in this tenant. Enter a correlation id above to
+          rebuild a timeline from evidence anyway — the chain outlives the projection.
+        </p>
+      ) : (
+        <Table
+          columns={["opened", "severity", "why", "recommended", "timeline"]}
+          rows={result.rows.map((i) => [
+            <span key="o" className="x-mono">
+              {i.opened_at}
+            </span>,
+            <span key="s">
+              <Severity severity={i.severity} />
+              <div className="x-cell-sub">{i.severity_rule}</div>
+            </span>,
+            i.anomaly_rules.join(", "),
+            // Recommended, never "applied". The platform recommends and a customer
+            // authorizes (INV-009); the Controls surface lists what actually binds.
+            <span key="r">
+              <Pill tone="unknown">RECOMMENDED ONLY</Pill>
+              <div className="x-cell-sub">{i.recommended}</div>
+            </span>,
+            <a key="t" href={`/incidents?correlation_id=${encodeURIComponent(i.correlation_id)}`}>
+              rebuild
+            </a>,
+          ])}
+        />
+      )}
+    </>
   );
+}
+
+/**
+ * Severity is categorical, and it is rendered as a category.
+ *
+ * Not a bar, not a percentage, not a colour on its own: the data language says these are
+ * named bands, and a scale would invite an operator to read a distance between two of
+ * them that the platform never measured.
+ */
+function Severity({ severity }: { severity: string }) {
+  const normalized = severity.toUpperCase();
+  const tone =
+    normalized === "CRITICAL" || normalized === "HIGH"
+      ? "danger"
+      : normalized === "MEDIUM"
+        ? "warning"
+        : "unknown";
+  return <Pill tone={tone}>{normalized}</Pill>;
 }
 
 async function Timeline({ correlationId }: { correlationId: string }) {
   const chain = await evidenceFor(correlationId);
-  if (!chain.available) {
-    return <Unavailable reason={chain.reason} />;
-  }
 
-  const relevant = chain.rows.filter(
-    (e) => e.event_name.startsWith("incident.") || e.event_name.startsWith("control."),
-  );
-
-  if (relevant.length === 0) {
-    return <p>No incident evidence for that correlation id in this tenant.</p>;
-  }
-
+  const relevant = chain.available
+    ? chain.rows.filter(
+        (e) => e.event_name.startsWith("incident.") || e.event_name.startsWith("control."),
+      )
+    : [];
   const ordered = [...relevant].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
 
   return (
     <>
-      <h2 style={{ fontSize: "1rem" }}>Timeline</h2>
-      <ol style={{ paddingLeft: "1.2rem" }}>
-        {ordered.map((event) => {
-          const payload = event.payload ?? {};
-          const enforced = payload["enforced"] === true;
-          const actor = typeof payload["actor"] === "string" ? payload["actor"] : "";
-          const isControl = event.event_name.startsWith("control.");
+      <SourceStrip
+        source={`GET /v1/evidence?correlation_id=${correlationId}`}
+        availability={!chain.available ? "unavailable" : ordered.length === 0 ? "empty" : "live"}
+        detail={
+          chain.available && ordered.length > 0
+            ? `${ordered.length} incident event${ordered.length === 1 ? "" : "s"} of ${chain.rows.length} in the chain`
+            : undefined
+        }
+      />
 
-          return (
-            <li key={event.event_id} style={{ marginBottom: "0.8rem" }}>
-              <div>
-                <strong>{event.occurred_at}</strong> {event.event_name}
-              </div>
+      {!chain.available ? (
+        <Unavailable reason={chain.reason} />
+      ) : ordered.length === 0 ? (
+        <p className="x-empty">
+          No incident evidence for that correlation id in this tenant.
+        </p>
+      ) : (
+        <ol className="x-timeline">
+          {ordered.map((event) => {
+            const payload = event.payload ?? {};
+            const enforced = payload["enforced"] === true;
+            const actor = typeof payload["actor"] === "string" ? payload["actor"] : "";
+            const isControl = event.event_name.startsWith("control.");
 
-              {isControl ? (
-                <div>
-                  {enforced ? (
-                    <>
-                      <strong>Applied.</strong> A control that took effect
-                      {actor ? `, by ${actor}` : ""}.
-                    </>
-                  ) : (
-                    <>
-                      <strong>Recommended only.</strong> Nothing was enforced. Customer
-                      policy authorizes enforcement, not this system.
-                    </>
-                  )}
+            return (
+              <li key={event.event_id}>
+                <div className="x-timeline-head">
+                  <span className="x-mono">{event.occurred_at}</span>
+                  <code>{event.event_name}</code>
+                  {/* The distinction the whole surface exists for, stated on the event
+                      itself rather than left to the reader to assemble from a payload. */}
+                  {isControl ? (
+                    enforced ? (
+                      <Pill tone="danger">ENFORCING</Pill>
+                    ) : (
+                      <Pill tone="unknown">RECOMMENDED ONLY</Pill>
+                    )
+                  ) : null}
                 </div>
-              ) : null}
 
-              {actor && !isControl ? <div>Human action by {actor}.</div> : null}
+                {isControl ? (
+                  <div className="x-cell-sub">
+                    {enforced ? (
+                      <>A control that took effect{actor ? `, authorized by ${actor}` : ""}.</>
+                    ) : (
+                      <>
+                        Nothing was enforced. Customer policy authorizes enforcement, not
+                        this system.
+                      </>
+                    )}
+                  </div>
+                ) : null}
 
-              <pre style={{ margin: "0.3rem 0 0", fontSize: "0.75rem", whiteSpace: "pre-wrap" }}>
-                {JSON.stringify(payload, null, 2)}
-              </pre>
-            </li>
-          );
-        })}
-      </ol>
+                {actor && !isControl ? (
+                  <div className="x-cell-sub">Human action by {actor}.</div>
+                ) : null}
+
+                <details className="x-payload">
+                  <summary>payload</summary>
+                  <pre>{JSON.stringify(payload, null, 2)}</pre>
+                </details>
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </>
   );
 }

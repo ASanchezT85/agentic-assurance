@@ -214,6 +214,43 @@ a:hover {
   color: var(--x-text-secondary);
 }
 
+/* --- source strip ----------------------------------------------------------- */
+
+.x-source {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--x-space-4);
+  color: var(--x-text-secondary);
+  font-size: 12px;
+}
+
+.x-source code {
+  color: var(--x-text-secondary);
+}
+
+.x-source-detail {
+  color: var(--x-text-muted);
+}
+
+/* --- notes ------------------------------------------------------------------ */
+
+/*
+ * What a surface deliberately does not show. Set apart from the data rather than
+ * footnoted away: each of these records a place where the obvious visualisation would
+ * state more than the platform knows, which is the thing an operator most needs to
+ * carry away from the screen.
+ */
+.x-note {
+  margin: var(--x-space-6) 0 0;
+  padding-left: var(--x-space-4);
+  border-left: 2px solid var(--x-border-strong);
+  color: var(--x-text-secondary);
+  font-size: 13px;
+  max-width: 78ch;
+}
+
 /* --- tables ----------------------------------------------------------------- */
 
 /*
@@ -316,6 +353,141 @@ a:hover {
   background: var(--x-semantic-bg-danger);
   color: var(--x-semantic-text-danger);
   border-color: var(--x-semantic-text-danger);
+}
+
+/* A secondary line inside a table cell: a timestamp under an id, a hash under a name.
+   Quieter than the value it qualifies, and never so quiet it cannot be read. */
+.x-cell-sub {
+  color: var(--x-text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.x-pill-row {
+  display: inline-flex;
+  gap: var(--x-space-1);
+  flex-wrap: wrap;
+}
+
+/* --- search ----------------------------------------------------------------- */
+
+/*
+ * A search, not an action. The only interactive element in the Console submits a query
+ * string; nothing here writes, and the button exists because a search needs one.
+ */
+.x-search {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--x-space-6);
+}
+
+.x-search label {
+  color: var(--x-text-secondary);
+  font-size: 13px;
+}
+
+.x-search input {
+  font-family: var(--x-font-mono);
+  font-size: 13px;
+  min-width: 26rem;
+  max-width: 100%;
+  padding: var(--x-space-2) var(--x-space-3);
+  color: var(--x-text-primary);
+  background: var(--x-surface-panel);
+  border: 1px solid var(--x-border-strong);
+  border-radius: var(--x-radius-sm);
+}
+
+.x-search button {
+  font-family: inherit;
+  font-size: 13px;
+  padding: var(--x-space-2) var(--x-space-4);
+  color: var(--x-text-inverse);
+  background: var(--x-brand-blue);
+  border: 1px solid var(--x-brand-blue);
+  border-radius: var(--x-radius-sm);
+  cursor: pointer;
+}
+
+.x-search button:hover {
+  background: var(--x-text-link);
+  border-color: var(--x-text-link);
+}
+
+/* --- evidence timeline ------------------------------------------------------ */
+
+/*
+ * Append-only, and it reads that way: one entry per recorded event, in the order they
+ * were recorded, with nothing collapsed. A timeline that summarised would be a second
+ * account of the chain, and the chain is the account.
+ */
+.x-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--x-space-6);
+  border-left: 2px solid var(--x-border-subtle);
+}
+
+.x-timeline li {
+  position: relative;
+  padding-bottom: var(--x-space-6);
+}
+
+.x-timeline li::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--x-space-6) - 5px);
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--x-radius-pill);
+  background: var(--x-brand-blue);
+}
+
+.x-timeline-head {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-3);
+  flex-wrap: wrap;
+}
+
+/*
+ * A correction is set apart and the original is never touched. The design authority is
+ * explicit: corrections point at the earlier event and the earlier event is not visually
+ * erased, because an audit trail that hides what was superseded is not one.
+ */
+.x-correction {
+  margin-top: var(--x-space-2);
+  padding: var(--x-space-2) var(--x-space-3);
+  background: var(--x-semantic-bg-warning);
+  border-left: 2px solid var(--x-brand-warning);
+  border-radius: var(--x-radius-sm);
+  color: var(--x-semantic-text-warning);
+  font-size: 13px;
+}
+
+/* Raw evidence stays inspectable — folded away, never withheld. */
+.x-payload {
+  margin-top: var(--x-space-2);
+}
+
+.x-payload summary {
+  cursor: pointer;
+  color: var(--x-text-link);
+  font-size: 12px;
+}
+
+.x-payload pre {
+  margin: var(--x-space-2) 0 0;
+  padding: var(--x-space-3);
+  background: var(--x-surface-panelSubtle);
+  border: 1px solid var(--x-border-subtle);
+  border-radius: var(--x-radius-sm);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  color: var(--x-text-secondary);
 }
 
 /* --- footer ----------------------------------------------------------------- */

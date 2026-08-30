@@ -122,6 +122,53 @@ export function Pill({ tone, children }: { tone: PillTone; children: ReactNode }
   return <span className={`x-pill x-pill--${tone}`}>{children}</span>;
 }
 
+/**
+ * The availability of a surface's source, stated rather than implied.
+ *
+ * The data language keeps four states apart, and three of them are derivable from what
+ * the API actually answered: the source could not be read (UNAVAILABLE), it answered with
+ * nothing (EMPTY), or it answered with rows (LIVE).
+ *
+ * STALE is deliberately absent. It means "answered, but older than this surface's
+ * freshness threshold", and no such threshold is defined anywhere in the platform. Adding
+ * one here would invent an operational contract in a stylesheet, and rendering LIVE for
+ * data that is in fact old is the smaller error than inventing the boundary between them.
+ */
+export type Availability = "live" | "empty" | "unavailable";
+
+export function SourceStrip({
+  source,
+  availability,
+  detail,
+}: {
+  /** The endpoint this surface reads. Named, so an operator knows where to look. */
+  source: string;
+  availability: Availability;
+  detail?: string | undefined;
+}) {
+  const tone: PillTone = availability === "unavailable" ? "warning" : "unknown";
+  const label =
+    availability === "unavailable" ? "UNAVAILABLE" : availability === "empty" ? "EMPTY" : "LIVE";
+
+  return (
+    <div className="x-source">
+      <Pill tone={tone}>{label}</Pill>
+      <code>{source}</code>
+      {detail ? <span className="x-source-detail">{detail}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * A note about what a surface deliberately does not show.
+ *
+ * These exist on every surface and they are not decoration: each one records a place
+ * where the obvious visualisation would state more than the platform knows.
+ */
+export function Note({ children }: { children: ReactNode }) {
+  return <p className="x-note">{children}</p>;
+}
+
 /** A plain table. No charts: a chart of two data points is decoration. */
 export function Table({
   columns,

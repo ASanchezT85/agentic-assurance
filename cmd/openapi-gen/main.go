@@ -39,6 +39,16 @@ type route struct {
 	Tag      string
 	Request  string // contract name in packages/schema-registry.json, or empty
 	Response string
+
+	// Collection names the field a list is returned under, when the handler wraps it.
+	//
+	// The generator used to declare every list response as a bare JSON array, and two of
+	// these handlers answer with an object — {tenant_id, count, events} — so the document
+	// described a shape nothing served. The console read that document, asked for the
+	// wrong field, and rendered a chain of ten events as "the source answered; it had
+	// nothing to report". A document that is generated is not thereby true.
+	Collection string
+
 	Statuses map[string]string
 }
 
@@ -73,16 +83,18 @@ var described = map[string]route{
 		},
 	},
 	"GET /v1/intents/{id}/evidence": {
-		Summary:  "The evidence chain for one intent",
-		Tag:      "Evidence",
-		Response: "internal-event",
-		Statuses: map[string]string{"200": "The chain, exactly as stored"},
+		Summary:    "The evidence chain for one intent",
+		Tag:        "Evidence",
+		Response:   "internal-event",
+		Collection: "events",
+		Statuses:   map[string]string{"200": "The chain, exactly as stored"},
 	},
 	"GET /v1/evidence": {
-		Summary:  "The evidence chain for one correlation id",
-		Tag:      "Evidence",
-		Response: "internal-event",
-		Statuses: map[string]string{"200": "The chain, exactly as stored"},
+		Summary:    "The evidence chain for one correlation id",
+		Tag:        "Evidence",
+		Response:   "internal-event",
+		Collection: "events",
+		Statuses:   map[string]string{"200": "The chain, exactly as stored"},
 	},
 	"POST /v1/authority-grants": {
 		Summary: "Issue an authority grant",
@@ -419,13 +431,26 @@ func responses(meta route, schemas map[string]any) map[string]any {
 		response := map[string]any{"description": description}
 		if code == "200" && meta.Response != "" {
 			if _, ok := schemas[meta.Response]; ok {
-				response["content"] = map[string]any{
-					"application/json": map[string]any{
-						"schema": map[string]any{
-							"type":  "array",
-							"items": map[string]any{"$ref": "#/components/schemas/" + meta.Response},
+				items := map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/" + meta.Response},
+				}
+				var schema map[string]any = items
+				if meta.Collection != "" {
+					// The handler wraps the list. Described as it is served, not as it
+					// would be tidier to serve.
+					schema = map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"tenant_id":     map[string]any{"type": "string"},
+							"count":         map[string]any{"type": "integer"},
+							meta.Collection: items,
 						},
-					},
+						"required": []string{"count", meta.Collection},
+					}
+				}
+				response["content"] = map[string]any{
+					"application/json": map[string]any{"schema": schema},
 				}
 			}
 		}
