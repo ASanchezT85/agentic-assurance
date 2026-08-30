@@ -3,12 +3,14 @@ package policy
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"strings"
+
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"agentic-assurance/internal/evidence"
@@ -147,19 +149,43 @@ func (s *ActivationStore) RegisterKey(ctx context.Context, k ActivationKey) (boo
 	return registered, err
 }
 
-// ActiveKeys counts the keys that could authorize something now.
+// UsableKeys counts the keys that could authorize something now.
 //
-// It decides whether a registration is a bootstrap or an extension of existing authority:
-// a tenant with no key cannot sign for the first one.
-func (s *ActivationStore) ActiveKeys(ctx context.Context, tenantID string) (int, error) {
+// Status, revocation and the validity window, against the database's clock rather than a
+// caller's. It used to count status = 'ACTIVE' AND revoked_at IS NULL and stop there, so a
+// key that had expired months ago was still "available": a tenant with one usable key and
+// one expired row read as two, the usable one could be revoked, and what was left could
+// authorize nothing at all. The bootstrap is spent by then, so the only way back was
+// direct database access — the state these endpoints exist to remove.
+func (s *ActivationStore) UsableKeys(ctx context.Context, tenantID string) (int, error) {
 	var count int
 	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT count(*) FROM policy_activation_keys
-			 WHERE tenant_id = $1 AND status = 'ACTIVE' AND revoked_at IS NULL`,
+			 WHERE tenant_id = $1
+			   AND status = 'ACTIVE' AND revoked_at IS NULL
+			   AND valid_from <= now()
+			   AND (valid_until IS NULL OR valid_until > now())`,
 			tenantID).Scan(&count)
 	})
 	return count, err
+}
+
+// Bootstrapped reports whether this tenant has ever bootstrapped its policy authority.
+//
+// Ever, not "has a usable key now". A bootstrap is a one-time authority event: if it
+// reopened whenever nothing could sign, an operator could wait for an expiry and mint
+// themselves a signer for a customer who already owns their policy authority.
+func (s *ActivationStore) Bootstrapped(ctx context.Context, tenantID string) (bool, error) {
+	var exists bool
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM policy_activation_key_grants
+				 WHERE tenant_id = $1 AND action = 'BOOTSTRAP_ACTIVATION_KEY')`,
+			tenantID).Scan(&exists)
+	})
+	return exists, err
 }
 
 // RegisterKeyAuthorized registers a key and records what authorized it, in one
@@ -182,6 +208,40 @@ func (s *ActivationStore) RegisterKeyAuthorized(ctx context.Context, k Activatio
 
 	registered := false
 	err := s.withTenant(ctx, k.TenantID, func(tx pgx.Tx) error {
+		// The authorizing key, revalidated here rather than trusted from the read that
+		// verified the signature.
+		//
+		// The handler read the signer, checked it was usable, verified the signature and
+		// only then entered this transaction. A revocation committed in that window left
+		// a revoked key granting authority anyway — and "a revoked key cannot authorize
+		// a further key" was exactly the claim being made. FOR UPDATE, so a revocation
+		// racing this either waits and then finds a key it may not revoke, or wins and
+		// makes this fail.
+		if signedBy != "" {
+			var status string
+			var revokedAt, validUntil *time.Time
+			var validFrom time.Time
+			err := tx.QueryRow(ctx, `
+				SELECT status, revoked_at, valid_from, valid_until
+				  FROM policy_activation_keys
+				 WHERE tenant_id = $1 AND key_id = $2
+				 FOR UPDATE`, k.TenantID, signedBy).Scan(&status, &revokedAt, &validFrom, &validUntil)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return activationErr("ACTIVATION_KEY_UNKNOWN",
+					"no activation key %s is registered for this tenant", signedBy)
+			}
+			if err != nil {
+				return err
+			}
+			signer := ActivationKey{
+				KeyID: signedBy, Status: status, RevokedAt: revokedAt,
+				ValidFrom: validFrom, ValidUntil: validUntil,
+			}
+			if err := signer.Usable(at); err != nil {
+				return err
+			}
+		}
+
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO policy_activation_key_grants
 				(tenant_id, nonce, action, subject_key_id, actor, signed_by_key_id,
@@ -190,6 +250,12 @@ func (s *ActivationStore) RegisterKeyAuthorized(ctx context.Context, k Activatio
 			ON CONFLICT (tenant_id, nonce) DO NOTHING`,
 			k.TenantID, nonce, action, k.KeyID, actor, nullIfEmpty(signedBy),
 			authorizedAt.UTC(), at.UTC())
+		if isBootstrapConflict(err) {
+			// A bootstrap grant already exists for this tenant. The unique index is what
+			// makes "the first key, exactly once" hold under concurrency, rather than a
+			// count taken before the insert.
+			return ErrBootstrapSpent
+		}
 		if err != nil {
 			return err
 		}
@@ -209,8 +275,8 @@ func (s *ActivationStore) RegisterKeyAuthorized(ctx context.Context, k Activatio
 		}
 		if tag.RowsAffected() == 0 {
 			// The key id is taken. Not registered, and the grant record must not stand
-			// either: rolling back leaves the nonce unused, so the same authorization
-			// can be presented again once the conflict is resolved.
+			// either: rolling back leaves the nonce unused, so the same authorization can
+			// be presented again once the conflict is resolved.
 			return errKeyExists
 		}
 		registered = true
@@ -224,6 +290,19 @@ func (s *ActivationStore) RegisterKeyAuthorized(ctx context.Context, k Activatio
 		return false, err
 	}
 	return registered, nil
+}
+
+// ErrBootstrapSpent means this tenant has already bootstrapped its policy authority.
+var ErrBootstrapSpent = errors.New("this tenant has already bootstrapped its policy activation authority")
+
+// isBootstrapConflict recognises the one-bootstrap-per-tenant index.
+func isBootstrapConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" &&
+		strings.Contains(pgErr.ConstraintName, "one_bootstrap")
 }
 
 // errKeyExists is internal: it rolls the transaction back and is reported to the caller
@@ -245,16 +324,22 @@ func (s *ActivationStore) RevokeKey(ctx context.Context, tenantID, keyID, by str
 
 	revoked := false
 	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		var active int
+		// Usable, not merely ACTIVE. A key that has expired or is not yet valid cannot
+		// authorize anything, and counting it as available is how a tenant ends up with
+		// nothing able to authorize a policy change and a bootstrap already spent.
+		var usable int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM policy_activation_keys
-			 WHERE tenant_id = $1 AND status = 'ACTIVE' AND revoked_at IS NULL`,
-			tenantID).Scan(&active); err != nil {
+			 WHERE tenant_id = $1
+			   AND status = 'ACTIVE' AND revoked_at IS NULL
+			   AND valid_from <= now()
+			   AND (valid_until IS NULL OR valid_until > now())`,
+			tenantID).Scan(&usable); err != nil {
 			return err
 		}
-		if active <= 1 {
-			return activationErr("ACTIVATION_KEY_LAST",
-				"key %s is the only active activation key for this tenant. Revoking it "+
+		if usable <= 1 {
+			return activationErr("ACTIVATION_KEY_LAST_USABLE",
+				"key %s is the only usable activation key for this tenant. Revoking it "+
 					"would leave nobody able to authorize a policy change, including the "+
 					"rollback an incident needs. Register the replacement first.", keyID)
 		}
@@ -507,47 +592,13 @@ func checkPredecessor(a Authorization, hasCurrent bool, currentID, currentHash s
 	return nil
 }
 
-// appendEventTx writes one evidence event and its outbox row inside a caller's
-// transaction.
+// appendEventTx writes one evidence event and its outbox row inside this transaction.
 //
-// Two different serialisations, deliberately. evidence_events stores the payload column;
-// the outbox carries the whole event, because the publisher unmarshals a row back into an
-// Event and puts it on the bus.
-//
-// They were the same value once, so every activation event was queued as a bare payload,
-// failed validation on "schema_version: required", and stayed in the queue forever. The
-// events were recorded correctly and none of them ever reached the analytical plane.
+// The evidence package owns the statements: what a row of evidence looks like is its
+// business, and two copies of that SQL is how the outbox came to carry a bare payload
+// that could never be published.
 func appendEventTx(ctx context.Context, tx pgx.Tx, event evidence.Event) error {
-	payload, err := json.Marshal(event.Payload)
-	if err != nil {
-		return err
-	}
-	queued, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO evidence_events
-			(event_id, schema_version, event_name, tenant_id, aggregate_id,
-			 correlation_id, causation_id, occurred_at, produced_at, producer,
-			 sequence, payload)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		ON CONFLICT (event_id, occurred_at) DO NOTHING`,
-		event.EventID, event.SchemaVersion, string(event.EventName), event.TenantID,
-		event.AggregateID, event.CorrelationID, nullIfEmpty(event.CausationID),
-		event.OccurredAt.UTC(), event.ProducedAt.UTC(), event.Producer,
-		event.Sequence, payload); err != nil {
-		return err
-	}
-
-	// The outbox row, in the same transaction, so the analytical plane learns about the
-	// change through the same commit that made it.
-	_, err = tx.Exec(ctx, `
-		INSERT INTO evidence_outbox (tenant_id, event_id, subject, payload)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (event_id) DO NOTHING`,
-		event.TenantID, event.EventID, event.Subject(), queued)
-	return err
+	return evidence.AppendInTx(ctx, tx, event)
 }
 
 func nullIfEmpty(s string) any {

@@ -345,3 +345,46 @@ func nullIfEmpty(s string) *string {
 // observation and is not something a producer may assert, so it is set by a column
 // default and never read back into a producer-supplied structure.
 var _ = time.Time{}
+
+// AppendInTx records one event and its outbox row inside a caller's transaction.
+//
+// It exists so an act that changes what the platform will accept — registering a signing
+// key, granting policy authority — can commit with its evidence or not at all. Written
+// here rather than copied into each caller because the two serialisations below are easy
+// to get subtly wrong: evidence_events stores the payload column, and the outbox carries
+// the whole event, because the publisher unmarshals a row back into an Event. They were
+// once the same value, and every affected event failed validation on the way out and
+// stayed in the queue for ever.
+//
+// The caller is responsible for having set app.tenant_id on the transaction.
+func AppendInTx(ctx context.Context, tx pgx.Tx, e Event) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(e.Payload)
+	if err != nil {
+		return err
+	}
+	queued, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO evidence_events
+			(event_id, schema_version, event_name, tenant_id, aggregate_id,
+			 correlation_id, causation_id, occurred_at, produced_at, producer,
+			 sequence, payload)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		ON CONFLICT (event_id, occurred_at) DO NOTHING`,
+		e.EventID, e.SchemaVersion, string(e.EventName), e.TenantID, e.AggregateID,
+		e.CorrelationID, nullIfEmpty(e.CausationID), e.OccurredAt.UTC(), e.ProducedAt.UTC(),
+		e.Producer, e.Sequence, payload); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO evidence_outbox (tenant_id, event_id, subject, payload)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (event_id) DO NOTHING`,
+		e.TenantID, e.EventID, e.Subject(), queued)
+	return err
+}

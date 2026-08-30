@@ -44,8 +44,19 @@ import (
 
 // KeyRegistry is what this handler needs from the key store.
 type KeyRegistry interface {
+	// Register writes the key and its evidence in one transaction. Binding a public key
+	// to an agent changes which key may act as that agent, and a registration that
+	// committed while its evidence write failed would leave the platform trusting a key
+	// nothing in the record accounts for (F4-K006).
 	Register(ctx context.Context, k identity.AgentKey) (bool, error)
-	Revoke(ctx context.Context, tenantID, agentID, keyID, revokedBy string, at time.Time) error
+	RegisterWithEvidence(ctx context.Context, k identity.AgentKey, event evidence.Event) (bool, error)
+
+	// Revoke reports whether it revoked anything, so an unknown key is not answered as a
+	// successful revocation and does not leave an evidence event saying one happened.
+	Revoke(ctx context.Context, tenantID, agentID, keyID, revokedBy string, at time.Time) (bool, error)
+
+	// Exists separates "already revoked" from "no such key".
+	Exists(ctx context.Context, tenantID, agentID, keyID string) (bool, error)
 }
 
 // agentKeyRequest is what a customer sends to register a signing key.
@@ -184,7 +195,17 @@ func RegisterAgentKeyHandler(keys KeyRegistry, evidenceStore *evidence.Store,
 			key.ValidUntil = req.ValidUntil.UTC()
 		}
 
-		registered, err := keys.Register(r.Context(), key)
+		event := agentKeyEvent(evidence.AgentKeyRegistered, key, at, map[string]any{
+			"registered_by": strings.TrimSpace(req.RegisteredBy),
+			"authorized_by": caller,
+			// The public key's fingerprint rather than the key. It is public and could
+			// be echoed whole; a fingerprint is what an operator compares against what
+			// their agent holds, and it fits in a log line.
+			"public_key_fingerprint": fingerprint(public),
+			"valid_from":             key.ValidFrom,
+		})
+
+		registered, err := keys.RegisterWithEvidence(r.Context(), key, event)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable,
 				errorBody("the key could not be recorded, so it was not registered"))
@@ -201,17 +222,6 @@ func RegisterAgentKeyHandler(keys KeyRegistry, evidenceStore *evidence.Store,
 					"this one.", key.AgentID, key.KeyID)))
 			return
 		}
-
-		recordAgentKeyEvent(r.Context(), evidenceStore, evidence.AgentKeyRegistered, key, at,
-			map[string]any{
-				"registered_by": strings.TrimSpace(req.RegisteredBy),
-				"authorized_by": caller,
-				// The public key's fingerprint rather than the key. It is public and
-				// could be echoed whole; a fingerprint is what an operator compares
-				// against what their agent holds, and it fits in a log line.
-				"public_key_fingerprint": fingerprint(public),
-				"valid_from":             key.ValidFrom,
-			})
 
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"agent_id":               key.AgentID,
@@ -295,10 +305,38 @@ func RevokeAgentKeyHandler(keys KeyRegistry, evidenceStore *evidence.Store,
 		agentID := strings.TrimSpace(req.AgentID)
 		keyID := strings.TrimSpace(req.KeyID)
 
-		if err := keys.Revoke(r.Context(), tenant, agentID, keyID,
-			strings.TrimSpace(req.RevokedBy), at); err != nil {
+		revoked, err := keys.Revoke(r.Context(), tenant, agentID, keyID,
+			strings.TrimSpace(req.RevokedBy), at)
+		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable,
 				errorBody("the revocation could not be recorded, so the key is still trusted"))
+			return
+		}
+		if !revoked {
+			// Nothing changed. Which of the two it is matters: an already-revoked key is
+			// an idempotent repeat, and an unknown one is very likely a typo in an agent
+			// id at the moment somebody believes they have contained a compromise.
+			exists, existsErr := keys.Exists(r.Context(), tenant, agentID, keyID)
+			if existsErr != nil {
+				writeJSON(w, http.StatusServiceUnavailable,
+					errorBody("the key's state could not be read"))
+				return
+			}
+			if !exists {
+				writeJSON(w, http.StatusNotFound, errorBody(fmt.Sprintf(
+					"no signing key %s is registered for agent %s in this tenant. "+
+						"Nothing was revoked: check the agent id, because a key you "+
+						"believe you have just stopped is still trusted",
+					keyID, agentID)))
+				return
+			}
+			// Already revoked. Answered as the no-op it is, and deliberately without a
+			// second revocation event: an audit trail that records a transition which
+			// did not happen is worse than one entry short.
+			writeJSON(w, http.StatusOK, map[string]any{
+				"agent_id": agentID, "key_id": keyID, "revoked": false,
+				"note": "this key was already revoked; nothing changed",
+			})
 			return
 		}
 
@@ -311,7 +349,7 @@ func RevokeAgentKeyHandler(keys KeyRegistry, evidenceStore *evidence.Store,
 			})
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"agent_id": agentID, "key_id": keyID, "revoked_at": at,
+			"agent_id": agentID, "key_id": keyID, "revoked": true, "revoked_at": at,
 		})
 	}
 }
@@ -341,21 +379,29 @@ func registrar(w http.ResponseWriter, r *http.Request, creds *identity.Credentia
 	return tenant, attested.APIIdentity, true
 }
 
-// recordAgentKeyEvent writes down that the set of keys able to act as an agent changed.
+// recordAgentKeyEvent writes down that a key was revoked.
 //
-// Best effort, like every other evidence write on an administrative path: the key is
-// registered whether or not the record commits, and refusing an onboarding because the
-// evidence store is briefly unavailable would fail in the direction that helps nobody.
+// Best effort, and only for revocation. Containment must not wait on a secondary store: a
+// key believed compromised has to stop verifying whether or not the evidence write
+// succeeds. Registration is the other direction — it grants the ability to act, so it
+// shares a transaction with its evidence and neither happens without the other.
 func recordAgentKeyEvent(ctx context.Context, store *evidence.Store, name evidence.EventName,
 	key identity.AgentKey, at time.Time, payload map[string]any) {
 
 	if store == nil {
 		return
 	}
+	_, _ = store.Append(ctx, agentKeyEvent(name, key, at, payload))
+}
+
+// agentKeyEvent builds the record that the set of keys able to act as an agent changed.
+func agentKeyEvent(name evidence.EventName, key identity.AgentKey, at time.Time,
+	payload map[string]any) evidence.Event {
+
 	payload["agent_id"] = key.AgentID
 	payload["key_id"] = key.KeyID
 
-	_, _ = store.Append(ctx, evidence.Event{
+	return evidence.Event{
 		SchemaVersion: evidence.SchemaVersion,
 		EventID:       fmt.Sprintf("%s_%s_%s_%d", key.AgentID, key.KeyID, name, at.UnixNano()),
 		EventName:     name,
@@ -367,7 +413,7 @@ func recordAgentKeyEvent(ctx context.Context, store *evidence.Store, name eviden
 		Producer:      "assurance-gateway",
 		Sequence:      nextSequence(),
 		Payload:       payload,
-	})
+	}
 }
 
 // fingerprint is the first eight bytes of the public key, hex.

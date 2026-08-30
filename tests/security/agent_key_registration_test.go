@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"agentic-assurance/internal/evidence"
 	"agentic-assurance/internal/gateway"
 	"agentic-assurance/internal/identity"
 )
@@ -28,6 +29,7 @@ import (
 type keyRegistry struct {
 	keys    map[string]identity.AgentKey
 	revoked map[string]string
+	events  []evidence.Event
 	fail    error
 }
 
@@ -50,12 +52,40 @@ func (r *keyRegistry) Register(_ context.Context, k identity.AgentKey) (bool, er
 	return true, nil
 }
 
-func (r *keyRegistry) Revoke(_ context.Context, tenant, agent, key, by string, _ time.Time) error {
-	if r.fail != nil {
-		return r.fail
+func (r *keyRegistry) RegisterWithEvidence(ctx context.Context, k identity.AgentKey,
+	event evidence.Event) (bool, error) {
+
+	registered, err := r.Register(ctx, k)
+	if registered {
+		r.events = append(r.events, event)
 	}
-	r.revoked[keyOf(tenant, agent, key)] = by
-	return nil
+	return registered, err
+}
+
+func (r *keyRegistry) Revoke(_ context.Context, tenant, agent, key, by string,
+	_ time.Time) (bool, error) {
+
+	if r.fail != nil {
+		return false, r.fail
+	}
+	id := keyOf(tenant, agent, key)
+	if _, exists := r.keys[id]; !exists {
+		// The store refuses to report a revocation of a key it does not hold.
+		return false, nil
+	}
+	if _, already := r.revoked[id]; already {
+		return false, nil
+	}
+	r.revoked[id] = by
+	return true, nil
+}
+
+func (r *keyRegistry) Exists(_ context.Context, tenant, agent, key string) (bool, error) {
+	if r.fail != nil {
+		return false, r.fail
+	}
+	_, exists := r.keys[keyOf(tenant, agent, key)]
+	return exists, nil
 }
 
 const (
@@ -361,6 +391,12 @@ func TestAFailedRegistrationIsNotReportedAsSuccess(t *testing.T) {
 func TestAKeyCanBeRevokedByARegistrar(t *testing.T) {
 	registry := newKeyRegistry()
 	handler := gateway.RevokeAgentKeyHandler(registry, nil, registrarCredentials(t), nil, nil)
+
+	// A key to revoke. Revoking one that was never registered is a different answer now,
+	// and a test that skipped the registration was asserting on that path by accident.
+	registry.keys[keyOf("tenant_keys", "agent_alpha", "key_1")] = identity.AgentKey{
+		TenantID: "tenant_keys", AgentID: "agent_alpha", KeyID: "key_1", Status: "ACTIVE",
+	}
 
 	body, _ := json.Marshal(map[string]any{
 		"agent_id": "agent_alpha", "key_id": "key_1",

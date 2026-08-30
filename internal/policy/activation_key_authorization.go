@@ -54,6 +54,18 @@ type KeyAuthorization struct {
 	// change months ago must still be attributable to a person.
 	SubjectHolder string `json:"subject_holder"`
 
+	// SubjectValidFrom and SubjectValidUntil are the window the key may authorize in,
+	// and they are signed for the same reason the public key is.
+	//
+	// They used to live in the HTTP wrapper, outside the signed document, so whoever
+	// presented an authorization could shorten or extend the authority the customer had
+	// granted and the signature stayed valid — the fields were not in the signed bytes.
+	// A signed document that is not a complete statement of the authority granted is not
+	// an authorization; it is a fragment of one, and the rest is whatever the presenter
+	// felt like.
+	SubjectValidFrom  *time.Time `json:"subject_valid_from,omitempty"`
+	SubjectValidUntil *time.Time `json:"subject_valid_until,omitempty"`
+
 	Actor  string `json:"actor"`
 	Reason string `json:"reason,omitempty"`
 
@@ -146,6 +158,11 @@ func (a KeyAuthorization) Validate() error {
 			"the signature must name the key that produced it")
 	case strings.TrimSpace(a.Signature.Value) == "":
 		return activationErr("ACTIVATION_SIGNATURE_MISSING", "the authorization is not signed")
+	case a.SubjectValidFrom != nil && a.SubjectValidUntil != nil &&
+		!a.SubjectValidUntil.After(*a.SubjectValidFrom):
+		return activationErr("ACTIVATION_WINDOW_EMPTY",
+			"subject_valid_until must be after subject_valid_from; a key whose window is "+
+				"empty authorizes nothing and would look registered")
 	case a.Signature.KeyID == strings.TrimSpace(a.SubjectKeyID):
 		// A key cannot introduce itself. Allowing it would make the signature
 		// self-referential: anyone holding a private key could register it as an

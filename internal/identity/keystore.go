@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"agentic-assurance/internal/evidence"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -114,20 +116,94 @@ func (s *KeyStore) Register(ctx context.Context, k AgentKey) (registered bool, e
 	return registered, err
 }
 
+// RegisterWithEvidence registers a key and records that it was registered, in one
+// transaction.
+//
+// Binding a public key to an agent is the moment that key becomes able to act. The
+// evidence write used to be best effort — appended after the fact and its error
+// discarded — so a registration could commit while the record of it did not, leaving the
+// platform trusting a key nothing in the evidence chain accounts for. An investigation
+// asking "when did this key become able to sign for this agent, and who said so" would
+// find nothing (F4-K006).
+func (s *KeyStore) RegisterWithEvidence(ctx context.Context, k AgentKey,
+	event evidence.Event) (registered bool, err error) {
+
+	err = s.withTenant(ctx, k.TenantID, func(tx pgx.Tx) error {
+		validUntil := any(nil)
+		if !k.ValidUntil.IsZero() {
+			validUntil = k.ValidUntil.UTC()
+		}
+		status := k.Status
+		if status == "" {
+			status = "ACTIVE"
+		}
+		tag, execErr := tx.Exec(ctx, `
+			INSERT INTO agent_signing_keys
+				(tenant_id, agent_id, key_id, algorithm, public_key, status, valid_from, valid_until)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			ON CONFLICT (tenant_id, agent_id, key_id) DO NOTHING`,
+			k.TenantID, k.AgentID, k.KeyID, k.Algorithm, k.PublicKey, status,
+			k.ValidFrom.UTC(), validUntil)
+		if execErr != nil {
+			return execErr
+		}
+		if tag.RowsAffected() != 1 {
+			// The key id is taken. Nothing is registered, so nothing is recorded.
+			registered = false
+			return nil
+		}
+		registered = true
+		return evidence.AppendInTx(ctx, tx, event)
+	})
+	if err != nil {
+		return false, err
+	}
+	return registered, nil
+}
+
 // Revoke stops a key verifying, from a moment on.
 //
 // A revoked key is kept rather than deleted: an envelope signed last week was signed by
 // a key that was valid last week, and an evidence chain that referenced a row nobody
 // can find any more would be unreadable exactly when it matters.
+// It reports whether it revoked anything. It used to discard RowsAffected and return nil
+// for an unknown tenant, agent or key, so revoking a key that did not exist answered 200
+// and wrote an evidence event saying a key had been revoked. An operator who mistyped an
+// agent id was told the key was stopped while the key they meant was still trusted, and
+// the audit trail agreed with them.
 func (s *KeyStore) Revoke(ctx context.Context, tenantID, agentID, keyID, revokedBy string,
-	at time.Time) error {
+	at time.Time) (bool, error) {
 
-	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
+	revoked := false
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
 			UPDATE agent_signing_keys
 			   SET status = 'REVOKED', revoked_at = $4, revoked_by = $5
-			 WHERE agent_id = $1 AND key_id = $2 AND tenant_id = $3`,
+			 WHERE agent_id = $1 AND key_id = $2 AND tenant_id = $3
+			   AND status <> 'REVOKED'`,
 			agentID, keyID, tenantID, at.UTC(), revokedBy)
-		return err
+		if err != nil {
+			return err
+		}
+		revoked = tag.RowsAffected() == 1
+		return nil
 	})
+	return revoked, err
+}
+
+// Exists reports whether a key is registered at all, revoked or not.
+//
+// It is what separates "already revoked" from "no such key": the first is an idempotent
+// no-op and the second is very likely a typo in an agent id, at a moment when somebody
+// believes they have just contained a compromise.
+func (s *KeyStore) Exists(ctx context.Context, tenantID, agentID, keyID string) (bool, error) {
+	var exists bool
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM agent_signing_keys
+				 WHERE tenant_id = $1 AND agent_id = $2 AND key_id = $3)`,
+			tenantID, agentID, keyID).Scan(&exists)
+	})
+	return exists, err
 }

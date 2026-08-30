@@ -44,17 +44,27 @@ func newActivationRegistry() *activationRegistry {
 	}
 }
 
-func (r *activationRegistry) ActiveKeys(context.Context, string) (int, error) {
+func (r *activationRegistry) Bootstrapped(context.Context, string) (bool, error) {
 	if r.fail != nil {
-		return 0, r.fail
+		return false, r.fail
 	}
-	active := 0
-	for _, k := range r.keys {
-		if k.Status == "ACTIVE" && k.RevokedAt == nil {
-			active++
+	for _, g := range r.grants {
+		if strings.HasPrefix(g, "BOOTSTRAP_ACTIVATION_KEY|") {
+			return true, nil
 		}
 	}
-	return active, nil
+	return false, nil
+}
+
+// usable counts the keys that could authorize something now, as the store does.
+func (r *activationRegistry) usable(at time.Time) int {
+	n := 0
+	for _, k := range r.keys {
+		if k.Usable(at) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 func (r *activationRegistry) Key(_ context.Context, tenant, keyID string) (*policy.ActivationKey, error) {
@@ -94,11 +104,10 @@ func (r *activationRegistry) RevokeKey(_ context.Context, _, keyID, by string,
 	if r.fail != nil {
 		return false, r.fail
 	}
-	active, _ := r.ActiveKeys(context.Background(), "")
-	if active <= 1 {
+	if r.usable(at) <= 1 {
 		return false, &policy.ActivationError{
-			Code:    "ACTIVATION_KEY_LAST",
-			Message: "key " + keyID + " is the only active activation key for this tenant",
+			Code:    "ACTIVATION_KEY_LAST_USABLE",
+			Message: "key " + keyID + " is the only usable activation key for this tenant",
 		}
 	}
 	k, ok := r.keys[keyID]
@@ -318,6 +327,7 @@ func TestAnAuthorizationSignedByARevokedKeyIsRefused(t *testing.T) {
 	second := policy.ActivationKey{
 		TenantID: "tenant_act", KeyID: "act_second", Status: "ACTIVE",
 		PublicKey: make(ed25519.PublicKey, ed25519.PublicKeySize),
+		ValidFrom: time.Now().UTC().Add(-time.Hour),
 	}
 	registry.keys["act_second"] = second
 	if _, err := registry.RevokeKey(context.Background(), "tenant_act", "act_first",
@@ -492,6 +502,7 @@ func TestARevocationNamesItsAuthor(t *testing.T) {
 	registry, _ := bootstrapped(t)
 	registry.keys["act_second"] = policy.ActivationKey{
 		TenantID: "tenant_act", KeyID: "act_second", Status: "ACTIVE",
+		ValidFrom: time.Now().UTC().Add(-time.Hour),
 	}
 	handler := gateway.RevokeActivationKeyHandler(registry, nil, activationCredentials(t), nil, nil)
 

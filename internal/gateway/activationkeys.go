@@ -38,7 +38,10 @@ import (
 
 // ActivationKeyRegistry is what these handlers need from the activation store.
 type ActivationKeyRegistry interface {
-	ActiveKeys(ctx context.Context, tenantID string) (int, error)
+	// Bootstrapped is "has this tenant ever bootstrapped", not "can anything sign right
+	// now". The difference is the whole of F4-K001: a bootstrap that reopened when keys
+	// expired would let an operator wait for an expiry and mint themselves a signer.
+	Bootstrapped(ctx context.Context, tenantID string) (bool, error)
 	Key(ctx context.Context, tenantID, keyID string) (*policy.ActivationKey, error)
 	RegisterKeyAuthorized(ctx context.Context, k policy.ActivationKey,
 		nonce, action, actor, signedBy string, authorizedAt time.Time,
@@ -53,17 +56,21 @@ type ActivationKeyRegistry interface {
 // fields would mean the platform assembling what it then verifies, and a signature over a
 // document the verifier built is a signature over the verifier's opinion.
 type activationKeyRequest struct {
-	// Bootstrap, for a tenant with no activation key yet.
-	KeyID     string `json:"key_id,omitempty"`
-	PublicKey string `json:"public_key,omitempty"`
-	Holder    string `json:"holder,omitempty"`
-	Actor     string `json:"actor,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-
-	// Authorization, for every key after the first.
-	Authorization *policy.KeyAuthorization `json:"authorization,omitempty"`
-
+	// Bootstrap, for a tenant that has never bootstrapped. These are operator-supplied
+	// and unsigned, which is what the bootstrap is: the one moment a named operator
+	// credential creates policy authority for a tenant that has none.
+	KeyID      string     `json:"key_id,omitempty"`
+	PublicKey  string     `json:"public_key,omitempty"`
+	Holder     string     `json:"holder,omitempty"`
+	Actor      string     `json:"actor,omitempty"`
+	Reason     string     `json:"reason,omitempty"`
 	ValidUntil *time.Time `json:"valid_until,omitempty"`
+
+	// Authorization, for every key after the first. It carries the whole grant —
+	// including the validity window — because a signed document that does not state the
+	// full authority granted is a fragment, and the rest would be whatever the presenter
+	// felt like (F4-K002).
+	Authorization *policy.KeyAuthorization `json:"authorization,omitempty"`
 }
 
 // RegisterActivationKeyHandler is POST /v1/policy-activation-keys.
@@ -90,11 +97,11 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 			return
 		}
 
-		existing, err := keys.ActiveKeys(r.Context(), tenant)
+		bootstrapped, err := keys.Bootstrapped(r.Context(), tenant)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, errorBody(
-				"the tenant's activation keys could not be read, so it is not known "+
-					"whether this would be the first"))
+				"the tenant's activation authority could not be read, so it is not known "+
+					"whether this would be the first key"))
 			return
 		}
 
@@ -103,7 +110,7 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 		var nonce, action, actor, signedBy string
 		var authorizedAt time.Time
 
-		if existing == 0 {
+		if !bootstrapped {
 			// The bootstrap. Once per tenant, and only while nothing could have signed.
 			if req.Authorization != nil {
 				writeJSON(w, http.StatusBadRequest, errorBody(
@@ -124,6 +131,10 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 				Algorithm: policy.AlgorithmEd25519, PublicKey: public,
 				Holder: strings.TrimSpace(req.Holder), Status: "ACTIVE", ValidFrom: at,
 			}
+			if req.ValidUntil != nil {
+				until := req.ValidUntil.UTC()
+				key.ValidUntil = &until
+			}
 			nonce = "bootstrap_" + key.KeyID
 			action = "BOOTSTRAP_ACTIVATION_KEY"
 			actor = strings.TrimSpace(req.Actor)
@@ -131,11 +142,12 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 		} else {
 			// Every later key: signed for by one already registered.
 			if req.Authorization == nil {
-				writeJSON(w, http.StatusBadRequest, errorBody(fmt.Sprintf(
-					"this tenant already holds %d active activation key(s), so a further "+
-						"key must be authorized by one of them. An operator credential "+
-						"does not grant policy authority to a customer who already has "+
-						"some: send a signed authorization", existing)))
+				writeJSON(w, http.StatusBadRequest, errorBody(
+					"this tenant has already bootstrapped its policy authority, so a "+
+						"further key must be authorized by a key it already holds. An "+
+						"operator credential does not grant policy authority to a "+
+						"customer who has some — and a bootstrap does not reopen because "+
+						"keys expired or were revoked: send a signed authorization"))
 				return
 			}
 			auth := *req.Authorization
@@ -168,11 +180,30 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 				writeActivationKeyError(w, err)
 				return
 			}
+			if req.ValidUntil != nil || req.KeyID != "" || req.PublicKey != "" ||
+				req.Holder != "" || req.Actor != "" {
+				// An authorized registration is the signed document and nothing else.
+				// Fields beside it could only change authority the customer did not
+				// sign for, which is the shape of F4-K002 whatever the field is called.
+				writeJSON(w, http.StatusBadRequest, errorBody(
+					"an authorized registration carries the signed authorization and "+
+						"nothing else. The fields beside it would change authority the "+
+						"customer's signature does not cover"))
+				return
+			}
 			key = policy.ActivationKey{
 				TenantID: tenant, KeyID: strings.TrimSpace(auth.SubjectKeyID),
 				Algorithm: policy.AlgorithmEd25519, PublicKey: public,
 				Holder: strings.TrimSpace(auth.SubjectHolder), Status: "ACTIVE",
 				ValidFrom: at,
+			}
+			// The window the customer signed for, and only that.
+			if auth.SubjectValidFrom != nil {
+				key.ValidFrom = auth.SubjectValidFrom.UTC()
+			}
+			if auth.SubjectValidUntil != nil {
+				until := auth.SubjectValidUntil.UTC()
+				key.ValidUntil = &until
 			}
 			nonce = auth.Nonce
 			action = string(auth.Action)
@@ -180,11 +211,6 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 			signedBy = auth.Signature.KeyID
 			authorizedAt = auth.AuthorizedAt.UTC()
 		}
-		if req.ValidUntil != nil {
-			until := req.ValidUntil.UTC()
-			key.ValidUntil = &until
-		}
-
 		event := activationKeyEvent(evidence.ActivationKeyRegistered, key, at, map[string]any{
 			"holder":                 key.Holder,
 			"actor":                  actor,
@@ -197,6 +223,15 @@ func RegisterActivationKeyHandler(keys ActivationKeyRegistry, evidenceStore *evi
 		registered, err := keys.RegisterKeyAuthorized(r.Context(), key, nonce, action,
 			actor, signedBy, authorizedAt, event, at)
 		switch {
+		case errors.Is(err, policy.ErrBootstrapSpent):
+			// Two bootstraps raced and this one lost, or a caller is trying again after
+			// the tenant already has policy authority. Either way the answer is the same
+			// and the database decided it.
+			writeJSON(w, http.StatusConflict, errorBody(
+				"this tenant has already bootstrapped its policy activation authority. "+
+					"The first key happens once per tenant; a further key is granted by "+
+					"a key the tenant already holds"))
+			return
 		case errors.Is(err, policy.ErrReplayed):
 			writeJSON(w, http.StatusConflict, errorBody(
 				"this authorization has already been accepted. A captured authorization "+
