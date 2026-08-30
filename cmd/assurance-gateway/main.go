@@ -557,31 +557,43 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// credentialsFromEnv reads the credential registry and the three privilege lists.
+//
+// One function rather than a block inside main, so a test can exercise the mapping from
+// environment variable to privilege. It is the only place the names are read, and a
+// mis-typed name here would silently leave a privilege ungranted — or granted to
+// everyone — with nothing failing to compile.
+func credentialsFromEnv(log *slog.Logger) *identity.Credentials {
+	creds := openCredentials(log)
+	if creds == nil {
+		return nil
+	}
+	// Which identities may issue authority. Named separately from the credential itself
+	// so the privilege is something an operator granted rather than something every
+	// credential happened to have (P-002).
+	creds.AllowIssuers(os.Getenv("GATEWAY_GRANT_ISSUERS"))
+	// And which may bind a public key to an agent. A separate list, because the two are
+	// different powers: an issuer says what an agent may do, a registrar says which key
+	// is that agent — and whoever can do the second can act as any agent in the tenant,
+	// grants included.
+	creds.AllowKeyRegistrars(os.Getenv("GATEWAY_KEY_REGISTRARS"))
+	// And which may bootstrap the key that authorizes a policy into force. A third list,
+	// because it is the strongest of the three: an activation key decides which bundle
+	// enforces, and so what every agent in the tenant may not do. It gates the first key
+	// only — a tenant that already holds one extends its own authority with a signed
+	// authorization, and no operator credential can mint policy authority for it
+	// (INV-009).
+	creds.AllowActivationKeyRegistrars(os.Getenv("GATEWAY_ACTIVATION_KEY_REGISTRARS"))
+	return creds
+}
+
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("component", component)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	creds := openCredentials(log)
-	if creds != nil {
-		// Which identities may issue authority. Named separately from the credential
-		// itself so the privilege is something an operator granted rather than
-		// something every credential happened to have (P-002).
-		creds.AllowIssuers(os.Getenv("GATEWAY_GRANT_ISSUERS"))
-		// And which may bind a public key to an agent. A separate list, because the two
-		// are different powers: an issuer says what an agent may do, a registrar says
-		// which key is that agent — and whoever can do the second can act as any agent
-		// in the tenant, grants included.
-		creds.AllowKeyRegistrars(os.Getenv("GATEWAY_KEY_REGISTRARS"))
-		// And which may bootstrap the key that authorizes a policy into force. A third
-		// list, because it is the strongest of the three: an activation key decides
-		// which bundle enforces, and so what every agent in the tenant may not do. It
-		// gates the first key only — a tenant that already holds one extends its own
-		// authority with a signed authorization, and no operator credential can mint
-		// policy authority for it (INV-009).
-		creds.AllowActivationKeyRegistrars(os.Getenv("GATEWAY_ACTIVATION_KEY_REGISTRARS"))
-	}
+	creds := credentialsFromEnv(log)
 	pipeline, _ := buildPipeline(ctx, log)
 	verifier := identityVerifier()
 
