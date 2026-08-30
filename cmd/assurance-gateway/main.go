@@ -653,6 +653,36 @@ func main() {
 			"tenants", len(creds.Tenants()),
 			"note", "PENDING records are never pruned; evidence is untouched")
 		go sweeper.Run(ctx)
+
+		// And the outbox's own retention, which nothing had.
+		//
+		// A delivered row is a receipt: the evidence is in evidence_events, which is
+		// partitioned by month and has an archive path, while the outbox kept the whole
+		// event for ever after publishing it. On the reference workstation it had grown
+		// to 4.3 GB of an 8.3 GB database — a second copy of the entire evidence stream,
+		// with nothing in the system that would ever remove a row.
+		//
+		// Unpublished rows are never pruned at any age: those are work still owed.
+		outbox := &evidence.OutboxSweeper{
+			Store:   evidence.NewStore(pool),
+			Every:   time.Duration(envInt("OUTBOX_SWEEP_MINUTES", 60)) * time.Minute,
+			Keep:    time.Duration(envInt("OUTBOX_RETENTION_HOURS", 24)) * time.Hour,
+			Tenants: creds.Tenants,
+			Report: func(deleted int64, err error) {
+				switch {
+				case err != nil:
+					log.Warn("outbox retention", "err", err,
+						"consequence", "delivered rows are accumulating")
+				case deleted > 0:
+					log.Info("outbox retention", "deleted", deleted,
+						"note", "delivered rows only; unpublished rows are never pruned")
+				}
+			},
+		}
+		log.Info("outbox retention",
+			"keep", outbox.Keep.String(), "every", outbox.Every.String(),
+			"note", "published rows are receipts; the evidence itself is untouched")
+		go outbox.Run(ctx)
 	}
 
 	// The event backbone, wired into the running process at last.

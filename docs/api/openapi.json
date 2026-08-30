@@ -729,7 +729,7 @@
         "operationId": "post_agent_keys_revoke",
         "responses": {
           "200": {
-            "description": "Revoked; the row is kept so past signatures stay explainable"
+            "description": "Revoked, or already revoked; the body says which, and the row is kept so past signatures stay explainable"
           },
           "400": {
             "description": "The revocation names no key, or no author"
@@ -739,6 +739,9 @@
           },
           "403": {
             "description": "This credential may not revoke signing keys"
+          },
+          "404": {
+            "description": "No such key. Nothing was revoked and nothing was recorded: check the agent id, because a key you believe you have stopped is still trusted"
           },
           "503": {
             "description": "The revocation could not be recorded, so the key is still trusted"
@@ -1044,7 +1047,7 @@
             "description": "The envelope exceeds the accepted size"
           },
           "422": {
-            "description": "The intent could not be executed"
+            "description": "The intent could not be executed: the envelope id was already submitted (ENVELOPE_REUSED), or the idempotency key belongs to a completed request whose outcome retention has pruned (IDEMPOTENCY_KEY_RETIRED). Neither is retried by sending it again"
           }
         },
         "summary": "Submit an agent execution intent through the enforcement plane",
@@ -1143,10 +1146,10 @@
             "description": "Nothing authenticated the caller"
           },
           "403": {
-            "description": "This credential may not register activation keys, or the authorization was signed by a key this tenant did not grant"
+            "description": "This credential may not register activation keys, or the authorization was signed by a key this tenant did not grant, or that key is revoked, expired or not yet valid"
           },
           "409": {
-            "description": "That key id exists, or the authorization has already been accepted"
+            "description": "That key id exists, the authorization has already been accepted, or this tenant has already bootstrapped its policy authority"
           },
           "503": {
             "description": "The key could not be recorded, so it was not registered"
@@ -1178,7 +1181,7 @@
             "description": "No active key by that id is registered for this tenant"
           },
           "409": {
-            "description": "It is the tenant's last active key; register the replacement first"
+            "description": "It is the tenant's last usable key; register the replacement first"
           },
           "503": {
             "description": "The revocation could not be recorded, so the key is still trusted"

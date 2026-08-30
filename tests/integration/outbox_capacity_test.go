@@ -353,3 +353,69 @@ func TestAnExpiredLeaseReturnsTheWorkToTheQueue(t *testing.T) {
 			found, len(claimed))
 	}
 }
+
+// A-5-02: delivered rows do not accumulate for ever.
+//
+// The outbox had no retention. Every event the platform ever produced stayed in it after
+// delivery, carrying the whole event as its payload — a second copy of the entire evidence
+// stream. On the reference workstation it had reached 4.3 GB of an 8.3 GB database and four
+// million delivered rows, and nothing in the system would ever have removed one.
+func TestDeliveredOutboxRowsArePruned(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_sweep_%d", now.UnixNano())
+
+	store := evidence.NewStore(idemPool(t))
+	drainer := evidence.NewStore(outboxPool(t))
+
+	batch := make([]evidence.Event, 0, 4)
+	for i := range 4 {
+		at := now.Add(time.Duration(i) * time.Millisecond)
+		batch = append(batch, evidence.Event{
+			SchemaVersion: evidence.SchemaVersion,
+			EventID:       fmt.Sprintf("sweep_%d_%d", now.UnixNano(), i),
+			EventName:     evidence.AuthorityEvaluated,
+			TenantID:      tenant,
+			AggregateID:   "env_sweep",
+			CorrelationID: "corr_sweep",
+			OccurredAt:    at,
+			ProducedAt:    at,
+			Producer:      "assurance-gateway",
+			Sequence:      int64(i + 1),
+		})
+	}
+	if err := store.AppendBatch(ctx, batch); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	// Two of them delivered, two still owed.
+	claimed, err := drainer.Claim(ctx, 2, "sweep-test", now, time.Minute)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	ids := make([]int64, 0, len(claimed))
+	for _, e := range claimed {
+		ids = append(ids, e.OutboxID)
+	}
+	if err := drainer.MarkPublishedBatch(ctx, ids, now.Add(-48*time.Hour)); err != nil {
+		t.Fatalf("mark published: %v", err)
+	}
+
+	deleted, err := store.PrunePublished(ctx, tenant, now.Add(-24*time.Hour), 5000)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if deleted != int64(len(ids)) {
+		t.Errorf("pruned %d of %d delivered rows", deleted, len(ids))
+	}
+
+	// What is still owed survives, at any age.
+	remaining, _, err := drainer.Depth(ctx, tenant)
+	if err != nil {
+		t.Fatalf("depth: %v", err)
+	}
+	if remaining != int64(4-len(ids)) {
+		t.Errorf("%d rows are still queued; retention must never remove work the "+
+			"platform still owes the bus", remaining)
+	}
+}

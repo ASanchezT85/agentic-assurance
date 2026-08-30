@@ -66,7 +66,10 @@ var described = map[string]route{
 			"401": "Nothing authenticated the caller, or the claim exceeded the evidence",
 			"403": "Authority, a fleet control or hard policy refused",
 			"413": "The envelope exceeds the accepted size",
-			"422": "The intent could not be executed",
+			"422": "The intent could not be executed: the envelope id was already " +
+				"submitted (ENVELOPE_REUSED), or the idempotency key belongs to a " +
+				"completed request whose outcome retention has pruned " +
+				"(IDEMPOTENCY_KEY_RETIRED). Neither is retried by sending it again",
 		},
 	},
 	"GET /v1/intents": {
@@ -112,7 +115,10 @@ var described = map[string]route{
 		Summary: "Stop trusting an agent signing key",
 		Tag:     "Identity",
 		Statuses: map[string]string{
-			"200": "Revoked; the row is kept so past signatures stay explainable",
+			"200": "Revoked, or already revoked; the body says which, and the row is " +
+				"kept so past signatures stay explainable",
+			"404": "No such key. Nothing was revoked and nothing was recorded: check " +
+				"the agent id, because a key you believe you have stopped is still trusted",
 			"400": "The revocation names no key, or no author",
 			"401": "Nothing authenticated the caller",
 			"403": "This credential may not revoke signing keys",
@@ -128,8 +134,10 @@ var described = map[string]route{
 				"tenant already holds a key and no signed authorization was given",
 			"401": "Nothing authenticated the caller",
 			"403": "This credential may not register activation keys, or the " +
-				"authorization was signed by a key this tenant did not grant",
-			"409": "That key id exists, or the authorization has already been accepted",
+				"authorization was signed by a key this tenant did not grant, or that " +
+				"key is revoked, expired or not yet valid",
+			"409": "That key id exists, the authorization has already been accepted, or " +
+				"this tenant has already bootstrapped its policy authority",
 			"503": "The key could not be recorded, so it was not registered",
 		},
 	},
@@ -142,7 +150,7 @@ var described = map[string]route{
 			"401": "Nothing authenticated the caller",
 			"403": "This credential may not revoke activation keys",
 			"404": "No active key by that id is registered for this tenant",
-			"409": "It is the tenant's last active key; register the replacement first",
+			"409": "It is the tenant's last usable key; register the replacement first",
 			"503": "The revocation could not be recorded, so the key is still trusted",
 		},
 	},

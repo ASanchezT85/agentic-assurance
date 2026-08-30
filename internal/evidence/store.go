@@ -82,6 +82,56 @@ func (s *Store) Append(ctx context.Context, e Event) (recorded bool, err error) 
 			return execErr
 		}
 		recorded = tag.RowsAffected() == 1
+		if !recorded {
+			// Already recorded. Queueing it again would be a second delivery of an event
+			// the bus has already been told about.
+			return nil
+		}
+		// And the bus is owed a message, in the same transaction.
+		//
+		// It was not, and only AppendBatch enqueued, so every event written one at a
+		// time — a grant issued or revoked, a control applied or lifted, a key
+		// registered, an incident opened, a simulation run — reached PostgreSQL and
+		// never reached the analytical plane. The hot path was covered because it
+		// batches; the administrative acts, which are exactly what an incident review
+		// looks for, were invisible in ClickHouse.
+		return enqueue(ctx, tx, []Event{e})
+	})
+	return recorded, err
+}
+
+// AppendConsumed records an event that arrived from the bus.
+//
+// The same write without the outbox row: this event has already been delivered, and
+// queueing it again would publish it back to the stream it came from, for ever.
+func (s *Store) AppendConsumed(ctx context.Context, e Event) (bool, error) {
+	if err := e.Validate(); err != nil {
+		return false, err
+	}
+	payload, err := json.Marshal(e.Payload)
+	if err != nil {
+		return false, fmt.Errorf("payload is not serialisable: %w", err)
+	}
+	if e.Payload == nil {
+		payload = []byte(`{}`)
+	}
+
+	recorded := false
+	err = s.withTenant(ctx, e.TenantID, func(tx pgx.Tx) error {
+		tag, execErr := tx.Exec(ctx, `
+			INSERT INTO evidence_events
+				(event_id, schema_version, event_name, tenant_id, aggregate_id,
+				 correlation_id, causation_id, occurred_at, produced_at, producer,
+				 sequence, corrects_event_id, payload)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			ON CONFLICT (event_id, occurred_at) DO NOTHING`,
+			e.EventID, e.SchemaVersion, string(e.EventName), e.TenantID, e.AggregateID,
+			e.CorrelationID, nullIfEmpty(e.CausationID), e.OccurredAt.UTC(), e.ProducedAt.UTC(),
+			e.Producer, e.Sequence, nullIfEmpty(e.CorrectsEventID), payload)
+		if execErr != nil {
+			return execErr
+		}
+		recorded = tag.RowsAffected() == 1
 		return nil
 	})
 	return recorded, err

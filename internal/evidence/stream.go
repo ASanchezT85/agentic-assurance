@@ -272,11 +272,12 @@ func (c *Consumer) FetchBatch(ctx context.Context, n int, wait time.Duration,
 
 // StoreHandler returns a Handler that records events into the append-only store.
 //
-// It is the reference idempotent consumer: Append deduplicates by event id, so a
-// redelivered event is recorded once and acknowledged again.
+// It is the reference idempotent consumer: the store deduplicates by event id, so a
+// redelivered event is recorded once and acknowledged again. AppendConsumed rather than
+// Append, because an event that arrived from the bus must not be queued back onto it.
 func StoreHandler(store *Store) Handler {
 	return func(ctx context.Context, e Event) error {
-		_, err := store.Append(ctx, e)
+		_, err := store.AppendConsumed(ctx, e)
 		return err
 	}
 }

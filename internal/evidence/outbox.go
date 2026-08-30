@@ -180,6 +180,135 @@ func (s *Store) MarkFailed(ctx context.Context, tenantID string, outboxID int64,
 	})
 }
 
+// PrunePublished deletes delivered rows older than a cutoff, for one tenant, in one batch.
+//
+// The outbox had no retention at all. Every event the platform has ever produced stayed in
+// it after delivery, with the whole event as its payload — a second copy of the entire
+// evidence stream, growing for ever. On the reference workstation it reached 4.3 GB of an
+// 8.3 GB database, over four million delivered rows, and nothing in the system would ever
+// have removed one.
+//
+// What is deleted is the delivery receipt, not the evidence: evidence_events is the record,
+// it is partitioned by month and it has an archive path. A row here that has been published
+// has done its job.
+//
+// Per tenant, because row level security is per tenant and a sweeper that could see every
+// tenant's rows would be the one component allowed to ignore INV-007.
+func (s *Store) PrunePublished(ctx context.Context, tenantID string, before time.Time,
+	batch int) (int64, error) {
+
+	if batch <= 0 {
+		batch = 5000
+	}
+	var deleted int64
+	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM evidence_outbox
+			 WHERE ctid IN (
+			       SELECT ctid FROM evidence_outbox
+			        WHERE tenant_id = $1
+			          AND published_at IS NOT NULL
+			          AND published_at < $2
+			        LIMIT $3)`,
+			tenantID, before.UTC(), batch)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	return deleted, err
+}
+
+// DefaultOutboxRetention is how long a delivered row is kept.
+//
+// A day: long enough that an operator chasing "did this reach the bus, and when" during an
+// incident still finds the receipt, and short enough that the queue does not become the
+// database. An unpublished row is never pruned at any age — it is work the platform still
+// owes the bus.
+const DefaultOutboxRetention = 24 * time.Hour
+
+// OutboxSweeper prunes delivered rows on a schedule.
+//
+// It reports rather than logs, like the publisher: INV-013 keeps a logger out of this
+// package, because a package that can write to a log is one where somebody eventually
+// writes evidence to a log instead of recording it.
+type OutboxSweeper struct {
+	Store   *Store
+	Every   time.Duration
+	Keep    time.Duration
+	Batch   int
+	Now     func() time.Time
+	Tenants func() []string
+	Report  func(deleted int64, err error)
+}
+
+func (s *OutboxSweeper) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
+func (s *OutboxSweeper) report(deleted int64, err error) {
+	if s.Report != nil {
+		s.Report(deleted, err)
+	}
+}
+
+// Sweep prunes every tenant once, repeating per tenant until a pass deletes less than a
+// full batch.
+func (s *OutboxSweeper) Sweep(ctx context.Context) int64 {
+	if s.Store == nil || s.Tenants == nil {
+		return 0
+	}
+	keep := s.Keep
+	if keep <= 0 {
+		keep = DefaultOutboxRetention
+	}
+	batch := s.Batch
+	if batch <= 0 {
+		batch = 5000
+	}
+	before := s.now().UTC().Add(-keep)
+
+	var total int64
+	for _, tenant := range s.Tenants() {
+		for {
+			if ctx.Err() != nil {
+				return total
+			}
+			deleted, err := s.Store.PrunePublished(ctx, tenant, before, batch)
+			if err != nil {
+				s.report(total, err)
+				break
+			}
+			total += deleted
+			if deleted < int64(batch) {
+				break
+			}
+		}
+	}
+	s.report(total, nil)
+	return total
+}
+
+// Run sweeps on a schedule until the context ends.
+func (s *OutboxSweeper) Run(ctx context.Context) {
+	every := s.Every
+	if every <= 0 {
+		every = time.Hour
+	}
+	for {
+		s.Sweep(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
+	}
+}
+
 // enqueue writes outbox rows inside the caller's transaction.
 //
 // The same transaction as the events themselves, which is the whole point: a decision
