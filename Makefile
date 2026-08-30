@@ -52,6 +52,9 @@ test-live: ## Place a real order at Alpaca Paper (spec section 66 step 7). Needs
 test-load: ## 1,000 synthetic agents against a running gateway (spec section 56 item 1)
 	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=load -count=1 -v -timeout 20m ./tests/performance/ -run TestAThousandAgents
 
+test-console: ## What the Console renders, against a controlled platform (needs Node; no database)
+	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=console -count=1 -v -timeout 20m ./tests/console/...
+
 test-process: ## Two real gateway processes and a real crash/restart (needs PostgreSQL; the crash case needs Alpaca Paper)
 	GOTMPDIR=$(CURDIR)/.gotmp go test -tags=process -count=1 -v -timeout 20m ./tests/process/...
 

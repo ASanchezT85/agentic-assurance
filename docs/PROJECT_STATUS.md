@@ -285,6 +285,19 @@ agents share a dependency and never which dependencies relate; no fleet KPIs, be
 fingerprint rather than a result. The mockups in the design package show all three. The
 platform cannot support them, so they are absent and the absence is explained.
 
+What the surfaces do is tested, not only how they are built. `make test-console` starts
+the built Console against a gateway the test controls and asserts on the HTML: that an
+unreadable source never looks like an empty one on any of the six, that an empty one says
+so, that an unrouted endpoint is named rather than numbered, that an evidence chain
+renders the events it was given, that a correction is marked and the event it corrects is
+still on the page, and that a recommendation is never drawn as an applied control.
+
+It exists because four structural guards over the Console's own source could not see the
+defect that shipped — a collection read under the wrong field name, which turned ten
+events into "the source answered; it had nothing to report". Both regressions are verified
+red: restoring that field name fails the suite, and so does swallowing a 503 into an empty
+list.
+
 STALE is in the data language and not on any surface. It means "older than this surface's
 freshness threshold" and no such threshold is defined anywhere in the platform; inventing
 one in a stylesheet would be an operational contract nobody agreed to.
