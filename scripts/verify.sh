@@ -11,8 +11,10 @@ PY=$(sh "$ROOT/scripts/python-bin.sh")
 # This workstation's Smart App Control evaluates every freshly written executable and
 # blocks some of them, and `go test` stages its binaries under the user cache by default —
 # so the gate failed with "An Application Control policy has blocked this file" on a
-# different package each run, while the same command with GOTMPDIR set passed. The process
-# harness and scripts/live-boot.sh already build into the repository for this reason.
+# different package each run. Building here makes it rarer rather than impossible — the
+# check is per file and probabilistic, and a repository-local binary is blocked sometimes
+# too — so a run that fails this way is worth repeating before it is believed. The process
+# harness and scripts/live-boot.sh already build into the repository for the same reason.
 #
 # Set explicitly in the environment to override.
 GOTMPDIR=${GOTMPDIR:-$ROOT/.gotmp}
