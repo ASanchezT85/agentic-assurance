@@ -34,6 +34,19 @@ export GOTMPDIR
 export POSTGRES_APP_DSN POSTGRES_OUTBOX_DSN CLICKHOUSE_HTTP_URL CLICKHOUSE_USER \
        CLICKHOUSE_PASSWORD NATS_URL GATEWAY_ADDR
 
+# listeners prints the pids holding a host:port, on this workstation and on Linux.
+listeners() {
+  if command -v netstat >/dev/null 2>&1 && netstat -ano >/dev/null 2>&1; then
+    netstat -ano | grep "LISTENING" | grep "  *$1  *" | awk '{print $NF}' | sort -u
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -ti "tcp@$1" 2>/dev/null || true
+  fi
+}
+
+kill_pid() {
+  taskkill //F //PID "$1" >/dev/null 2>&1 || kill -9 "$1" 2>/dev/null || true
+}
+
 stop() {
   for name in gateway fleet; do
     if [ -f "$LIVE/$name.pid" ]; then
@@ -42,6 +55,27 @@ stop() {
       rm -f "$LIVE/$name.pid"
       echo "stopped $name ($pid)"
     fi
+  done
+
+  # And whatever else holds the ports, which the pid files cannot know about.
+  #
+  # A gateway from an earlier boot kept 127.0.0.1:8073 through a run of this script: the
+  # new process logged "server failed: bind" and exited its listener while the old one
+  # answered every request — including /healthz, so the readiness check below passed —
+  # with the credentials of the tenant it had been started for. Every call came back 401
+  # and the log said the gateway was live, which it was; it was the wrong one.
+  for addr in "$GATEWAY_ADDR" "$FLEET_ADDR"; do
+    for pid in $(listeners "$addr"); do
+      kill_pid "$pid"
+      echo "freed $addr (pid $pid)"
+    done
+  done
+
+  # A port in TIME_WAIT is still not bindable.
+  waited=0
+  while [ -n "$(listeners "$GATEWAY_ADDR")$(listeners "$FLEET_ADDR")" ] && [ $waited -lt 10 ]; do
+    waited=$((waited + 1))
+    sleep 1
   done
 }
 
@@ -71,6 +105,19 @@ export ASSURANCE_ENV=development
 echo "==> building"
 go build -o "$LIVE/assurance-gateway.exe" ./cmd/assurance-gateway
 go build -o "$LIVE/fleet-engine.exe" ./cmd/fleet-engine
+
+# The ports must be free before anything starts. The health check below cannot tell a
+# gateway apart from another gateway — under Git Bash the pid this shell records is not
+# the pid netstat reports, so comparing them is not available either — and a stale
+# listener answering /healthz is exactly how a run reports "live" while serving from a
+# process nobody meant to be there.
+for addr in "$GATEWAY_ADDR" "$FLEET_ADDR"; do
+  if [ -n "$(listeners "$addr")" ]; then
+    echo "$addr is still held by pid(s) $(listeners "$addr" | tr -d '\r' | paste -sd' ' -)"
+    echo "and could not be freed. Whatever is there would answer for the gateway."
+    exit 1
+  fi
+done
 
 echo "==> starting"
 "$LIVE/assurance-gateway.exe" > "$LIVE/gateway.log" 2>&1 &
