@@ -292,6 +292,14 @@ so, that an unrouted endpoint is named rather than numbered, that an evidence ch
 renders the events it was given, that a correction is marked and the event it corrects is
 still on the page, and that a recommendation is never drawn as an applied control.
 
+The field names are checked too, across all six collections the Console reads. They are
+two independent lists of strings — a SQL column list or a map literal on one side, a
+TypeScript type on the other — and nothing declares them together, so the integration
+suite seeds a row of each kind and asks the running services for it. Renaming a SELECT
+column fails it, which is the drift it is built for; and it seeds rather than waits,
+because a contract test that only runs when a tenant happens to have data is one that
+mostly does not run.
+
 It exists because four structural guards over the Console's own source could not see the
 defect that shipped — a collection read under the wrong field name, which turned ten
 events into "the source answered; it had nothing to report". Both regressions are verified

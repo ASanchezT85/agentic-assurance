@@ -15,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"agentic-assurance/internal/control"
+	"agentic-assurance/internal/fleet"
 )
 
 // The console's field names and the gateway's field names are one contract.
@@ -40,6 +43,12 @@ func TestTheConsoleFieldsExistInLiveResponses(t *testing.T) {
 		t.Skip("set GATEWAY_URL and CONSOLE_API_TOKEN against a gateway with a seeded " +
 			"tenant; an empty tenant has no row to check a field name against")
 	}
+
+	// A control, seeded so this test checks something rather than skipping. Fleet
+	// intelligence recommends and a customer authorizes, so a tenant with no control is
+	// the ordinary state — and a contract test that only runs on tenants that happen to
+	// have one is a contract test that mostly does not run.
+	seedControl(t, os.Getenv("CONSOLE_TENANT_ID"))
 
 	types := consoleRowTypes(t)
 
@@ -197,3 +206,29 @@ func repoRootFromTest(t *testing.T) string {
 }
 
 var _ = fmt.Sprintf
+
+// seedControl writes one authorized control through the store the gateway reads.
+func seedControl(t *testing.T, tenant string) {
+	t.Helper()
+	if tenant == "" {
+		return
+	}
+	now := time.Now().UTC()
+	err := control.NewStore(idemPool(t)).Save(context.Background(), control.Control{
+		ControlID:      fmt.Sprintf("ctl_fields_%d", now.UnixNano()),
+		TenantID:       tenant,
+		IncidentID:     fmt.Sprintf("inc_fields_%d", now.UnixNano()),
+		Action:         fleet.ControlThrottle,
+		AgentID:        "agent_fields",
+		MaxOrders:      10,
+		Window:         time.Minute,
+		AuthorizedBy:   "ops@example.test",
+		PolicyBundleID: "bundle_fields",
+		Reason:         "seeded by the console field contract test",
+		AppliedAt:      now,
+		ExpiresAt:      now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("seed a control: %v", err)
+	}
+}
