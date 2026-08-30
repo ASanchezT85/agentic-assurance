@@ -53,7 +53,7 @@ type evidenceReader interface {
 }
 
 func newMux(reader evidenceReader, submit, status, list, revoke, issue, applyControl,
-	revokeControl, listControls http.HandlerFunc,
+	revokeControl, listControls, registerKey, revokeKey http.HandlerFunc,
 	creds *identity.Credentials, verifier *identity.Verifier) *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -93,6 +93,14 @@ func newMux(reader evidenceReader, submit, status, list, revoke, issue, applyCon
 	}
 	if applyControl != nil {
 		mux.HandleFunc("POST /v1/controls", applyControl)
+	}
+	// Revoke is registered before register, so the more specific pattern is the one a
+	// path with a suffix matches.
+	if revokeKey != nil {
+		mux.HandleFunc("POST /v1/agent-keys/revoke", revokeKey)
+	}
+	if registerKey != nil {
+		mux.HandleFunc("POST /v1/agent-keys", registerKey)
 	}
 	if revokeControl != nil {
 		mux.HandleFunc("POST /v1/controls/{id}/revoke", revokeControl)
@@ -533,6 +541,11 @@ func main() {
 		// itself so the privilege is something an operator granted rather than
 		// something every credential happened to have (P-002).
 		creds.AllowIssuers(os.Getenv("GATEWAY_GRANT_ISSUERS"))
+		// And which may bind a public key to an agent. A separate list, because the two
+		// are different powers: an issuer says what an agent may do, a registrar says
+		// which key is that agent — and whoever can do the second can act as any agent
+		// in the tenant, grants included.
+		creds.AllowKeyRegistrars(os.Getenv("GATEWAY_KEY_REGISTRARS"))
 	}
 	pipeline, _ := buildPipeline(ctx, log)
 	verifier := identityVerifier()
@@ -542,6 +555,7 @@ func main() {
 	// particular must not depend on the submission path being healthy: it is the lever
 	// an operator reaches for when it is not.
 	var status, list, revoke, issue, applyControl, revokeControl, listControls http.HandlerFunc
+	var registerKey, revokeKey http.HandlerFunc
 	if pool := openPool(ctx, log); pool != nil {
 		status = gateway.IntentStatusHandler(execution.NewPostgresStore(pool),
 			evidence.NewStore(pool), creds, verifier)
@@ -555,10 +569,15 @@ func main() {
 		revokeControl = gateway.RevokeControlHandler(control.NewStore(pool), evidence.NewStore(pool),
 			creds, verifier, nil)
 		listControls = gateway.ListControlsHandler(control.NewStore(pool), creds, verifier, nil)
+		registerKey = gateway.RegisterAgentKeyHandler(identity.NewKeyStore(pool),
+			evidence.NewStore(pool), creds, verifier, nil)
+		revokeKey = gateway.RevokeAgentKeyHandler(identity.NewKeyStore(pool),
+			evidence.NewStore(pool), creds, verifier, nil)
 		log.Info("intent status and grant lifecycle served",
 			"routes", "GET /v1/intents, GET /v1/intents/{id}, POST /v1/authority-grants, "+
 				"POST /v1/authority-grants/{id}/revoke, GET|POST /v1/controls, "+
-				"POST /v1/controls/{id}/revoke")
+				"POST /v1/controls/{id}/revoke, POST /v1/agent-keys, "+
+				"POST /v1/agent-keys/revoke")
 	}
 	// Bounded retention for idempotency records (spec section 19), which the section
 	// asks for beside a unique envelope id and deterministic duplicate handling and
@@ -655,7 +674,7 @@ func main() {
 	srv := &http.Server{
 		Addr: addr(),
 		Handler: newMux(openEvidence(ctx, log), submit, status, list, revoke, issue, applyControl,
-			revokeControl, listControls, creds, verifier),
+			revokeControl, listControls, registerKey, revokeKey, creds, verifier),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

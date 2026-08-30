@@ -367,6 +367,8 @@
               "agent.intent.received.v1",
               "agent.identity.verified.v1",
               "agent.identity.failed.v1",
+              "agent.signing_key.registered.v1",
+              "agent.signing_key.revoked.v1",
               "authority.evaluated.v1",
               "authority.reserved.v1",
               "authority.reservation.committed.v1",
@@ -683,6 +685,61 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/agent-keys": {
+      "post": {
+        "operationId": "post_agent_keys",
+        "responses": {
+          "201": {
+            "description": "Registered"
+          },
+          "400": {
+            "description": "The key would not be usable, or a private key was sent"
+          },
+          "401": {
+            "description": "Nothing authenticated the caller"
+          },
+          "403": {
+            "description": "This credential may not register signing keys"
+          },
+          "409": {
+            "description": "The agent already has a key under that id and it was not replaced"
+          },
+          "503": {
+            "description": "The key store could not record it, so nothing was registered"
+          }
+        },
+        "summary": "Register an agent signing key",
+        "tags": [
+          "Identity"
+        ]
+      }
+    },
+    "/v1/agent-keys/revoke": {
+      "post": {
+        "operationId": "post_agent_keys_revoke",
+        "responses": {
+          "200": {
+            "description": "Revoked; the row is kept so past signatures stay explainable"
+          },
+          "400": {
+            "description": "The revocation names no key, or no author"
+          },
+          "401": {
+            "description": "Nothing authenticated the caller"
+          },
+          "403": {
+            "description": "This credential may not revoke signing keys"
+          },
+          "503": {
+            "description": "The revocation could not be recorded, so the key is still trusted"
+          }
+        },
+        "summary": "Stop trusting an agent signing key",
+        "tags": [
+          "Identity"
+        ]
+      }
+    },
     "/v1/authority-grants": {
       "post": {
         "operationId": "post_authority_grants",

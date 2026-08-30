@@ -10,6 +10,8 @@ GET  /v1/intents/{id}                   DONE (internal/gateway)
 GET  /v1/intents/{id}/evidence          Phase 6   DONE (ADR-023)
 GET  /v1/evidence?correlation_id={id}   Phase 6   DONE (ADR-023)
 
+POST /v1/agent-keys                     DONE (internal/gateway)
+POST /v1/agent-keys/revoke              DONE (internal/gateway)
 POST /v1/authority-grants               DONE (internal/gateway)
 POST /v1/authority-grants/{id}/revoke   DONE (internal/gateway)
 

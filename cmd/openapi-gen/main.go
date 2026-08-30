@@ -96,6 +96,29 @@ var described = map[string]route{
 		Collection: "events",
 		Statuses:   map[string]string{"200": "The chain, exactly as stored"},
 	},
+	"POST /v1/agent-keys": {
+		Summary: "Register an agent signing key",
+		Tag:     "Identity",
+		Statuses: map[string]string{
+			"201": "Registered",
+			"400": "The key would not be usable, or a private key was sent",
+			"401": "Nothing authenticated the caller",
+			"403": "This credential may not register signing keys",
+			"409": "The agent already has a key under that id and it was not replaced",
+			"503": "The key store could not record it, so nothing was registered",
+		},
+	},
+	"POST /v1/agent-keys/revoke": {
+		Summary: "Stop trusting an agent signing key",
+		Tag:     "Identity",
+		Statuses: map[string]string{
+			"200": "Revoked; the row is kept so past signatures stay explainable",
+			"400": "The revocation names no key, or no author",
+			"401": "Nothing authenticated the caller",
+			"403": "This credential may not revoke signing keys",
+			"503": "The revocation could not be recorded, so the key is still trusted",
+		},
+	},
 	"POST /v1/authority-grants": {
 		Summary: "Issue an authority grant",
 		Tag:     "Authority",

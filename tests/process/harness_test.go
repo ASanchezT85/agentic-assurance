@@ -123,7 +123,7 @@ func newDeployment(t *testing.T, limits authority.Limits) *deployment {
 		t.Fatalf("agent keygen: %v", err)
 	}
 	d.signingKey = agentPriv
-	if err := identity.NewKeyStore(pool).Register(ctx, identity.AgentKey{
+	if _, err := identity.NewKeyStore(pool).Register(ctx, identity.AgentKey{
 		TenantID: d.tenant, AgentID: d.agentID, KeyID: d.keyID,
 		Algorithm: identity.AlgorithmEd25519, PublicKey: agentPub,
 		Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),

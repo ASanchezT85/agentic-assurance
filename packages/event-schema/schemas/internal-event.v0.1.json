@@ -31,6 +31,8 @@
         "agent.intent.received.v1",
         "agent.identity.verified.v1",
         "agent.identity.failed.v1",
+        "agent.signing_key.registered.v1",
+        "agent.signing_key.revoked.v1",
         "authority.evaluated.v1",
         "authority.reserved.v1",
         "authority.reservation.committed.v1",

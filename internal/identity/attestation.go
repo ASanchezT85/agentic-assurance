@@ -27,6 +27,10 @@ type Presented struct {
 
 	// MayIssueAuthority carries the issuer privilege from the credential registry.
 	MayIssueAuthority bool
+
+	// MayRegisterKeys carries the key-registrar privilege. Separate from the issuer
+	// privilege: one says what an agent may do, the other says which key is that agent.
+	MayRegisterKeys bool
 }
 
 // Attested is the level the platform established, together with why it is not
@@ -47,6 +51,12 @@ type Attested struct {
 	// and the ceiling INV-002 enforces would be one the party under it can move
 	// (P-002, customer-owned authority).
 	MayIssueAuthority bool
+
+	// MayRegisterKeys is whether this caller may bind a public key to an agent. Off for
+	// everything not named a registrar, and never the same credential that submits
+	// intents: whoever can register a key can act as any agent in the tenant, including
+	// one whose grant they never issued.
+	MayRegisterKeys bool
 
 	Method     string
 	VerifiedAt time.Time
@@ -105,9 +115,13 @@ func (v *Verifier) Resolve(p Presented) Attested {
 				APIIdentity:       p.APIIdentity,
 				TenantID:          tenant,
 				MayIssueAuthority: false,
-				Method:            verified.Method,
-				VerifiedAt:        verified.VerifiedAt,
-				SerialHex:         verified.SerialHex,
+				// A workload-attested caller carries no operator privilege. Registering
+				// a key is a person's act, and an SVID says which workload is running,
+				// not which person authorized it.
+				MayRegisterKeys: false,
+				Method:          verified.Method,
+				VerifiedAt:      verified.VerifiedAt,
+				SerialHex:       verified.SerialHex,
 			}
 		}
 
@@ -128,6 +142,7 @@ func degraded(p Presented, now time.Time, failure *VerificationFailure) Attested
 			APIIdentity:       p.APIIdentity,
 			TenantID:          p.TenantID,
 			MayIssueAuthority: p.MayIssueAuthority,
+			MayRegisterKeys:   p.MayRegisterKeys,
 			Method:            "AUTHENTICATED_API_IDENTITY",
 			VerifiedAt:        now,
 			Downgrade:         failure,

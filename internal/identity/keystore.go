@@ -81,8 +81,15 @@ func (s *KeyStore) AgentKey(ctx Context, tenantID, agentID, keyID string) (*Agen
 }
 
 // Register adds a verification key.
-func (s *KeyStore) Register(ctx context.Context, k AgentKey) error {
-	return s.withTenant(ctx, k.TenantID, func(tx pgx.Tx) error {
+// Register records a public key for an agent, and says whether it did.
+//
+// The returned bool is the point. The insert does nothing when the key id already
+// exists — which is the security property, because replacing a key would let whoever
+// can register one take over an agent that already has a grant — and a caller told
+// only "no error" would believe their key is live when the one in force is somebody
+// else's. Rotation is a new key id and a revocation of the old, never an overwrite.
+func (s *KeyStore) Register(ctx context.Context, k AgentKey) (registered bool, err error) {
+	err = s.withTenant(ctx, k.TenantID, func(tx pgx.Tx) error {
 		validUntil := any(nil)
 		if !k.ValidUntil.IsZero() {
 			validUntil = k.ValidUntil.UTC()
@@ -91,15 +98,20 @@ func (s *KeyStore) Register(ctx context.Context, k AgentKey) error {
 		if status == "" {
 			status = "ACTIVE"
 		}
-		_, err := tx.Exec(ctx, `
+		tag, execErr := tx.Exec(ctx, `
 			INSERT INTO agent_signing_keys
 				(tenant_id, agent_id, key_id, algorithm, public_key, status, valid_from, valid_until)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 			ON CONFLICT (tenant_id, agent_id, key_id) DO NOTHING`,
 			k.TenantID, k.AgentID, k.KeyID, k.Algorithm, k.PublicKey, status,
 			k.ValidFrom.UTC(), validUntil)
-		return err
+		if execErr != nil {
+			return execErr
+		}
+		registered = tag.RowsAffected() == 1
+		return nil
 	})
+	return registered, err
 }
 
 // Revoke stops a key verifying, from a moment on.

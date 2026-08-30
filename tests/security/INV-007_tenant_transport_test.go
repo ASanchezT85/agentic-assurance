@@ -231,6 +231,8 @@ func TestEveryRouteThatCarriesTenantDataAuthenticates(t *testing.T) {
 				"applyControl":  "../../internal/gateway/controls.go:IssueControlHandler",
 				"revokeControl": "../../internal/gateway/controls_lifecycle.go:RevokeControlHandler",
 				"listControls":  "../../internal/gateway/controls_lifecycle.go:ListControlsHandler",
+				"registerKey":   "../../internal/gateway/agentkeys.go:RegisterAgentKeyHandler",
+				"revokeKey":     "../../internal/gateway/agentkeys.go:RevokeAgentKeyHandler",
 			}
 
 			target, fn := path, name

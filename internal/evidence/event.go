@@ -33,6 +33,16 @@ const (
 	AuthorityReservationCommitted EventName = "authority.reservation.committed.v1"
 	AuthorityReservationReleased  EventName = "authority.reservation.released.v1"
 
+	// A signing key is registered or revoked.
+	//
+	// Not in the section 32 catalog, and it belongs in the record for the same reason
+	// authority issuance does: this is the moment a public key becomes able to act as an
+	// agent. An envelope verified last Tuesday was verified against a key somebody
+	// registered, and an evidence chain that cannot say who registered it, or when, ends
+	// its account one step short of the question an investigation asks.
+	AgentKeyRegistered EventName = "agent.signing_key.registered.v1"
+	AgentKeyRevoked    EventName = "agent.signing_key.revoked.v1"
+
 	// AuthorityRevoked is not in the section 32 catalog. It is added because cutting
 	// an agent's authority is the emergency action of spec section 14, and one that
 	// left no record would be the hardest thing to explain afterwards.
@@ -122,6 +132,7 @@ const (
 var catalog = map[EventName]bool{
 	IntentReceived: true, IdentityVerified: true, IdentityFailed: true,
 	AuthorityEvaluated: true, AuthorityRevoked: true, AuthorityIssued: true,
+	AgentKeyRegistered: true, AgentKeyRevoked: true,
 	AuthorityReserved: true, AuthorityReservationCommitted: true,
 	AuthorityReservationReleased: true,
 	DecisionCommitted:            true, SubmissionAttempted: true,

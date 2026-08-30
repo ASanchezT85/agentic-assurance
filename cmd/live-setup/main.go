@@ -150,15 +150,16 @@ func run(dir string, fleet, tenantCount int) error {
 		// The signing keys. Envelopes are verified rather than trusted, so a load run
 		// exercises signature verification the way a customer's agent does.
 		//
-		// The synthetic fleet is registered here because there is no endpoint that
-		// registers an agent signing key. That is a real gap — onboarding an agent
-		// today needs database access — and it is named rather than worked around.
+		// Registered through the store rather than through POST /v1/agent-keys, because
+		// this runs before the gateway is up: it is what prepares the tenant the gateway
+		// will serve. A customer onboarding an agent uses the endpoint, and the
+		// integration suite proves that path end to end.
 		agentIDs := []string{agentID}
 		for a := range fleet {
 			agentIDs = append(agentIDs, fmt.Sprintf("agent_load_%d", a))
 		}
 		for _, id := range agentIDs {
-			if err := keys.Register(ctx, identity.AgentKey{
+			if _, err := keys.Register(ctx, identity.AgentKey{
 				TenantID: name, AgentID: id, KeyID: keyID,
 				Algorithm: identity.AlgorithmEd25519, PublicKey: agentPub,
 				Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),
@@ -230,7 +231,9 @@ func run(dir string, fleet, tenantCount int) error {
 	agentToken := tokens[0]
 	issuerToken := randomToken()
 
-	credentials := fmt.Sprintf("svc_issuer@%s=%s", tenant, issuerToken)
+	registrarToken := randomToken()
+	credentials := fmt.Sprintf("svc_issuer@%s=%s,svc_registrar@%s=%s",
+		tenant, issuerToken, tenant, registrarToken)
 	loadTenants := ""
 	for i, name := range names {
 		credentials += fmt.Sprintf(",svc_live_%d@%s=%s", i, name, tokens[i])
@@ -272,6 +275,10 @@ func run(dir string, fleet, tenantCount int) error {
 		}
 	}
 	fmt.Printf("export GATEWAY_GRANT_ISSUERS=%s\n", issuers)
+	// The registrar, separate from the issuer. Onboarding an agent over the API needs it,
+	// and nothing else should have it.
+	fmt.Printf("export GATEWAY_KEY_REGISTRARS=svc_registrar\n")
+	fmt.Printf("export GATEWAY_REGISTRAR_TOKEN=%s\n", registrarToken)
 	return nil
 }
 

@@ -44,6 +44,19 @@ type Caller struct {
 	// privilege is something an operator granted rather than something every
 	// credential happened to have.
 	MayIssueAuthority bool
+
+	// MayRegisterKeys separates saying what an agent may do from saying which key is
+	// that agent.
+	//
+	// Deliberately not the same privilege as issuing authority. A grant says "this agent
+	// may trade up to X"; a signing key registration says "this public key IS that
+	// agent", and whoever holds that can mint a key for any agent in the tenant —
+	// including one whose grant they did not issue and could not have widened. An issuer
+	// who could also register keys would be able to reach every ceiling in the tenant
+	// through the back door, which is the shape P-002 forbids.
+	//
+	// Off by default, named in GATEWAY_KEY_REGISTRARS.
+	MayRegisterKeys bool
 }
 
 // AllowIssuers marks the named identities as able to issue authority grants.
@@ -64,6 +77,29 @@ func (c *Credentials) AllowIssuers(raw string) {
 	for token, caller := range c.byToken {
 		if allowed[caller.Identity] {
 			caller.MayIssueAuthority = true
+			c.byToken[token] = caller
+		}
+	}
+}
+
+// AllowKeyRegistrars marks the named identities as able to register and revoke agent
+// signing keys.
+//
+// A separate list from the issuers, for the reason on MayRegisterKeys: these are
+// different powers and an operator granting one should not silently grant the other.
+func (c *Credentials) AllowKeyRegistrars(raw string) {
+	if c == nil {
+		return
+	}
+	allowed := map[string]bool{}
+	for _, name := range strings.Split(raw, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			allowed[name] = true
+		}
+	}
+	for token, caller := range c.byToken {
+		if allowed[caller.Identity] {
+			caller.MayRegisterKeys = true
 			c.byToken[token] = caller
 		}
 	}
@@ -182,6 +218,7 @@ func FromTransport(authorization string, peerCertificates []*x509.Certificate, c
 			p.APIIdentity = caller.Identity
 			p.TenantID = caller.TenantID
 			p.MayIssueAuthority = caller.MayIssueAuthority
+			p.MayRegisterKeys = caller.MayRegisterKeys
 		}
 	}
 	return p

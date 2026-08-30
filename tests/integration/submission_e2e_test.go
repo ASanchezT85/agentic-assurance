@@ -45,6 +45,10 @@ import (
 
 const e2eToken = "e2e-token-of-at-least-thirty-two-chars"
 
+// A second credential, because registering a signing key is a privilege the submission
+// credential must not have.
+const e2eRegistrarToken = "e2e-registrar-token-of-at-least-thirty-two-chars"
+
 // Each rig gets its own tenant. A name built from a truncated clock is not unique:
 // Truncate zeroes the nanoseconds, so every test in the same second shared a tenant
 // and read the others' rows. That surfaced as a double charge against the grant, which
@@ -68,11 +72,14 @@ type e2eRig struct {
 	// process, with its own connection pool, sharing one database. That is where the
 	// authority ceiling has to hold, because the only thing the two share is
 	// PostgreSQL.
-	bundleDir    string
-	symbolPath   string
-	publicKeyHex string
-	credential   string
-	now          func() time.Time
+	bundleDir      string
+	symbolPath     string
+	publicKeyHex   string
+	registrarToken string
+	grants         *authority.Store
+	keys           *identity.KeyStore
+	credential     string
+	now            func() time.Time
 }
 
 // replica starts a second gateway over the same database, as a separate process would.
@@ -195,7 +202,7 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		t.Fatalf("keygen: %v", err)
 	}
 	keys := identity.NewKeyStore(pool)
-	if err := keys.Register(ctx, identity.AgentKey{
+	if _, err := keys.Register(ctx, identity.AgentKey{
 		TenantID: tenant, AgentID: "agent_e2e", KeyID: "key_e2e",
 		Algorithm: identity.AlgorithmEd25519, PublicKey: pubKey,
 		Status: "ACTIVE", ValidFrom: now.Add(-time.Hour),
@@ -226,19 +233,41 @@ func newE2ERig(t *testing.T, now time.Time) *e2eRig {
 		Now:      func() time.Time { return now },
 	}
 
-	creds, err := identity.ParseCredentials("svc_e2e@" + tenant + "=" + e2eToken)
+	// Two credentials: one that submits and one that may register signing keys. They are
+	// separate because the platform separates them — a credential that could both submit
+	// and decide which key is an agent could act as any agent in the tenant.
+	credential := "svc_e2e@" + tenant + "=" + e2eToken +
+		",svc_registrar@" + tenant + "=" + e2eRegistrarToken
+	creds, err := identity.ParseCredentials(credential)
 	if err != nil {
 		t.Fatalf("credentials: %v", err)
 	}
+	creds.AllowKeyRegistrars("svc_registrar")
 
-	srv := httptest.NewServer(gateway.SubmitHandler(pipeline, creds))
+	mux := http.NewServeMux()
+	mux.Handle("POST /v1/intents", gateway.SubmitHandler(pipeline, creds))
+	// The rig's clock, not the wall clock. A key registered "now" by a handler reading
+	// real time would not yet be valid at the frozen instant the pipeline evaluates
+	// signatures against, and the failure would look like a rejected key rather than two
+	// clocks. In production both are the same clock and a key is valid from the moment
+	// it is registered.
+	clock := func() time.Time { return now }
+	mux.HandleFunc("POST /v1/agent-keys/revoke",
+		gateway.RevokeAgentKeyHandler(keys, evStore, creds, nil, clock))
+	mux.HandleFunc("POST /v1/agent-keys",
+		gateway.RegisterAgentKeyHandler(keys, evStore, creds, nil, clock))
+
+	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
 	return &e2eRig{pool: pool, server: srv, broker: venue, tenant: tenant,
 		grantID: grantID, evidence: evStore, signingKey: privKey,
 		bundleDir: dir, symbolPath: symbolPath, publicKeyHex: hex.EncodeToString(pub),
-		credential: "svc_e2e@" + tenant + "=" + e2eToken,
-		now:        func() time.Time { return now }}
+		credential:     credential,
+		registrarToken: e2eRegistrarToken,
+		grants:         grants,
+		keys:           keys,
+		now:            func() time.Time { return now }}
 }
 
 func writeSignedBundle(t *testing.T, dir, tenant string, now time.Time,
@@ -302,7 +331,10 @@ rules:
 
 func (r *e2eRig) post(t *testing.T, body string, withCredential bool) (int, map[string]any) {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, r.server.URL, strings.NewReader(body))
+	// The rig used to serve the submit handler at the root, so a bare URL reached it. It
+	// serves a mux now — the key endpoints live beside submission — and a request to the
+	// root would be a 404 that reads like a refusal.
+	req, _ := http.NewRequest(http.MethodPost, r.server.URL+"/v1/intents", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if withCredential {
 		req.Header.Set("Authorization", "Bearer "+e2eToken)
@@ -360,6 +392,85 @@ func (r *e2eRig) envelope(now time.Time, key string, mutate func(map[string]any)
 	}
 	m["signature"] = map[string]any{
 		"algorithm": identity.AlgorithmEd25519, "key_id": "key_e2e", "value": value,
+	}
+	signed, _ := json.Marshal(m)
+	return string(signed)
+}
+
+// grantForAgent issues authority for an agent other than the rig's own.
+//
+// Onboarding needs one: a freshly registered key can sign, and a signature without a grant
+// is refused at the next stage, so a test that stopped at the signature would prove half
+// the path.
+func (r *e2eRig) grantForAgent(t *testing.T, agentID string, now time.Time) string {
+	t.Helper()
+	grantID := "grant_" + agentID
+	err := r.grants.Save(context.Background(), &authority.Grant{
+		GrantID:             grantID,
+		TenantID:            r.tenant,
+		PrincipalID:         "prin_e2e",
+		AccountID:           "acct_e2e",
+		AgentID:             agentID,
+		IssuedAt:            now.Add(-time.Hour),
+		ValidFrom:           now.Add(-time.Hour),
+		ValidUntil:          now.Add(time.Hour),
+		AllowedOperations:   []intent.Side{intent.SideBuy, intent.SideSell},
+		AllowedAssetClasses: []intent.AssetClass{intent.AssetEquity},
+		AllowedInstruments:  []string{"instr_us_equity_00206R102"},
+		Limits: authority.Limits{
+			PerOrderNotional:  money.MustParse("50000"),
+			Rolling1hNotional: money.MustParse("100000"),
+			MaxOpenOrders:     50,
+		},
+		Status: authority.StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("grant for %s: %v", agentID, err)
+	}
+	return grantID
+}
+
+// envelopeSignedBy builds an envelope for a named agent, signed with a named key.
+//
+// The rig's own envelope() always signs as agent_e2e with the key the rig registered
+// directly. Onboarding is about a key that arrived over the API, so this one takes both.
+func (r *e2eRig) envelopeSignedBy(t *testing.T, now time.Time, key, agentID, keyID,
+	grantID string, private ed25519.PrivateKey) string {
+
+	t.Helper()
+	m := map[string]any{
+		"schema_version":  "0.1",
+		"envelope_id":     "env_" + key,
+		"idempotency_key": key,
+		"correlation_id":  "corr_" + key,
+		"received_at":     now.Format(time.RFC3339),
+		"tenant_id":       r.tenant,
+		"principal": map[string]any{
+			"principal_id": "prin_e2e", "account_id": "acct_e2e", "principal_type": "INDIVIDUAL",
+		},
+		"agent": map[string]any{
+			"agent_id": agentID, "agent_type": "EXECUTION", "operator_id": "op_e2e",
+			"attestation": map[string]any{"level": "A1", "method": "api_key"},
+		},
+		"authority_grant_id": grantID,
+		"intent": map[string]any{
+			"instrument_id": "instr_us_equity_00206R102",
+			"asset_class":   "EQUITY",
+			"side":          "BUY",
+			"order_type":    "LIMIT",
+			"quantity":      1,
+			"limit_price":   100,
+			"time_in_force": "DAY",
+		},
+	}
+	raw, _ := json.Marshal(m)
+
+	value, err := identity.SignEnvelope(raw, private)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	m["signature"] = map[string]any{
+		"algorithm": identity.AlgorithmEd25519, "key_id": keyID, "value": value,
 	}
 	signed, _ := json.Marshal(m)
 	return string(signed)
