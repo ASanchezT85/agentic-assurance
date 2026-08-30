@@ -1,0 +1,86 @@
+[
+ {
+  "id": "INV-002 authority ceiling",
+  "file": "internal/authority/evaluate.go",
+  "old": "\tif code, reason := checkLimits(limits, consumed, notional); code != \"\" {",
+  "new": "\tif code, reason := \"\", \"\"; code != \"\" {\n\t\t_, _ = checkLimits, consumed",
+  "claim": "no order exceeds the authority the customer granted"
+ },
+ {
+  "id": "INV-004 duplicate submission",
+  "file": "internal/execution/service.go",
+  "old": "\tif !claimed {",
+  "new": "\tif false && !claimed {",
+  "claim": "an ambiguous outcome never produces a second submission"
+ },
+ {
+  "id": "INV-007 tenant from the credential",
+  "file": "internal/identity/credentials.go",
+  "old": "func RequireTenant(a Attested, claimed string) error {",
+  "new": "func RequireTenant(a Attested, claimed string) error {\n\tif true {\n\t\treturn nil\n\t}",
+  "claim": "the tenant comes from the credential and never from the request"
+ },
+ {
+  "id": "INV-009 activation signature",
+  "file": "internal/gateway/http.go",
+  "old": "\tif err := authorization.Verify(key.PublicKey); err != nil {",
+  "new": "\tif err := error(nil); err != nil {\n\t\t_ = key",
+  "claim": "a bundle enforces only when the customer authorized the activation"
+ },
+ {
+  "id": "envelope signature verification",
+  "file": "internal/gateway/pipeline.go",
+  "old": "\tif err := identity.VerifyEnvelopeSignature(ctx, p.Keys, raw, env, at); err != nil {",
+  "new": "\tif err := error(nil); err != nil {\n\t\t_ = identity.VerifyEnvelopeSignature",
+  "claim": "an envelope is verified against the agent's registered key"
+ },
+ {
+  "id": "F4-B002 policy predecessor",
+  "file": "internal/policy/activation_store.go",
+  "old": "\t\tif err := checkPredecessor(a, hasCurrent, currentID, currentHash); err != nil {",
+  "new": "\t\tif err := error(nil); err != nil {\n\t\t\t_ = checkPredecessor",
+  "claim": "a transition names the policy it replaces, by id and by content"
+ },
+ {
+  "id": "F4-B001 idempotency tombstone",
+  "file": "internal/execution/pgstore.go",
+  "old": "\t\t\t WHERE NOT EXISTS (\n\t\t\t       SELECT 1 FROM idempotency_tombstones\n\t\t\t        WHERE tenant_id = $1\n\t\t\t          AND (idempotency_key = $2 OR envelope_id = $3))",
+  "new": "\t\t\t WHERE NOT EXISTS (SELECT 1 WHERE false)",
+  "claim": "a pruned request cannot reach a venue again"
+ },
+ {
+  "id": "exact money on the wire",
+  "file": "internal/money/quantity.go",
+  "old": "\t\tif strings.Trim(fraction[scale:], \"0\") != \"\" {\n\t\t\treturn 0, fmt.Errorf(\"%w: %q\", precisionErr, s)\n\t\t}",
+  "new": "\t\tif false {\n\t\t\treturn 0, fmt.Errorf(\"%w: %q\", precisionErr, s)\n\t\t}",
+  "claim": "excess precision is refused rather than rounded"
+ },
+ {
+  "id": "agent key registrar privilege",
+  "file": "internal/gateway/agentkeys.go",
+  "old": "\tif !attested.MayRegisterKeys {",
+  "new": "\tif false && !attested.MayRegisterKeys {",
+  "claim": "only a named registrar may bind a public key to an agent"
+ },
+ {
+  "id": "activation key registrar privilege",
+  "file": "internal/gateway/activationkeys.go",
+  "old": "\tif !attested.MayRegisterActivationKeys {",
+  "new": "\tif false && !attested.MayRegisterActivationKeys {",
+  "claim": "only a named holder may bootstrap policy authority"
+ },
+ {
+  "id": "A-5-01 evidence is queued for the bus",
+  "file": "internal/evidence/store.go",
+  "old": "\t\treturn enqueue(ctx, tx, []Event{e})",
+  "new": "\t\treturn nil",
+  "claim": "every recorded event is owed to the bus"
+ },
+ {
+  "id": "grant issuer privilege",
+  "file": "internal/gateway/grants.go",
+  "old": "\t\tif !verifier.Resolve(presentedFrom(r, creds)).MayIssueAuthority {",
+  "new": "\t\tif false {",
+  "claim": "issuing authority is not submitting intents"
+ }
+]
