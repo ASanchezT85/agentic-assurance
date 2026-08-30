@@ -288,6 +288,11 @@ func (o *OutboxPublisher) Drain(ctx context.Context) int {
 
 	published := make([]int64, 0, len(entries))
 	failed := 0
+
+	// Decode first, so an unpublishable row is separated from a publishing failure.
+	events := make([]Event, 0, len(entries))
+	ids := make([]int64, 0, len(entries))
+	tenants := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		var event Event
 		if err := json.Unmarshal(entry.Payload, &event); err != nil {
@@ -298,12 +303,29 @@ func (o *OutboxPublisher) Drain(ctx context.Context) int {
 			failed++
 			continue
 		}
-		if err := o.Publisher.Publish(ctx, event); err != nil {
-			_ = o.Store.MarkFailed(ctx, entry.TenantID, entry.OutboxID, err.Error())
-			failed++
-			continue
+		events = append(events, event)
+		ids = append(ids, entry.OutboxID)
+		tenants = append(tenants, entry.TenantID)
+	}
+
+	if len(events) > 0 {
+		// One batch in flight rather than one message at a time. The publisher waits for
+		// every acknowledgement before anything is marked published; what changed is
+		// that it no longer waits for each one before sending the next, which was the
+		// outbox's throughput ceiling.
+		results, err := o.Publisher.PublishBatch(ctx, events)
+		if err != nil {
+			o.report(0, len(events)+failed, err)
+			return 0
 		}
-		published = append(published, entry.OutboxID)
+		for i := range events {
+			if results[i] != nil {
+				_ = o.Store.MarkFailed(ctx, tenants[i], ids[i], results[i].Error())
+				failed++
+				continue
+			}
+			published = append(published, ids[i])
+		}
 	}
 
 	if err := o.Store.MarkPublishedBatch(ctx, published, o.now()); err != nil {

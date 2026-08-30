@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -708,9 +709,30 @@ func main() {
 						}
 					},
 				}
+				// How many publishers this process runs.
+				//
+				// One is the tested default and it keeps up with what this build
+				// produces. The lease makes several safe — each claims its own rows with
+				// SKIP LOCKED — so a deployment that outgrows one publisher raises this
+				// rather than depending on there happening to be several gateway
+				// replicas. A single supported gateway has a capacity envelope, and it is
+				// measured in tests/performance.
+				workers := envInt("OUTBOX_WORKERS", 1)
+				if workers < 1 {
+					workers = 1
+				}
 				log.Info("event backbone", "url", url, "every", publisher.Every.String(),
+					"workers", workers,
 					"note", "committed evidence is published from the outbox; nothing on the hot path waits for it")
-				go publisher.Run(ctx)
+				for i := range workers {
+					worker := *publisher
+					if workers > 1 {
+						// A distinct owner per worker, so a lease names the publisher
+						// that holds it rather than the process.
+						worker.Owner = fmt.Sprintf("%s#%d", publisher.Owner, i)
+					}
+					go worker.Run(ctx)
+				}
 			}
 		} else {
 			log.Warn("no NATS_URL; evidence stays in the outbox",

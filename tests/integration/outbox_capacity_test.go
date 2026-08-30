@@ -267,3 +267,89 @@ func drainBacklog(ctx context.Context, store *evidence.Store, js jetstream.JetSt
 	}
 	return fmt.Errorf("the backlog did not clear")
 }
+
+// F4-OUTBOX-04: a publisher that dies mid-batch does not take its claim with it.
+//
+// The lease is what makes several publishers safe, and it is also what makes a crash
+// survivable: rows claimed by a process that never came back have to become claimable
+// again, or a killed publisher leaves a permanent hole in the analytical copy.
+func TestAnExpiredLeaseReturnsTheWorkToTheQueue(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	tenant := fmt.Sprintf("tenant_lease_%d", now.UnixNano())
+
+	store := evidence.NewStore(idemPool(t))
+	dead := evidence.NewStore(outboxPool(t))
+	alive := evidence.NewStore(outboxPool(t))
+
+	const events = 20
+	batch := make([]evidence.Event, 0, events)
+	for i := range events {
+		at := now.Add(time.Duration(i) * time.Millisecond)
+		batch = append(batch, evidence.Event{
+			SchemaVersion: evidence.SchemaVersion,
+			EventID:       fmt.Sprintf("lease_%d_%d", now.UnixNano(), i),
+			EventName:     evidence.AuthorityEvaluated,
+			TenantID:      tenant,
+			AggregateID:   "env_lease",
+			CorrelationID: "corr_lease",
+			OccurredAt:    at,
+			ProducedAt:    at,
+			Producer:      "assurance-gateway",
+			Sequence:      int64(i + 1),
+		})
+	}
+	if err := store.AppendBatch(ctx, batch); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	// One publisher claims everything and then, as far as the database is concerned,
+	// stops existing: nothing is published and nothing is marked.
+	claimed, err := dead.Claim(ctx, 500, "publisher-that-dies", now, time.Minute)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if len(claimed) == 0 {
+		t.Skip("another publisher drained the rows first; the lease is not what is being " +
+			"measured here")
+	}
+
+	// A live publisher, before the lease expires, must not take them.
+	early, err := alive.Claim(ctx, 500, "publisher-that-lives", now.Add(30*time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("early claim: %v", err)
+	}
+	overlap := 0
+	held := map[int64]bool{}
+	for _, e := range claimed {
+		held[e.OutboxID] = true
+	}
+	for _, e := range early {
+		if held[e.OutboxID] {
+			overlap++
+		}
+	}
+	if overlap > 0 {
+		t.Errorf("%d rows were claimed twice inside the lease window; the lease is what "+
+			"stops two publishers spending the same capacity", overlap)
+	}
+
+	// After it expires, they are claimable again — otherwise a killed publisher takes
+	// its batch with it.
+	recovered, err := alive.Claim(ctx, 500, "publisher-that-lives", now.Add(2*time.Minute), time.Minute)
+	if err != nil {
+		t.Fatalf("late claim: %v", err)
+	}
+	found := 0
+	for _, e := range recovered {
+		if held[e.OutboxID] {
+			found++
+		}
+	}
+	if found != len(claimed) {
+		t.Errorf("%d of %d rows came back after the lease expired. Work claimed by a "+
+			"process that never returns has to become claimable again, or a killed "+
+			"publisher leaves a permanent hole in the analytical copy.",
+			found, len(claimed))
+	}
+}

@@ -72,6 +72,63 @@ func (p *Publisher) Publish(ctx context.Context, e Event) error {
 	return nil
 }
 
+// PublishBatch sends many events and waits for the server to acknowledge all of them.
+//
+// One round trip per event was the outbox's ceiling. Publish waits for the server's
+// acknowledgement before sending the next message, so throughput was bounded by the
+// round-trip time to NATS — measured at about 1,200 events per second on the reference
+// host against arrivals of 2,500. A queue whose service rate is a constant below its
+// arrival rate does not clear; it grows for as long as the traffic lasts.
+//
+// The acknowledgements are still waited for, all of them, before any row is marked
+// published: what changes is that they are in flight together rather than one at a time.
+// An event whose acknowledgement never comes is reported as failed, exactly as before.
+func (p *Publisher) PublishBatch(ctx context.Context, events []Event) ([]error, error) {
+	results := make([]error, len(events))
+	futures := make([]jetstream.PubAckFuture, len(events))
+
+	for i, e := range events {
+		if err := e.Validate(); err != nil {
+			results[i] = err
+			continue
+		}
+		raw, err := json.Marshal(e)
+		if err != nil {
+			results[i] = fmt.Errorf("marshal event: %w", err)
+			continue
+		}
+		future, err := p.js.PublishAsync(e.Subject(), raw, jetstream.WithMsgID(e.EventID))
+		if err != nil {
+			results[i] = fmt.Errorf("publish %s: %w", e.EventID, err)
+			continue
+		}
+		futures[i] = future
+	}
+
+	select {
+	case <-p.js.PublishAsyncComplete():
+	case <-ctx.Done():
+		return results, ctx.Err()
+	}
+
+	for i, future := range futures {
+		if future == nil {
+			continue
+		}
+		select {
+		case <-future.Ok():
+		case err := <-future.Err():
+			results[i] = fmt.Errorf("publish %s: %w", events[i].EventID, err)
+		default:
+			// Complete fired and this one is neither acknowledged nor failed. Treated as
+			// not published: the row stays claimed, the lease expires, and another
+			// publisher tries again. At-least-once is the contract (ADR-008).
+			results[i] = fmt.Errorf("publish %s: no acknowledgement", events[i].EventID)
+		}
+	}
+	return results, nil
+}
+
 // Handler processes one event. Returning an error causes redelivery, which is why
 // a handler must be idempotent (ADR-008).
 type Handler func(ctx context.Context, e Event) error
