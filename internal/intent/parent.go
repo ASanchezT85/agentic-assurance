@@ -311,7 +311,19 @@ func ClusterNotional(in Intent) (money.Amount, bool) {
 	switch in.OrderType {
 	case OrderLimit, OrderStopLimit:
 		if in.LimitPrice != nil {
-			return money.NotionalOf(*in.LimitPrice, *in.Quantity), true
+			notional := money.NotionalOf(*in.LimitPrice, *in.Quantity)
+			if notional == 0 && *in.LimitPrice != 0 && *in.Quantity != 0 {
+				// Beyond what the platform can represent. NotionalOf returns zero for
+				// that case and says so in its own comment: "the caller treats zero as
+				// indeterminate". This one did not, and read the largest order it could
+				// ever see as contributing nothing — so the order most worth noticing
+				// was the one invisible to the heuristic looking for split intentions.
+				//
+				// The other two implementations of this rule — authority and policy —
+				// both guard it. Three copies of one concept, two of them right.
+				return 0, false
+			}
+			return notional, true
 		}
 	}
 	return 0, false
