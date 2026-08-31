@@ -153,25 +153,3 @@ func (c *MemoryCache) Flush() {
 	defer c.mu.Unlock()
 	c.records = map[string]Record{}
 }
-
-// Retire is what retention does: the outcome goes, the identity stays.
-//
-// Deleting the record without this would reopen the key, which is the production defect
-// F4-B001 named. The two happen together here for the same reason they share a
-// transaction in PostgreSQL.
-func (m *MemoryStore) Retire(tenantID, idempotencyKey string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	k := key(tenantID, idempotencyKey)
-	rec, ok := m.records[k]
-	if !ok {
-		return
-	}
-	m.retiredKeys[k] = idempotencyKey
-	if rec.EnvelopeID != "" {
-		m.retiredEnvelopes[key(tenantID, rec.EnvelopeID)] = idempotencyKey
-		delete(m.envelopes, key(tenantID, rec.EnvelopeID))
-	}
-	delete(m.records, k)
-}

@@ -146,23 +146,6 @@ func (s *Store) MarkPublishedBatch(ctx context.Context, ids []int64, at time.Tim
 	return err
 }
 
-// MarkPublished records that an entry reached the bus.
-//
-// Inside the row's own tenant context. Reading the queue is deliberately not
-// tenant-scoped, but writing is: the policy's WITH CHECK holds, and the first version
-// of this silently failed every update because no tenant was set — the events were
-// published and the queue never emptied.
-func (s *Store) MarkPublished(ctx context.Context, tenantID string, outboxID int64,
-	at time.Time) error {
-
-	return s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx,
-			`UPDATE evidence_outbox SET published_at = $2 WHERE outbox_id = $1`,
-			outboxID, at.UTC())
-		return err
-	})
-}
-
 // MarkFailed records an attempt that did not.
 //
 // The row stays unpublished and is retried. Counting attempts is what lets an operator

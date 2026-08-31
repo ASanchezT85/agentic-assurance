@@ -149,28 +149,6 @@ func (s *ActivationStore) RegisterKey(ctx context.Context, k ActivationKey) (boo
 	return registered, err
 }
 
-// UsableKeys counts the keys that could authorize something now.
-//
-// Status, revocation and the validity window, against the database's clock rather than a
-// caller's. It used to count status = 'ACTIVE' AND revoked_at IS NULL and stop there, so a
-// key that had expired months ago was still "available": a tenant with one usable key and
-// one expired row read as two, the usable one could be revoked, and what was left could
-// authorize nothing at all. The bootstrap is spent by then, so the only way back was
-// direct database access — the state these endpoints exist to remove.
-func (s *ActivationStore) UsableKeys(ctx context.Context, tenantID string) (int, error) {
-	var count int
-	err := s.withTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT count(*) FROM policy_activation_keys
-			 WHERE tenant_id = $1
-			   AND status = 'ACTIVE' AND revoked_at IS NULL
-			   AND valid_from <= now()
-			   AND (valid_until IS NULL OR valid_until > now())`,
-			tenantID).Scan(&count)
-	})
-	return count, err
-}
-
 // Bootstrapped reports whether this tenant has ever bootstrapped its policy authority.
 //
 // Two facts, either of which closes the bootstrap: this tenant has bootstrapped before, or
