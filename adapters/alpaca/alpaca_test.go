@@ -342,3 +342,99 @@ func TestAnUnresolvedInstrumentIsRefusedRatherThanGuessed(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnsupported", err)
 	}
 }
+
+// A number the venue sends as text is refused when it is not one.
+//
+// Found by the twelfth audit: three of the adapter's numeric fields were parsed with the
+// error discarded, in a function whose comment says it refuses what it cannot map. The one
+// that matters is filled_qty — an order that filled, recorded as having filled nothing,
+// because a format the parser did not expect became a plausible zero (INV-012).
+func TestAVenueNumberThatIsNotANumberIsRefused(t *testing.T) {
+	cases := []struct {
+		name  string
+		body  string
+		wants string
+	}{
+		{"a filled quantity with a thousands separator",
+			`{"id":"alp-1","client_order_id":"coid-1","status":"filled","filled_qty":"1,000"}`,
+			"filled_qty"},
+		{"a filled price that is a word",
+			`{"id":"alp-1","client_order_id":"coid-1","status":"filled","filled_qty":"10","filled_avg_price":"n/a"}`,
+			"filled_avg_price"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			adapter, _ := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(c.body))
+			})
+			_, err := adapter.Reconcile(context.Background(), "coid-1")
+			if err == nil {
+				t.Fatalf("the venue sent an unparseable %s and the adapter accepted it; "+
+					"a number it cannot read must not become a zero the platform records "+
+					"as fact (INV-012)", c.wants)
+			}
+			if !strings.Contains(err.Error(), c.wants) {
+				t.Errorf("the refusal does not name the field: %v", err)
+			}
+		})
+	}
+}
+
+// And the empty string, which is what Alpaca sends before anything fills, is still zero.
+func TestAnEmptyVenueNumberIsZero(t *testing.T) {
+	adapter, _ := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(
+			`{"id":"alp-1","client_order_id":"coid-1","status":"new","filled_qty":"0","filled_avg_price":""}`))
+	})
+
+	order, err := adapter.Reconcile(context.Background(), "coid-1")
+	if err != nil {
+		t.Fatalf("an order that has not filled was refused: %v", err)
+	}
+	if order.AverageFillPrice != 0 || order.FilledQuantity != 0 {
+		t.Errorf("an unfilled order came back as %v @ %v", order.FilledQuantity, order.AverageFillPrice)
+	}
+}
+
+// The read side, which no test had ever executed: positions and the account.
+func TestPositionsAndAccountAreParsedOrRefused(t *testing.T) {
+	positions := `[{"symbol":"AAPL","qty":"10","avg_entry_price":"190.50"}]`
+	account := `{"id":"acc-1","currency":"USD","cash":"1000.25","buying_power":"2000.50"}`
+
+	adapter, _ := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/positions":
+			_, _ = w.Write([]byte(positions))
+		case "/v2/account":
+			_, _ = w.Write([]byte(account))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+
+	held, err := adapter.GetPositions(context.Background())
+	if err != nil {
+		t.Fatalf("positions: %v", err)
+	}
+	if len(held) != 1 || held[0].Symbol != "AAPL" || held[0].Quantity != 10 || held[0].AveragePrice != 190.50 {
+		t.Errorf("positions came back as %+v", held)
+	}
+	if held[0].InstrumentID != "" {
+		t.Error("the adapter invented a canonical instrument id from a venue symbol (§13)")
+	}
+
+	acct, err := adapter.GetAccount(context.Background())
+	if err != nil {
+		t.Fatalf("account: %v", err)
+	}
+	if acct.Cash != 1000.25 || acct.BuyingPower != 2000.50 || acct.Currency != "USD" {
+		t.Errorf("account came back as %+v", acct)
+	}
+
+	// And a position whose quantity is not a number is refused rather than counted as none.
+	positions = `[{"symbol":"AAPL","qty":"ten","avg_entry_price":"190.50"}]`
+	if _, err := adapter.GetPositions(context.Background()); err == nil {
+		t.Error("a position with an unreadable quantity was reported as a position of zero")
+	}
+}

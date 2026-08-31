@@ -299,8 +299,14 @@ func (a *Adapter) GetPositions(ctx context.Context) ([]broker.Position, error) {
 	}
 	out := make([]broker.Position, 0, len(wires))
 	for _, w := range wires {
-		qty, _ := strconv.ParseFloat(w.Qty, 64)
-		price, _ := strconv.ParseFloat(w.AvgPrice, 64)
+		qty, err := venueNumber("qty", w.Qty)
+		if err != nil {
+			return nil, err
+		}
+		price, err := venueNumber("avg_entry_price", w.AvgPrice)
+		if err != nil {
+			return nil, err
+		}
 		// InstrumentID is left empty: mapping a venue symbol back to canonical
 		// identity needs reference data this adapter does not have, and inventing
 		// one would be exactly the ticker-as-identity mistake spec section 13
@@ -320,8 +326,14 @@ func (a *Adapter) GetAccount(ctx context.Context) (broker.Account, error) {
 	if err := a.do(ctx, http.MethodGet, "/v2/account", nil, &wire); err != nil {
 		return broker.Account{}, err
 	}
-	cash, _ := strconv.ParseFloat(wire.Cash, 64)
-	bp, _ := strconv.ParseFloat(wire.BuyingPower, 64)
+	cash, err := venueNumber("cash", wire.Cash)
+	if err != nil {
+		return broker.Account{}, err
+	}
+	bp, err := venueNumber("buying_power", wire.BuyingPower)
+	if err != nil {
+		return broker.Account{}, err
+	}
 
 	return broker.Account{
 		AccountID:   wire.ID,
@@ -348,6 +360,29 @@ func alpacaOrderType(o intent.OrderType) string {
 	return string(o)
 }
 
+// venueNumber reads a numeric field the venue sent as text.
+//
+// Every one of these used to be `value, _ := strconv.ParseFloat(...)`, in a function whose
+// own comment two lines down says it refuses what it cannot map rather than guessing. A
+// filled_qty the adapter could not parse became a filled quantity of zero: an order that
+// filled, recorded as having filled nothing, in the evidence chain and in the answer the
+// caller was given. That is the canonical model corrupted by an adapter, which is INV-012
+// exactly.
+//
+// An empty string is zero and nothing else is. Alpaca leaves filled_avg_price empty until
+// something fills, which is the case that made the discarded error look harmless for as
+// long as nobody looked.
+func venueNumber(field, raw string) (float64, error) {
+	if strings.TrimSpace(raw) == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("venue sent %s=%q, which is not a number: %w", field, raw, err)
+	}
+	return value, nil
+}
+
 // toBrokerOrder converts a venue order into the canonical one, refusing anything it
 // cannot map rather than guessing (INV-012).
 func toBrokerOrder(w wireOrder) (broker.BrokerOrder, error) {
@@ -356,8 +391,14 @@ func toBrokerOrder(w wireOrder) (broker.BrokerOrder, error) {
 		return broker.BrokerOrder{}, fmt.Errorf("venue returned an unmapped status %q", w.Status)
 	}
 
-	filled, _ := strconv.ParseFloat(w.FilledQty, 64)
-	avg, _ := strconv.ParseFloat(w.FilledAvgPrice, 64)
+	filled, err := venueNumber("filled_qty", w.FilledQty)
+	if err != nil {
+		return broker.BrokerOrder{}, err
+	}
+	avg, err := venueNumber("filled_avg_price", w.FilledAvgPrice)
+	if err != nil {
+		return broker.BrokerOrder{}, err
+	}
 
 	order := broker.BrokerOrder{
 		ClientOrderID:    w.ClientOrderID,
