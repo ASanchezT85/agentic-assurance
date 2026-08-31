@@ -188,10 +188,12 @@ logs de ese despliegue, y posiblemente en el access log de un proxy inverso y en
    se llaman dos. Cada integración de venue implementa y despliega cinco caminos de API en
    vivo sin llamador — que es exactamente la superficie donde vivía A-12-01. O se estrecha
    el contrato, o se escribe por qué se mantiene.
-3. **La consola no tiene ni una prueba de comportamiento.** Las seis páginas sólo las
-   ejercita `next build`. Nada afirma que una fuente inalcanzable renderice `Unavailable` en
-   vez de ceros — que es la promesa más importante que hace la consola. Hoy las seis lo
-   hacen bien, verificado leyendo.
+3. ~~**La consola no tiene ni una prueba de comportamiento.**~~ **CERRADO** en el cierre de
+   portafolio (2026-08-31). `tests/integration/console_behaviour_test.go` arranca la consola
+   de producción como proceso y afirma dos cosas: que las seis superficies renderizan
+   `UNAVAILABLE` —nunca cero— ante una fuente inalcanzable, y que los conteos se comparan
+   numéricamente, así que una dependencia compartida por diez agentes supera a una de nueve.
+   Ambas verificadas en rojo antes de confiar en ellas.
 
 ### Riesgos abiertos que arrastramos
 
@@ -271,3 +273,24 @@ matriz era trabajo necesario. Sustituir el segundo por el primero se ve exactame
 que avanzar, y no lo es.
 
 Esa deuda quedó saldada hoy.
+
+---
+
+## 10. CIERRE DE PORTAFOLIO (2026-08-31)
+
+Posterior a este documento, el repositorio se preparó para publicación pública como
+Portfolio V0. No se agregaron funcionalidades ni auditorías: se reescribió el README como
+caso de estudio, se creó el banner nativo `docs/banner.svg`, se aplicó el sistema de diseño
+a la consola (navegación izquierda, barra superior de 64 px, estado de carga, breakpoints),
+se capturaron seis pantallas reales de ejecución, y se cerró la brecha de prueba de
+comportamiento de la consola.
+
+Matriz re-corrida sobre el árbol del cierre: **integración 124 pasan · 3 saltan · 0 fallan**,
+race limpio, race+integración limpio, chaos 9/9, proceso 2 pasan · 1 salta, compuerta verde.
+
+Detalle en [`PORTFOLIO_RELEASE.md`](PORTFOLIO_RELEASE.md).
+
+**Observación registrada durante el cierre, fuera de alcance y sin diagnosticar:** al poblar
+la demo, el productor de flota midió una ventana como cero aunque ClickHouse tenía 3.000
+intents en ella, y no la volvió a visitar. Es plano de inteligencia, no de aplicación —
+ninguna decisión de dinero depende de eso— pero queda anotado en vez de callado.

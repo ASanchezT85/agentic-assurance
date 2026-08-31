@@ -82,58 +82,66 @@ a:hover {
   outline-offset: 2px;
 }
 
-/* --- shell ------------------------------------------------------------------ */
+/* --- application shell ------------------------------------------------------ */
 
-.x-shell {
-  max-width: 82rem;
-  margin: 0 auto;
-  padding: var(--x-space-8) var(--x-space-6) var(--x-space-16);
+/* The canonical layout from design/exoryn/07-web-patterns: a fixed compact left
+   navigation, a 64 px top bar, then the surface. Grid rather than a float or a fixed
+   sidebar with a margin, so the content column cannot slide under the rail at any
+   width. */
+
+.x-app {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 100vh;
 }
 
-.x-masthead {
+.x-rail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--x-space-4);
-  flex-wrap: wrap;
-  padding-bottom: var(--x-space-4);
-  border-bottom: 1px solid var(--x-border-subtle);
+  flex-direction: column;
+  gap: var(--x-space-6);
+  padding: var(--x-space-6) var(--x-space-4);
+  background: var(--x-surface-panel);
+  border-right: 1px solid var(--x-border-subtle);
 }
 
-.x-wordmark {
-  display: flex;
-  align-items: center;
-  gap: var(--x-space-3);
+.x-rail-brand {
+  display: block;
+  padding: 0 var(--x-space-2);
 }
 
 /* The logo is artwork, placed as artwork. It is never re-typed as text in a display
    font, which is the one thing the brand authority is most explicit about. */
-.x-wordmark img {
-  height: 22px;
+/* No `display` on the shared selector. It used to carry one, and `.x-rail-brand img` is
+   more specific than `.x-mark-compact`, so the compact mark's own `display: none` lost
+   and both marks rendered at once. Each mark now owns its own visibility. */
+.x-rail-brand img {
   width: auto;
+}
+
+.x-mark-wide {
   display: block;
+  height: 24px;
 }
 
-.x-readonly {
-  font-family: var(--x-font-mono);
-  font-size: 12px;
-  color: var(--x-text-secondary);
-  background: var(--x-semantic-bg-unknown);
-  border: 1px solid var(--x-border-subtle);
-  border-radius: var(--x-radius-pill);
-  padding: 2px var(--x-space-3);
+.x-mark-compact {
+  display: none;
+  height: 28px;
 }
 
-/* --- navigation ------------------------------------------------------------- */
-
-.x-nav {
+.x-rail-nav {
   display: flex;
-  gap: var(--x-space-1);
-  flex-wrap: wrap;
-  margin: var(--x-space-4) 0 var(--x-space-8);
+  flex-direction: column;
+  gap: 2px;
 }
 
-.x-nav a {
+.x-rail-nav a {
+  display: flex;
+  align-items: center;
+  gap: var(--x-space-3);
   font-size: 14px;
   color: var(--x-text-secondary);
   padding: var(--x-space-2) var(--x-space-3);
@@ -141,17 +149,173 @@ a:hover {
   border: 1px solid transparent;
 }
 
-.x-nav a:hover {
+.x-rail-nav a svg {
+  flex: none;
+  color: var(--x-text-muted);
+}
+
+.x-rail-nav a:hover {
   text-decoration: none;
   background: var(--x-surface-panelSubtle);
   color: var(--x-text-primary);
 }
 
-.x-nav a[aria-current="page"] {
+.x-rail-nav a:hover svg {
+  color: var(--x-text-secondary);
+}
+
+.x-rail-nav a[aria-current="page"] {
   background: var(--x-surface-selected);
   border-color: var(--x-border-subtle);
   color: var(--x-text-link);
   font-weight: 600;
+}
+
+.x-rail-nav a[aria-current="page"] svg {
+  color: var(--x-brand-blue);
+}
+
+.x-rail-foot {
+  margin-top: auto;
+  border-top: 1px solid var(--x-border-subtle);
+  padding: var(--x-space-4) var(--x-space-3) 0;
+}
+
+.x-rail-foot p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--x-text-muted);
+}
+
+/* --- top bar ---------------------------------------------------------------- */
+
+.x-topbar {
+  height: 64px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--x-space-4);
+  padding: 0 var(--x-space-8);
+  background: var(--x-surface-panel);
+  border-bottom: 1px solid var(--x-border-subtle);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.x-topbar-context {
+  font-family: var(--x-font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--x-text-primary);
+}
+
+.x-topbar-flags {
+  display: flex;
+  gap: var(--x-space-2);
+}
+
+.x-flag {
+  font-family: var(--x-font-mono);
+  font-size: 12px;
+  color: var(--x-text-secondary);
+  background: var(--x-semantic-bg-unknown);
+  border: 1px solid var(--x-border-subtle);
+  border-radius: var(--x-radius-pill);
+  padding: 2px var(--x-space-3);
+  white-space: nowrap;
+}
+
+.x-frame {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.x-content {
+  flex: 1;
+  padding: var(--x-space-8) var(--x-space-8) var(--x-space-12);
+  max-width: 82rem;
+  width: 100%;
+}
+
+/* --- responsive ------------------------------------------------------------- */
+
+/* 1024-1439: compact sidebar. 768-1023: rail — icons only, labels hidden, which is why
+   every nav link carries a title attribute. Below 768 the rail becomes a horizontal
+   strip above the content rather than disappearing: a navigation you cannot see is a
+   navigation that is not there. */
+
+@media (max-width: 1439px) {
+  .x-app {
+    grid-template-columns: 208px minmax(0, 1fr);
+  }
+  .x-content {
+    padding: var(--x-space-6) var(--x-space-6) var(--x-space-12);
+  }
+  .x-topbar {
+    padding: 0 var(--x-space-6);
+  }
+}
+
+@media (max-width: 1023px) {
+  .x-app {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .x-rail {
+    padding: var(--x-space-4) var(--x-space-2);
+    align-items: center;
+  }
+  .x-mark-wide {
+    display: none;
+  }
+  .x-mark-compact {
+    display: block;
+  }
+  .x-rail-nav a {
+    justify-content: center;
+    padding: var(--x-space-3);
+  }
+  .x-rail-nav a span {
+    display: none;
+  }
+  .x-rail-foot {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .x-app {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .x-rail {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--x-space-3);
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--x-border-subtle);
+  }
+  .x-rail-nav {
+    flex-direction: row;
+  }
+  .x-mark-wide {
+    display: block;
+    height: 20px;
+  }
+  .x-mark-compact {
+    display: none;
+  }
+  .x-topbar {
+    padding: 0 var(--x-space-4);
+  }
+  .x-content {
+    padding: var(--x-space-6) var(--x-space-4) var(--x-space-10);
+  }
 }
 
 /* --- surface header --------------------------------------------------------- */
@@ -208,6 +372,75 @@ a:hover {
 .x-unavailable p {
   margin: var(--x-space-2) 0 0;
   color: var(--x-text-secondary);
+}
+
+/* --- loading ---------------------------------------------------------------- */
+
+/* The fourth state in the data language. It carries no skeleton rows: a grey rectangle
+   in the shape of a table reads as "here is the data, briefly blurred", and there is no
+   data yet. The bars are a pulse, not a progress bar — the console does not know how far
+   along the read is and must not draw a fraction it cannot compute. */
+
+.x-loading {
+  background: var(--x-surface-panelSubtle);
+  border: 1px dashed var(--x-border-strong);
+  border-radius: var(--x-radius-md);
+  padding: var(--x-space-4) var(--x-space-6);
+  margin-bottom: var(--x-space-6);
+}
+
+.x-loading p {
+  margin: 0 0 var(--x-space-3);
+  color: var(--x-text-secondary);
+  font-size: 14px;
+}
+
+.x-loading strong {
+  color: var(--x-text-primary);
+}
+
+.x-loading-bars {
+  display: flex;
+  gap: var(--x-space-2);
+}
+
+.x-loading-bars i {
+  display: block;
+  height: 4px;
+  border-radius: var(--x-radius-pill);
+  background: var(--x-border-strong);
+  animation: x-pulse 1.4s ease-in-out infinite;
+}
+
+.x-loading-bars i:nth-child(1) { width: 120px; }
+.x-loading-bars i:nth-child(2) { width: 72px; animation-delay: 0.18s; }
+.x-loading-bars i:nth-child(3) { width: 96px; animation-delay: 0.36s; }
+
+@keyframes x-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1; }
+}
+
+/* Motion is a courtesy, not a requirement. */
+@media (prefers-reduced-motion: reduce) {
+  .x-loading-bars i {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* --- surface list ----------------------------------------------------------- */
+
+.x-surface-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--x-space-2) var(--x-space-6);
+  margin: 0;
+  padding-left: var(--x-space-4);
+}
+
+.x-surface-list li {
+  min-width: 8rem;
 }
 
 .x-empty {

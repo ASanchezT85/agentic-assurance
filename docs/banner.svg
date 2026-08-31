@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400" viewBox="0 0 1600 400"
+     role="img"
+     aria-label="EXORYN — Control before execution. Assurance infrastructure for autonomous finance. An agent's signed intent passes through EXORYN, where identity is verified, authority allowed, policy passed and evidence recorded, before reaching paper execution. Deterministic control plane: attributable, authorized, auditable, with no real-money path.">
+
+  <title>EXORYN — Control before execution</title>
+
+  <!--
+    Repository-native hero banner.
+
+    No external fonts, no external images, no script, no embedded raster. The logo
+    geometry is the canonical master from brand/exoryn/logos/svg/exoryn-primary-horizontal.svg,
+    reused verbatim rather than redrawn: the brand authority forbids implementation
+    agents from regenerating the SVG masters, so the polygons and glyph paths below are
+    copied exactly and only translated and scaled as a group.
+
+    The diagram is conceptual. It shows no order, no amount, no venue identifier and no
+    production metric, because the platform has none to show and inventing one would be
+    the exact failure its own design system forbids.
+  -->
+
+  <defs>
+    <linearGradient id="xFieldGradient" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F5F8FC"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Field. Light-first, per the design foundations. -->
+  <rect width="1600" height="400" fill="url(#xFieldGradient)"/>
+  <rect x="0" y="0" width="1600" height="3" fill="#2563FF"/>
+  <rect x="0" y="397" width="1600" height="3" fill="#071426"/>
+
+  <!-- ============================ LEFT — brand ============================ -->
+
+  <!-- Canonical master logo geometry, copied exactly. Group transform only. -->
+  <g transform="translate(96,104) scale(0.30)">
+    <g transform="translate(45,55) scale(0.43)">
+      <polygon points="82,112 183,112 239,196 209,226 160,164 82,164" fill="#071426"/>
+      <polygon points="430,112 329,112 273,196 303,226 352,164 430,164" fill="#2563FF"/>
+      <polygon points="82,400 183,400 239,316 209,286 160,348 82,348" fill="#12C7D8"/>
+      <polygon points="430,400 329,400 273,316 303,286 352,348 430,348" fill="#071426"/>
+      <rect x="221" y="221" width="70" height="70" rx="7" transform="rotate(45 256 256)" fill="#2563FF"/>
+      <rect x="238" y="238" width="36" height="36" rx="4" transform="rotate(45 256 256)" fill="#FFFFFF"/>
+    </g>
+    <path d="M169 1493H1104V1202H516V924H1069V633H516V291H1124V0H169Z" transform="translate(330.00,220.00) scale(0.070801,-0.070801)" fill="#071426"/>
+    <path d="M918 762 1384 0H1023L709 510L398 0H35L501 762L53 1493H415L709 1012L1003 1493H1366Z" transform="translate(447.14,220.00) scale(0.070801,-0.070801)" fill="#071426"/>
+    <path d="M783 1241Q625 1241 537.5 1111.0Q450 981 450 745Q450 510 537.5 380.0Q625 250 783 250Q942 250 1029.5 380.0Q1117 510 1117 745Q1117 981 1029.5 1111.0Q942 1241 783 1241ZM783 1520Q1107 1520 1290.5 1314.0Q1474 1108 1474 745Q1474 383 1290.5 177.0Q1107 -29 783 -29Q460 -29 276.0 177.0Q92 383 92 745Q92 1108 276.0 1314.0Q460 1520 783 1520Z" transform="translate(575.75,220.00) scale(0.070801,-0.070801)" fill="#071426"/>
+    <path d="M662 831Q770 831 817.5 876.0Q865 921 865 1024Q865 1126 817.5 1170.0Q770 1214 662 1214H516V831ZM516 565V0H169V1493H698Q964 1493 1087.5 1394.0Q1211 1295 1211 1081Q1211 933 1147.0 838.0Q1083 743 953 698Q1024 680 1080.5 616.5Q1137 553 1194 424L1382 0H1013L850 371Q800 483 749.0 524.0Q698 565 614 565Z" transform="translate(714.62,220.00) scale(0.070801,-0.070801)" fill="#071426"/>
+    <path d="M-18 1493H361L667 961L973 1493H1353L841 629V0H494V629Z" transform="translate(843.09,220.00) scale(0.070801,-0.070801)" fill="#071426"/>
+    <path d="M169 1493H556L1045 469V1493H1373V0H986L498 1024V0H169Z" transform="translate(965.53,220.00) scale(0.070801,-0.070801)" fill="#071426"/>
+  </g>
+
+  <text x="96" y="212" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="26" font-weight="600" fill="#2563FF" letter-spacing="0.4">Control before execution.</text>
+
+  <text x="96" y="248" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="19" fill="#5B6780">Assurance infrastructure for autonomous finance.</text>
+
+  <line x1="96" y1="286" x2="330" y2="286" stroke="#DCE5F0" stroke-width="1"/>
+
+  <text x="96" y="318" font-family="IBM Plex Mono, Consolas, Menlo, monospace"
+        font-size="15" fill="#5B6780" letter-spacing="1.6">AUTONOMY, BOUNDED BY TRUST.</text>
+
+  <!-- ======================= CENTER — the assurance path ======================= -->
+
+  <g font-family="IBM Plex Mono, Consolas, Menlo, monospace">
+
+    <text x="700" y="58" font-size="15" fill="#5B6780" letter-spacing="1.4" text-anchor="middle">AGENT</text>
+    <path d="M700 70 L700 92" stroke="#B9C7D8" stroke-width="1.5"/>
+    <path d="M700 98 l-4.5 -7 h9 Z" fill="#B9C7D8"/>
+
+    <text x="700" y="118" font-size="15" fill="#071426" letter-spacing="1.4" text-anchor="middle">SIGNED INTENT</text>
+    <path d="M700 130 L700 150" stroke="#B9C7D8" stroke-width="1.5"/>
+    <path d="M700 156 l-4.5 -7 h9 Z" fill="#B9C7D8"/>
+
+    <!-- The control plane -->
+    <rect x="516" y="164" width="368" height="150" rx="12" fill="#FFFFFF" stroke="#2563FF" stroke-width="1.5"/>
+    <rect x="516" y="164" width="368" height="30" rx="12" fill="#071426"/>
+    <rect x="516" y="182" width="368" height="12" fill="#071426"/>
+    <text x="534" y="185" font-size="14" fill="#FFFFFF" letter-spacing="2.2">EXORYN</text>
+
+    <g font-size="17">
+      <text x="540" y="226" fill="#5B6780">Identity</text>
+      <text x="860" y="226" fill="#12C7D8" text-anchor="end" letter-spacing="1">VERIFIED</text>
+
+      <text x="540" y="252" fill="#5B6780">Authority</text>
+      <text x="860" y="252" fill="#0EA56B" text-anchor="end" letter-spacing="1">ALLOWED</text>
+
+      <text x="540" y="278" fill="#5B6780">Policy</text>
+      <text x="860" y="278" fill="#0EA56B" text-anchor="end" letter-spacing="1">PASSED</text>
+
+      <text x="540" y="304" fill="#5B6780">Evidence</text>
+      <text x="860" y="304" fill="#12C7D8" text-anchor="end" letter-spacing="1">RECORDED</text>
+    </g>
+
+    <path d="M700 314 L700 336" stroke="#B9C7D8" stroke-width="1.5"/>
+    <path d="M700 342 l-4.5 -7 h9 Z" fill="#B9C7D8"/>
+
+    <text x="700" y="364" font-size="15" fill="#5B6780" letter-spacing="1.4" text-anchor="middle">PAPER EXECUTION</text>
+  </g>
+
+  <!-- ====================== RIGHT — the product boundary ====================== -->
+
+  <line x1="988" y1="96" x2="988" y2="330" stroke="#DCE5F0" stroke-width="1"/>
+
+  <g font-family="IBM Plex Mono, Consolas, Menlo, monospace">
+    <text x="1040" y="128" font-size="15" fill="#071426" letter-spacing="2">DETERMINISTIC CONTROL PLANE</text>
+    <line x1="1040" y1="146" x2="1462" y2="146" stroke="#DCE5F0" stroke-width="1"/>
+
+    <g font-size="18">
+      <text x="1040" y="192" fill="#5B6780">Attributable</text>
+      <text x="1462" y="192" fill="#0EA56B" text-anchor="end">✓</text>
+
+      <text x="1040" y="228" fill="#5B6780">Authorized</text>
+      <text x="1462" y="228" fill="#0EA56B" text-anchor="end">✓</text>
+
+      <text x="1040" y="264" fill="#5B6780">Auditable</text>
+      <text x="1462" y="264" fill="#0EA56B" text-anchor="end">✓</text>
+
+      <text x="1040" y="300" fill="#5B6780">Real-money path</text>
+      <text x="1462" y="300" fill="#071426" text-anchor="end" font-size="16" letter-spacing="1">NONE</text>
+    </g>
+  </g>
+
+</svg>
