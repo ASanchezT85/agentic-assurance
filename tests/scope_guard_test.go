@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -76,13 +77,33 @@ func TestNoRealMoneyCredentialsAreRequired(t *testing.T) {
 		}
 	}
 
-	entries, err := os.ReadDir(abs(t, "."))
+	// Committed means tracked by git, so git is what gets asked.
+	//
+	// This used to list the directory, so it failed on any `.env` present on disk —
+	// including the one a developer creates by copying `.env.example`, which is the
+	// entire reason that file exists and is what the integration suite needs to run at
+	// all. A guard that fires on its own documented workflow gets worked around, and a
+	// worked-around guard protects nothing.
+	//
+	// If git cannot answer, the strict directory check stands: a guard that cannot
+	// measure must not pass.
+	out, err := exec.Command("git", "-C", abs(t, "."), "ls-files", "-z", "--", ".env*").Output()
 	if err != nil {
-		t.Fatalf("read root: %v", err)
+		entries, readErr := os.ReadDir(abs(t, "."))
+		if readErr != nil {
+			t.Fatalf("git could not be asked (%v) and the root could not be read: %v", err, readErr)
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".env") && e.Name() != ".env.example" {
+				t.Errorf("git could not be asked (%v), and an env file other than "+
+					".env.example is present: %s", err, e.Name())
+			}
+		}
+		return
 	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".env") && e.Name() != ".env.example" {
-			t.Errorf("committed env file other than .env.example: %s", e.Name())
+	for _, name := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
+		if name != "" && name != ".env.example" {
+			t.Errorf("committed env file other than .env.example: %s", name)
 		}
 	}
 }

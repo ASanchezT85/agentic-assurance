@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -338,12 +339,29 @@ func TestAnUnsafeTenantIsRefusedNotEscaped(t *testing.T) {
 
 func waitForRows(t *testing.T, sink *fleet.Sink, tenant string, want int) {
 	t.Helper()
+	// Decoded, not substring-matched.
+	//
+	// This used to look for `"c":"3"` — the count with quotes around it, because
+	// ClickHouse quotes UInt64 in JSON by default. So the helper asserted the wire
+	// format rather than the number, and when the thirteenth audit stopped the quoting
+	// (a count reaching the console as a string is what made the Dependencies surface
+	// rank "9" above "10"), this timed out for five seconds and reported the intents as
+	// never arriving. They had arrived on the first poll.
+	//
+	// A test that matches serialization is a test that fails when serialization is
+	// corrected, and this one had quietly encoded the defect as the expectation.
 	for range 50 {
 		body, err := sink.Query(context.Background(), fmt.Sprintf(
 			"SELECT count() AS c FROM assurance.intents WHERE tenant_id = '%s' FORMAT JSONEachRow",
 			tenant))
-		if err == nil && strings.Contains(body, fmt.Sprintf(`"c":"%d"`, want)) {
-			return
+		if err == nil {
+			var row struct {
+				C json.Number `json:"c"`
+			}
+			if json.Unmarshal([]byte(strings.TrimSpace(body)), &row) == nil &&
+				row.C.String() == strconv.Itoa(want) {
+				return
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
