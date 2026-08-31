@@ -291,6 +291,21 @@ func (s *Sink) request(ctx context.Context, query string, body []byte) (string, 
 	params.Set("database", s.Database)
 	params.Set("query", query)
 
+	// A 64-bit integer is a number, not a string.
+	//
+	// ClickHouse quotes UInt64 in JSON by default, because a value past 2^53 cannot
+	// survive a JavaScript number. The handlers pass JSONEachRow straight through, so
+	// every count() and uniqExact() in this file reached the console as "42" — and the
+	// console declares those fields as numbers, so nothing anywhere said otherwise.
+	// The Dependencies surface then chose its most-shared dependency with `>`, which on
+	// two strings compares them character by character: "9" outranks "10".
+	//
+	// Set explicitly rather than left to the server default, and set here rather than
+	// coerced in the console, because the column list in this file is the whole contract
+	// and any future reader inherits the same trap. The counts this platform reports are
+	// intents and agents in a window; they do not approach 2^53.
+	params.Set("output_format_json_quote_64bit_integers", "0")
+
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
