@@ -286,8 +286,6 @@ func (s *Sink) exec(ctx context.Context, query string, body []byte) error {
 
 func (s *Sink) request(ctx context.Context, query string, body []byte) (string, error) {
 	params := url.Values{}
-	params.Set("user", s.User)
-	params.Set("password", s.Password)
 	params.Set("database", s.Database)
 	params.Set("query", query)
 
@@ -315,6 +313,20 @@ func (s *Sink) request(ctx context.Context, query string, body []byte) (string, 
 	if err != nil {
 		return "", err
 	}
+
+	// The credential travels in a header, never in the query string.
+	//
+	// It used to be `?password=…`, and Go's *url.Error prints the URL it failed on, so
+	// every ClickHouse outage wrote the password in plaintext into three logs: the two
+	// telemetry writers in the gateway and the fleet measurement producer. Section 35
+	// says a secret is never logged, and an outage is exactly when that path runs.
+	//
+	// Fixed by moving the secret rather than by scrubbing the message, because a query
+	// string leaks in more places than an error: a reverse proxy's access log, an
+	// exporter's URL label, and ClickHouse's own system.query_log all keep it. Nothing
+	// can redact a secret out of a log it was already written to.
+	req.Header.Set("X-ClickHouse-User", s.User)
+	req.Header.Set("X-ClickHouse-Key", s.Password)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
